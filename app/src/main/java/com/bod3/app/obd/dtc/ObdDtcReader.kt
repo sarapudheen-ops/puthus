@@ -1,11 +1,12 @@
 package com.bod3.app.obd.dtc
 
 import com.bod3.app.obd.protocol.EcuMessage
+import com.bod3.app.obd.session.ClearConfirmation
 import com.bod3.app.obd.session.EcuTarget
 import com.bod3.app.obd.session.Session
 import com.bod3.app.obd.uds.DtcDecoder
 
-/** OBD DTC services (all read-only). */
+/** OBD DTC read services. */
 enum class DtcKind(val service: Int, val label: String) {
     STORED(0x03, "Stored (confirmed)"),
     PENDING(0x07, "Pending"),
@@ -13,6 +14,16 @@ enum class DtcKind(val service: Int, val label: String) {
 }
 
 data class EcuDtcs(val ecu: String, val codes: List<String>)
+
+/** Outcome of OBD service 04 per answering ECU. */
+data class ClearResult(
+    /** ECUs that confirmed with `44`. */
+    val cleared: List<String>,
+    /** ECUs that refused, with the NRC (`22` = conditions not correct, e.g. engine running). */
+    val refused: Map<String, Int>,
+) {
+    val noResponse: Boolean get() = cleared.isEmpty() && refused.isEmpty()
+}
 
 data class DtcReport(val kind: DtcKind, val ecus: List<EcuDtcs>, val noData: Boolean) {
     val codes: List<String> get() = ecus.flatMap { it.codes }.distinct()
@@ -34,8 +45,22 @@ class ObdDtcReader(private val session: Session) {
         return DtcReport(kind, parse(kind, response.messages, session.protocol.isCan), noData = false)
     }
 
+    /**
+     * OBD service 04: clears stored and pending codes, freeze frames and readiness monitors on every
+     * emission-related ECU. Needs a [ClearConfirmation.obdClear] created after the user confirmed.
+     * Permanent codes (0A) are not cleared by this; the ECU removes them after a passing drive cycle.
+     */
+    suspend fun clear(confirmation: ClearConfirmation): ClearResult {
+        val response = session.request(EcuTarget.Broadcast, listOf(0x04), CLEAR_TIMEOUT_MS, confirmation)
+        return ClearResult(
+            cleared = response.messages.map { it.header }.distinct(),
+            refused = response.negativeResponses.associate { it.header to it.payload[2] },
+        )
+    }
+
     companion object {
         const val READ_TIMEOUT_MS = 8_000L
+        const val CLEAR_TIMEOUT_MS = 10_000L
 
         fun parse(kind: DtcKind, messages: List<EcuMessage>, isCan: Boolean): List<EcuDtcs> {
             val reply = kind.service + 0x40

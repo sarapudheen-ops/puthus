@@ -1,0 +1,517 @@
+{
+ "format": "bod3-datapack",
+ "formatVersion": 1,
+ "id": "vw-group-mqb",
+ "name": "VW group (MQB platform)",
+ "version": 1,
+ "author": "bod3",
+ "description": "Control units of MQB-platform cars (UDS over 11-bit CAN). Addresses are community-sourced: check them against a module scan and edit the list in the app if your car differs. Modules not listed (doors, parking aid, driver assistance …) vary by equipment — add them from a scan.",
+ "pids": [],
+ "vehicles": [
+  {
+   "make": "Volkswagen",
+   "model": "Tiguan (AD1)",
+   "years": "2016-2024",
+   "ecus": [
+    {
+     "address": "01",
+     "name": "Engine electronics",
+     "requestId": "7E0",
+     "responseId": "7E8",
+     "protocol": "UDS"
+    },
+    {
+     "address": "02",
+     "name": "Transmission electronics",
+     "requestId": "7E1",
+     "responseId": "7E9",
+     "protocol": "UDS"
+    },
+    {
+     "address": "03",
+     "name": "Brake electronics",
+     "requestId": "713",
+     "responseId": "77D",
+     "protocol": "UDS"
+    },
+    {
+     "address": "08",
+     "name": "Air conditioning",
+     "requestId": "746",
+     "responseId": "7B0",
+     "protocol": "UDS"
+    },
+    {
+     "address": "09",
+     "name": "Central electronics",
+     "requestId": "70E",
+     "responseId": "778",
+     "protocol": "UDS"
+    },
+    {
+     "address": "15",
+     "name": "Airbag",
+     "requestId": "715",
+     "responseId": "77F",
+     "protocol": "UDS"
+    },
+    {
+     "address": "16",
+     "name": "Steering column electronics",
+     "requestId": "70C",
+     "responseId": "776",
+     "protocol": "UDS"
+    },
+    {
+     "address": "17",
+     "name": "Dashboard",
+     "requestId": "714",
+     "responseId": "77E",
+     "protocol": "UDS"
+    },
+    {
+     "address": "19",
+     "name": "Data bus diagnostic interface (gateway)",
+     "requestId": "710",
+     "responseId": "77A",
+     "protocol": "UDS"
+    },
+    {
+     "address": "44",
+     "name": "Steering assistance",
+     "requestId": "712",
+     "responseId": "77C",
+     "protocol": "UDS"
+    },
+    {
+     "address": "5F",
+     "name": "Information electronics",
+     "requestId": "773",
+     "responseId": "7DD",
+     "protocol": "UDS"
+    }
+   ]
+  },
+  {
+   "make": "Volkswagen",
+   "model": "Golf (5G, Mk7)",
+   "years": "2013-2020",
+   "ecus": [
+    {
+     "address": "01",
+     "name": "Engine electronics",
+     "requestId": "7E0",
+     "responseId": "7E8",
+     "protocol": "UDS"
+    },
+    {
+     "address": "02",
+     "name": "Transmission electronics",
+     "requestId": "7E1",
+     "responseId": "7E9",
+     "protocol": "UDS"
+    },
+    {
+     "address": "03",
+     "name": "Brake electronics",
+     "requestId": "713",
+     "responseId": "77D",
+     "protocol": "UDS"
+    },
+    {
+     "address": "08",
+     "name": "Air conditioning",
+     "requestId": "746",
+     "responseId": "7B0",
+     "protocol": "UDS"
+    },
+    {
+     "address": "09",
+     "name": "Central electronics",
+     "requestId": "70E",
+     "responseId": "778",
+     "protocol": "UDS"
+    },
+    {
+     "address": "15",
+     "name": "Airbag",
+     "requestId": "715",
+     "responseId": "77F",
+     "protocol": "UDS"
+    },
+    {
+     "address": "16",
+     "name": "Steering column electronics",
+     "requestId": "70C",
+     "responseId": "776",
+     "protocol": "UDS"
+    },
+    {
+     "address": "17",
+     "name": "Dashboard",
+     "requestId": "714",
+     "responseId": "77E",
+     "protocol": "UDS"
+    },
+    {
+     "address": "19",
+     "name": "Data bus diagnostic interface (gateway)",
+     "requestId": "710",
+     "responseId": "77A",
+     "protocol": "UDS"
+    },
+    {
+     "address": "44",
+     "name": "Steering assistance",
+     "requestId": "712",
+     "responseId": "77C",
+     "protocol": "UDS"
+    },
+    {
+     "address": "5F",
+     "name": "Information electronics",
+     "requestId": "773",
+     "responseId": "7DD",
+     "protocol": "UDS"
+    }
+   ]
+  },
+  {
+   "make": "Volkswagen",
+   "model": "Passat (B8)",
+   "years": "2015-2023",
+   "ecus": [
+    {
+     "address": "01",
+     "name": "Engine electronics",
+     "requestId": "7E0",
+     "responseId": "7E8",
+     "protocol": "UDS"
+    },
+    {
+     "address": "02",
+     "name": "Transmission electronics",
+     "requestId": "7E1",
+     "responseId": "7E9",
+     "protocol": "UDS"
+    },
+    {
+     "address": "03",
+     "name": "Brake electronics",
+     "requestId": "713",
+     "responseId": "77D",
+     "protocol": "UDS"
+    },
+    {
+     "address": "08",
+     "name": "Air conditioning",
+     "requestId": "746",
+     "responseId": "7B0",
+     "protocol": "UDS"
+    },
+    {
+     "address": "09",
+     "name": "Central electronics",
+     "requestId": "70E",
+     "responseId": "778",
+     "protocol": "UDS"
+    },
+    {
+     "address": "15",
+     "name": "Airbag",
+     "requestId": "715",
+     "responseId": "77F",
+     "protocol": "UDS"
+    },
+    {
+     "address": "16",
+     "name": "Steering column electronics",
+     "requestId": "70C",
+     "responseId": "776",
+     "protocol": "UDS"
+    },
+    {
+     "address": "17",
+     "name": "Dashboard",
+     "requestId": "714",
+     "responseId": "77E",
+     "protocol": "UDS"
+    },
+    {
+     "address": "19",
+     "name": "Data bus diagnostic interface (gateway)",
+     "requestId": "710",
+     "responseId": "77A",
+     "protocol": "UDS"
+    },
+    {
+     "address": "44",
+     "name": "Steering assistance",
+     "requestId": "712",
+     "responseId": "77C",
+     "protocol": "UDS"
+    },
+    {
+     "address": "5F",
+     "name": "Information electronics",
+     "requestId": "773",
+     "responseId": "7DD",
+     "protocol": "UDS"
+    }
+   ]
+  },
+  {
+   "make": "Audi",
+   "model": "A3 (8V)",
+   "years": "2013-2020",
+   "ecus": [
+    {
+     "address": "01",
+     "name": "Engine electronics",
+     "requestId": "7E0",
+     "responseId": "7E8",
+     "protocol": "UDS"
+    },
+    {
+     "address": "02",
+     "name": "Transmission electronics",
+     "requestId": "7E1",
+     "responseId": "7E9",
+     "protocol": "UDS"
+    },
+    {
+     "address": "03",
+     "name": "Brake electronics",
+     "requestId": "713",
+     "responseId": "77D",
+     "protocol": "UDS"
+    },
+    {
+     "address": "08",
+     "name": "Air conditioning",
+     "requestId": "746",
+     "responseId": "7B0",
+     "protocol": "UDS"
+    },
+    {
+     "address": "09",
+     "name": "Central electronics",
+     "requestId": "70E",
+     "responseId": "778",
+     "protocol": "UDS"
+    },
+    {
+     "address": "15",
+     "name": "Airbag",
+     "requestId": "715",
+     "responseId": "77F",
+     "protocol": "UDS"
+    },
+    {
+     "address": "16",
+     "name": "Steering column electronics",
+     "requestId": "70C",
+     "responseId": "776",
+     "protocol": "UDS"
+    },
+    {
+     "address": "17",
+     "name": "Dashboard",
+     "requestId": "714",
+     "responseId": "77E",
+     "protocol": "UDS"
+    },
+    {
+     "address": "19",
+     "name": "Data bus diagnostic interface (gateway)",
+     "requestId": "710",
+     "responseId": "77A",
+     "protocol": "UDS"
+    },
+    {
+     "address": "44",
+     "name": "Steering assistance",
+     "requestId": "712",
+     "responseId": "77C",
+     "protocol": "UDS"
+    },
+    {
+     "address": "5F",
+     "name": "Information electronics",
+     "requestId": "773",
+     "responseId": "7DD",
+     "protocol": "UDS"
+    }
+   ]
+  },
+  {
+   "make": "Skoda",
+   "model": "Octavia (5E)",
+   "years": "2013-2020",
+   "ecus": [
+    {
+     "address": "01",
+     "name": "Engine electronics",
+     "requestId": "7E0",
+     "responseId": "7E8",
+     "protocol": "UDS"
+    },
+    {
+     "address": "02",
+     "name": "Transmission electronics",
+     "requestId": "7E1",
+     "responseId": "7E9",
+     "protocol": "UDS"
+    },
+    {
+     "address": "03",
+     "name": "Brake electronics",
+     "requestId": "713",
+     "responseId": "77D",
+     "protocol": "UDS"
+    },
+    {
+     "address": "08",
+     "name": "Air conditioning",
+     "requestId": "746",
+     "responseId": "7B0",
+     "protocol": "UDS"
+    },
+    {
+     "address": "09",
+     "name": "Central electronics",
+     "requestId": "70E",
+     "responseId": "778",
+     "protocol": "UDS"
+    },
+    {
+     "address": "15",
+     "name": "Airbag",
+     "requestId": "715",
+     "responseId": "77F",
+     "protocol": "UDS"
+    },
+    {
+     "address": "16",
+     "name": "Steering column electronics",
+     "requestId": "70C",
+     "responseId": "776",
+     "protocol": "UDS"
+    },
+    {
+     "address": "17",
+     "name": "Dashboard",
+     "requestId": "714",
+     "responseId": "77E",
+     "protocol": "UDS"
+    },
+    {
+     "address": "19",
+     "name": "Data bus diagnostic interface (gateway)",
+     "requestId": "710",
+     "responseId": "77A",
+     "protocol": "UDS"
+    },
+    {
+     "address": "44",
+     "name": "Steering assistance",
+     "requestId": "712",
+     "responseId": "77C",
+     "protocol": "UDS"
+    },
+    {
+     "address": "5F",
+     "name": "Information electronics",
+     "requestId": "773",
+     "responseId": "7DD",
+     "protocol": "UDS"
+    }
+   ]
+  },
+  {
+   "make": "SEAT",
+   "model": "Leon (5F)",
+   "years": "2013-2020",
+   "ecus": [
+    {
+     "address": "01",
+     "name": "Engine electronics",
+     "requestId": "7E0",
+     "responseId": "7E8",
+     "protocol": "UDS"
+    },
+    {
+     "address": "02",
+     "name": "Transmission electronics",
+     "requestId": "7E1",
+     "responseId": "7E9",
+     "protocol": "UDS"
+    },
+    {
+     "address": "03",
+     "name": "Brake electronics",
+     "requestId": "713",
+     "responseId": "77D",
+     "protocol": "UDS"
+    },
+    {
+     "address": "08",
+     "name": "Air conditioning",
+     "requestId": "746",
+     "responseId": "7B0",
+     "protocol": "UDS"
+    },
+    {
+     "address": "09",
+     "name": "Central electronics",
+     "requestId": "70E",
+     "responseId": "778",
+     "protocol": "UDS"
+    },
+    {
+     "address": "15",
+     "name": "Airbag",
+     "requestId": "715",
+     "responseId": "77F",
+     "protocol": "UDS"
+    },
+    {
+     "address": "16",
+     "name": "Steering column electronics",
+     "requestId": "70C",
+     "responseId": "776",
+     "protocol": "UDS"
+    },
+    {
+     "address": "17",
+     "name": "Dashboard",
+     "requestId": "714",
+     "responseId": "77E",
+     "protocol": "UDS"
+    },
+    {
+     "address": "19",
+     "name": "Data bus diagnostic interface (gateway)",
+     "requestId": "710",
+     "responseId": "77A",
+     "protocol": "UDS"
+    },
+    {
+     "address": "44",
+     "name": "Steering assistance",
+     "requestId": "712",
+     "responseId": "77C",
+     "protocol": "UDS"
+    },
+    {
+     "address": "5F",
+     "name": "Information electronics",
+     "requestId": "773",
+     "responseId": "7DD",
+     "protocol": "UDS"
+    }
+   ]
+  }
+ ],
+ "dtcs": {}
+}

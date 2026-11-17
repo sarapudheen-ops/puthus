@@ -85,6 +85,46 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
   the app, so writes, clears and actuator tests are blocked. When the terminal closes, the app restores
   `ATE0 ATS0 ATH1 ATCAF1 ATR1` and, if routing was changed, re-selects the protocol and re-sends its routing.
 
+## Features (M2): diagnostics
+
+- **Live data for every supported PID:** about 90 standard Service 01 PIDs (fuel trims, O2 sensors,
+  pressures, temperatures, EGR, evap, catalyst temperatures, odometer…), filtered by the PIDs the ECU
+  reports as supported, plus custom PIDs. Choose the values and their order (the pencil on the live data
+  screen; saved). Each tile can show a value, a gauge (min–max) or a graph of the last 120 samples.
+- **Recording and CSV export:** *Record* stores one row per polling cycle (elapsed seconds, UTC time, one
+  column per value, empty cells for missing readings, at most 100,000 rows). *Share* exports it as CSV
+  through the share sheet. Recording stops when you leave live data or the link drops; what was recorded
+  so far is kept.
+- **Custom PIDs:** a read request (Service 01/09 or UDS `22` + DID), a formula over the reply data bytes
+  `A`, `B`, `C`… (`+ - * / %`, bit operators, `0x` hex, `min max abs round floor signed8/16/32 bit`), a unit,
+  gauge range, decimals and optionally an ECU request/response ID. The editor validates the request
+  against the read-only policy and shows formula errors with their position. *Test read* sends the request
+  once. Stored in the user data pack.
+- **Data packs (JSON, `"format": "bod3-datapack"`):** custom PIDs, vehicles with ECU lists, and DTC
+  descriptions. Two packs are bundled in `assets/datapacks`: `generic-obd.json` (about 200 SAE J2012 code
+  descriptions, sample PIDs, generic 11/29-bit OBD ECUs) and `vw-group-mqb.json` (Tiguan AD1, Golf 7,
+  Passat B8, A3 8V, Octavia 5E and Leon 5F with 11 UDS ECUs each). Your own additions (PIDs, vehicles,
+  edited ECU lists, descriptions) are a separate user pack that overrides bundled entries with the same ID.
+  Every pack is validated; errors name the field (`pids[2].formula: …`).
+- **Fault codes:** stored, pending and permanent codes with descriptions. Lookup order: your own
+  description, bundled packs, then a generic category (`P1xxx` = manufacturer-specific…). UDS sub-types
+  (`B1012-13`) show the failure type ("circuit open"). Tap *Edit* on any code to add your own description.
+- **Readiness** (01 01): MIL, code count, petrol/diesel monitor set, and the complete/incomplete state of
+  each supported monitor. **Freeze frame** (02): the code that stored frame 0 and every supported PID in it.
+- **Clearing fault codes, always with confirmation:** OBD service 04 (all emission ECUs) or UDS
+  `14 FF FF FF` for one ECU. The dialog lists what is deleted and needs a tick before *Clear* is enabled.
+  The confirmation is a one-shot token, valid for 60 s and bound to the exact request and ECU; the `Session`
+  refuses a clear without it. The terminal cannot get one. For OBD, the app reads the RPM first and refuses
+  while the engine is running. A UDS clear is sent once (no automatic retry); a refusal shows its NRC
+  ("conditions not correct – engine off?"), and the codes are read again afterwards.
+- **Vehicle & ECUs (make/model selection, like Car Scanner):** pick a bundled or your own vehicle. Its ECU
+  list shows address, name, request/response IDs (11-bit `7E0`, 29-bit `18DA10F1`) and protocol (UDS or
+  OBD). The list is editable: add, remove and change ECUs, or add a whole vehicle. Edits to a bundled
+  vehicle are saved as a copy that can be reset.
+- **Per-ECU UDS:** identification (25 `F1xx` DIDs: part number, software and hardware versions, VIN,
+  serial, system name, coding…, stopping after one timeout if the module is absent), fault codes (19 02),
+  extended data (19 06) and snapshot (19 04) for a selected code, and a confirmed clear (14).
+
 ## Architecture
 
 ```
@@ -107,17 +147,24 @@ profile/db/         Room entities, DAO, database, RoomProfileRepository (Android
 obd/connection/     ConnectionProfile (+ JSON codec), ConnectionStore (profiles, remembered protocols,
                     Expert mode), ProtocolNegotiator, AdapterSetup, ConnectionManager, VoltageMonitor,
                     ReconnectPolicy
-obd/dtc/            ObdDtcReader: services 03 / 07 / 0A on CAN and K-line
+obd/dtc/            ObdDtcReader: services 03 / 07 / 0A and the confirmed clear (04) on CAN and K-line;
+                    FreezeFrameReader (02), ReadinessDecoder (01 01)
+obd/pid/Formula     formula parser/evaluator for custom PIDs
+datapack/           data pack models, JSON codec + validation, DataPackStore (user pack, selections),
+                    DataRepository (bundled + user merge), DtcDescriptions
+diagnostics/        EcuWorkbench: per-ECU identification, DTCs, records and clear
+live/               LiveCatalog, LiveReader, LiveRecorder, CsvExporter, LiveHistory
 obd/terminal/       TerminalPolicy, RawTerminal (expert raw terminal)
 report/             DiagnosticReport (shareable text report)
-android/            SharedPreferences store, ReportSharer (FileProvider)
+android/            SharedPreferences store, ReportSharer (FileProvider), AssetDataPacks
 ```
 
 Everything under `obd/` and `profile/` except `BluetoothSppTransport` and `profile/db/` is plain Kotlin
 with no Android dependencies, and the unit tests under `app/src/test` cover it. The scanner tests use
 `testing/SimulatedCanAdapter`, a simulated ELM327 on a CAN bus. It models headers, receive filters, ISO-TP
 framing, both ID lengths and per-module behaviour (negative replies, response pending, lost flow
-control), and it fails any test that sends a request outside the read-only policy.
+control), and it fails any test that sends a request outside the read-only policy. Clears that reach the
+bus are recorded separately (`clears`), so tests can prove a clear only goes out with a confirmation.
 `testing/SimulatedVehicleElm` simulates a vLinker MC+ plugged into a vehicle on any protocol (automatic
 search, explicit `ATSPx`, `ATDP`/`ATDPN`, VT detection, K-line framing with checksums, ISO-TP on CAN). The
 connection tests use it for negotiation fallbacks, profile setup, K-line VIN/live data/DTCs and link loss.

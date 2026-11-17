@@ -62,6 +62,8 @@ class DashboardActions(
     val onOpenScan: () -> Unit,
     val onOpenModules: () -> Unit,
     val onOpenTerminal: () -> Unit,
+    val onOpenVehicles: () -> Unit,
+    val onOpenCustomPids: () -> Unit,
     val onOpenSettings: () -> Unit,
     val onDisconnect: () -> Unit,
     val logText: () -> String,
@@ -154,6 +156,10 @@ private fun DiagnosticButtons(state: UiState, connected: Boolean, busy: Boolean,
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         Button(onClick = actions.onOpenLiveData, enabled = ready) { Text("Live data") }
         Button(onClick = actions.onOpenDtcs, enabled = ready) { Text("Fault codes") }
+        OutlinedButton(onClick = actions.onOpenVehicles, enabled = !busy && !state.scan.running) {
+            Text(state.data.selectedVehicle?.let { "ECUs · ${it.vehicle.model}" } ?: "Vehicle & ECUs")
+        }
+        OutlinedButton(onClick = actions.onOpenCustomPids) { Text("Custom PIDs") }
         if (state.settings.expertMode) {
             OutlinedButton(onClick = actions.onOpenTerminal, enabled = connected && !state.scan.running) { Text("Expert terminal") }
         }
