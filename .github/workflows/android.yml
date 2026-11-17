@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   build:
-    name: Assemble & lint (debug)
+    name: Assemble, lint & test (debug)
     runs-on: ubuntu-latest
 
     steps:
@@ -30,8 +30,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Build debug APK and run lint
-        run: ./gradlew assembleDebug lintDebug --stacktrace
+      - name: Build debug APK, run lint and unit tests
+        run: ./gradlew assembleDebug lintDebug testDebugUnitTest --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
@@ -47,5 +47,6 @@ jobs:
           name: build-reports
           path: |
             app/build/reports/
+            app/build/test-results/
             build/reports/
           if-no-files-found: warn
