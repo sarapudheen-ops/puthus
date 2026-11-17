@@ -17,8 +17,12 @@ object AssetDataPacks {
         val names = runCatching { context.assets.list(DIRECTORY).orEmpty().filter { it.endsWith(".json") }.sorted() }
             .getOrElse { errors += "Bundled data packs: ${it.message}"; emptyList() }
         for (name in names) {
-            val json = runCatching { context.assets.open("$DIRECTORY/$name").bufferedReader().use { it.readText() } }
-                .getOrElse { errors += "$name: ${it.message}"; continue }
+            val read = runCatching { context.assets.open("$DIRECTORY/$name").bufferedReader().use { it.readText() } }
+            val json = read.getOrNull()
+            if (json == null) {
+                errors += "$name: ${read.exceptionOrNull()?.message}"
+                continue
+            }
             val result = DataPackCodec.decode(json)
             val pack = result.pack
             if (pack != null) packs += pack else errors += result.errors.map { "$name: $it" }
