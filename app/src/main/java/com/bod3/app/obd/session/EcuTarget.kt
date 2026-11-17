@@ -76,6 +76,23 @@ sealed interface EcuTarget {
 
 internal fun String.isHex(): Boolean = isNotEmpty() && all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
+/** CAN options from the connection profile that affect routing and parsing. */
+data class SessionOptions(
+    /** ISO 15765-2 extended addressing (`ATCEA`): each reply frame starts with an address byte. */
+    val extendedAddressing: Boolean = false,
+    /** Receive filter/mask for broadcast requests instead of automatic receive. */
+    val broadcastFilter: String? = null,
+    val broadcastMask: String? = null,
+    /** Send custom flow control (`ATFCSH`/`ATFCSD`/`ATFCSM1`) for every physical target, not only non-standard pairs. */
+    val customFlowControl: Boolean = false,
+    /** Flow-control data bytes, e.g. `300000`. */
+    val flowControlData: String = "300000",
+) {
+    companion object {
+        val DEFAULT = SessionOptions()
+    }
+}
+
 /**
  * The adapter settings that route requests to a target, split into groups so a [Session] only re-sends
  * the groups that actually changed.
@@ -96,12 +113,16 @@ object HeaderCommands {
     /** Automatic flow control (the adapter default). */
     val AUTO_FLOW_CONTROL = listOf("ATFCSM0")
 
-    fun routingFor(target: EcuTarget, format: HeaderFormat): Routing {
+    fun routingFor(target: EcuTarget, format: HeaderFormat, options: SessionOptions = SessionOptions.DEFAULT): Routing {
         require(format != HeaderFormat.LEGACY) { "Header targeting is only supported on CAN" }
         return when (target) {
             EcuTarget.Broadcast -> Routing(
                 header = headerCommands(if (format == HeaderFormat.CAN_11) FUNCTIONAL_11 else FUNCTIONAL_29, format),
-                filter = listOf(AUTO_RECEIVE),
+                filter = if (options.broadcastFilter != null && options.broadcastMask != null) {
+                    listOf("ATCF ${options.broadcastFilter.uppercase()}", "ATCM ${options.broadcastMask.uppercase()}")
+                } else {
+                    listOf(AUTO_RECEIVE)
+                },
                 flowControl = AUTO_FLOW_CONTROL,
             )
 
@@ -113,7 +134,7 @@ object HeaderCommands {
                 response?.let { checkLength(it, format) }
                 mask?.let { checkLength(it, format) }
                 val customFlowControl = target.flowControl && response != null && mask == null &&
-                    !isStandardPair(request, response, format)
+                    (options.customFlowControl || !isStandardPair(request, response, format))
                 Routing(
                     header = headerCommands(request, format),
                     filter = when {
@@ -122,7 +143,7 @@ object HeaderCommands {
                         else -> listOf(AUTO_RECEIVE)
                     },
                     flowControl = if (customFlowControl) {
-                        listOf("ATFCSH $request", "ATFCSD 300000", "ATFCSM1")
+                        listOf("ATFCSH $request", "ATFCSD ${options.flowControlData.uppercase()}", "ATFCSM1")
                     } else {
                         AUTO_FLOW_CONTROL
                     },
@@ -135,8 +156,8 @@ object HeaderCommands {
      * Header and receive-filter commands for [target], plus flow-control commands when they differ from
      * the adapter default, in the order they are sent.
      */
-    fun forTarget(target: EcuTarget, format: HeaderFormat): List<String> {
-        val routing = routingFor(target, format)
+    fun forTarget(target: EcuTarget, format: HeaderFormat, options: SessionOptions = SessionOptions.DEFAULT): List<String> {
+        val routing = routingFor(target, format, options)
         return routing.header + routing.filter + routing.flowControl.takeIf { it != AUTO_FLOW_CONTROL }.orEmpty()
     }
 

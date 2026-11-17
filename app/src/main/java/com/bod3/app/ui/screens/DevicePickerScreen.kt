@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -59,6 +60,7 @@ fun DevicePickerScreen(
     onRefresh: () -> Unit,
     onConnect: (PairedAdapter) -> Unit,
     onDismissError: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -75,6 +77,9 @@ fun DevicePickerScreen(
                 actions = {
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh paired devices")
+                    }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Connection settings")
                     }
                 },
             )
@@ -124,6 +129,14 @@ fun DevicePickerScreen(
 private fun DeviceList(state: UiState, onConnect: (PairedAdapter) -> Unit) {
     val connecting = state.connection as? ConnectionState.Connecting
     LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
+        item {
+            Text(
+                "Connection profile: ${state.settings.activeProfile.name}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
         item {
             Text(
                 "Paired devices",

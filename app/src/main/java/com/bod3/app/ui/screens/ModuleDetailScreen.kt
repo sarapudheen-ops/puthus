@@ -44,6 +44,7 @@ fun ModuleDetailScreen(
     onBack: () -> Unit,
     moduleLogText: () -> String,
     fullLogText: () -> String,
+    onClearLog: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -122,7 +123,7 @@ fun ModuleDetailScreen(
             SectionCard("Raw data (${entries.size} requests)") {
                 module.module.firstReply?.let { InfoRow("First reply", it) }
                 RawLogActions(moduleLogText, "module log", enabled = entries.isNotEmpty())
-                RawLogActions(fullLogText, "full log", enabled = rawLog.isNotEmpty())
+                RawLogActions(fullLogText, "full log", enabled = rawLog.isNotEmpty(), onClear = onClearLog)
                 if (entries.isEmpty()) {
                     Text("No raw log saved for this module.", style = MaterialTheme.typography.bodySmall)
                 } else {

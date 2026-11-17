@@ -3,15 +3,31 @@ package com.bod3.app.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bod3.app.android.ReportSharer
+import com.bod3.app.android.SharedPrefsKeyValueStore
 import com.bod3.app.bluetooth.BluetoothRepository
 import com.bod3.app.bluetooth.PairedAdapter
 import com.bod3.app.obd.PidReading
 import com.bod3.app.obd.VehicleReader
+import com.bod3.app.obd.connection.ConnectionManager
+import com.bod3.app.obd.connection.ConnectionProfile
+import com.bod3.app.obd.connection.ConnectionResult
+import com.bod3.app.obd.connection.ConnectionStore
+import com.bod3.app.obd.connection.NegotiationResult
+import com.bod3.app.obd.connection.ProtocolAttempt
+import com.bod3.app.obd.connection.ReconnectPolicy
+import com.bod3.app.obd.connection.RememberedProtocol
+import com.bod3.app.obd.connection.SetupStep
+import com.bod3.app.obd.connection.VoltageMonitor
+import com.bod3.app.obd.connection.VoltageSample
+import com.bod3.app.obd.connection.retry
+import com.bod3.app.obd.dtc.DtcKind
+import com.bod3.app.obd.dtc.DtcReport
+import com.bod3.app.obd.dtc.ObdDtcReader
 import com.bod3.app.obd.elm.AdapterDriver
 import com.bod3.app.obd.elm.AdapterInfo
 import com.bod3.app.obd.elm.RawExchange
 import com.bod3.app.obd.elm.RecordingExecutor
-import com.bod3.app.obd.elm.VoltageParser
 import com.bod3.app.obd.pid.PidDefinition
 import com.bod3.app.obd.pid.Pids
 import com.bod3.app.obd.scan.DiscoveredModule
@@ -21,9 +37,10 @@ import com.bod3.app.obd.scan.ScanListener
 import com.bod3.app.obd.scan.ScanOptions
 import com.bod3.app.obd.scan.ScanProgress
 import com.bod3.app.obd.session.EcuTarget
-import com.bod3.app.obd.session.ProtocolDetector
 import com.bod3.app.obd.session.ProtocolInfo
 import com.bod3.app.obd.session.Session
+import com.bod3.app.obd.terminal.RawTerminal
+import com.bod3.app.obd.terminal.TerminalLine
 import com.bod3.app.obd.transport.BluetoothSppTransport
 import com.bod3.app.profile.RawLogFormatter
 import com.bod3.app.profile.VehicleProfile
@@ -32,14 +49,20 @@ import com.bod3.app.profile.VinRules
 import com.bod3.app.profile.VpicClient
 import com.bod3.app.profile.db.Bod3Database
 import com.bod3.app.profile.db.RoomProfileRepository
+import com.bod3.app.report.DiagnosticReport
+import com.bod3.app.report.ReportData
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,13 +71,35 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Screen { DEVICES, DASHBOARD, LIVE, SCAN, MODULES, MODULE_DETAIL }
+enum class Screen { DEVICES, DASHBOARD, LIVE, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL }
 
 sealed interface ConnectionState {
     data object Idle : ConnectionState
     data class Connecting(val device: PairedAdapter, val step: String) : ConnectionState
     data class Connected(val device: PairedAdapter) : ConnectionState
+
+    /** The Bluetooth link dropped; reconnect attempt [attempt] of [maxAttempts] is pending or running. */
+    data class Reconnecting(val device: PairedAdapter, val attempt: Int, val maxAttempts: Int, val reason: String) : ConnectionState
     data class Failed(val device: PairedAdapter, val message: String) : ConnectionState
+}
+
+val ConnectionState.device: PairedAdapter?
+    get() = when (this) {
+        ConnectionState.Idle -> null
+        is ConnectionState.Connecting -> device
+        is ConnectionState.Connected -> device
+        is ConnectionState.Reconnecting -> device
+        is ConnectionState.Failed -> device
+    }
+
+/** Saved connection settings shown on the settings screen. */
+data class ConnectionSettingsState(
+    val profiles: List<ConnectionProfile> = listOf(ConnectionProfile.DEFAULT),
+    val activeProfileId: String = ConnectionProfile.DEFAULT_ID,
+    val remembered: List<RememberedProtocol> = emptyList(),
+    val expertMode: Boolean = false,
+) {
+    val activeProfile: ConnectionProfile get() = profiles.firstOrNull { it.id == activeProfileId } ?: ConnectionProfile.DEFAULT
 }
 
 /** A value that is being loaded, has loaded, or could not be read. */
@@ -114,6 +159,20 @@ data class UiState(
     /** Raw request/response log belonging to [modules]: from the latest scan or the saved profile. */
     val rawLog: List<RawExchange> = emptyList(),
     val selectedModuleKey: String? = null,
+    val settings: ConnectionSettingsState = ConnectionSettingsState(),
+    /** Profile used for the current connection. */
+    val connectedProfile: ConnectionProfile? = null,
+    val setup: List<SetupStep> = emptyList(),
+    /** Every protocol tried during the latest detection, in order. */
+    val attempts: List<ProtocolAttempt> = emptyList(),
+    val voltageHistory: List<VoltageSample> = emptyList(),
+    val dtcs: Map<DtcKind, Readout<DtcReport>> = emptyMap(),
+    val reconnects: List<String> = emptyList(),
+    val terminal: List<TerminalLine> = emptyList(),
+    val terminalBusy: Boolean = false,
+    /** Profile being edited (a copy; saved explicitly), and where the settings screen returns to. */
+    val editingProfile: ConnectionProfile? = null,
+    val settingsReturn: Screen = Screen.DEVICES,
 ) {
     val savedProfile: VehicleProfile? get() = (profile as? ProfileState.Loaded)?.profile
 
@@ -137,8 +196,20 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private val _log = MutableStateFlow<List<String>>(emptyList())
     val log: StateFlow<List<String>> = _log.asStateFlow()
 
+    private val connectionStore = ConnectionStore(SharedPrefsKeyValueStore(application))
+    private val connectionManager = ConnectionManager(viewModelScope, connectionStore, logger = ::appendLog)
+    private val reconnectPolicy = ReconnectPolicy()
+
     private var driver: AdapterDriver? = null
+    private var adapterAddress: String? = null
     private var recorder: RecordingExecutor? = null
+    private var voltageMonitor: VoltageMonitor? = null
+    private var terminal: RawTerminal? = null
+    private var voltageJob: Job? = null
+    private var linkJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var dtcJob: Job? = null
+    private var terminalJob: Job? = null
     private var session: Session? = null
     private var reader: VehicleReader? = null
     private var connectJob: Job? = null
@@ -158,6 +229,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         refreshBluetooth()
+        refreshSettings()
     }
 
     fun refreshBluetooth() {
@@ -180,32 +252,14 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         if (connectJob?.isActive == true) return
         disconnectInternal()
         connectJob = viewModelScope.launch {
-            setStep(device, "Opening Bluetooth connection…")
-            val bluetoothDevice = bluetooth.device(device.address)
-            if (bluetoothDevice == null) {
-                _state.update { it.copy(connection = ConnectionState.Failed(device, "Invalid Bluetooth address")) }
-                return@launch
-            }
-            val newDriver = AdapterDriver(BluetoothSppTransport(bluetoothDevice), viewModelScope, logger = ::appendLog)
-            driver = newDriver
             try {
-                newDriver.open()
-                setStep(device, "Initialising adapter…")
-                val info = newDriver.initialize()
-                _state.update {
-                    it.copy(
-                        connection = ConnectionState.Connected(device),
-                        adapter = info,
-                        screen = Screen.DASHBOARD,
-                    )
-                }
-                detectVehicleInternal()
+                val result = openConnection(device)
+                appendLog("Connected with profile \"${result.profile.name}\"")
+                _state.update { it.copy(screen = Screen.DASHBOARD) }
+                onConnected(device, result)
             } catch (e: CancellationException) {
-                newDriver.close()
                 throw e
             } catch (e: Exception) {
-                newDriver.close()
-                driver = null
                 appendLog("Connection failed: ${e.message}")
                 _state.update {
                     it.copy(connection = ConnectionState.Failed(device, e.message ?: e.javaClass.simpleName))
@@ -214,18 +268,61 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Opens the transport, initialises the adapter, applies the active profile and negotiates the protocol. */
+    private suspend fun openConnection(device: PairedAdapter): ConnectionResult {
+        setStep(device, "Opening Bluetooth connection…")
+        val bluetoothDevice = bluetooth.device(device.address) ?: throw IllegalArgumentException("Invalid Bluetooth address")
+        val profile = connectionStore.activeProfile()
+        return connectionManager.connect(BluetoothSppTransport(bluetoothDevice), device.address, profile) { step ->
+            setStep(device, step)
+        }
+    }
+
+    /** Installs a fresh connection (first connect or reconnect) and reads the vehicle. */
+    private suspend fun onConnected(device: PairedAdapter, result: ConnectionResult) {
+        driver = result.driver
+        adapterAddress = device.address
+        recorder = RecordingExecutor(result.driver)
+        voltageMonitor = VoltageMonitor(result.driver).also { monitor ->
+            // Keep the graph across reconnects.
+            _state.value.voltageHistory.forEach { monitor.restore(it) }
+        }
+        _state.update {
+            it.copy(
+                connection = ConnectionState.Connected(device),
+                adapter = result.adapter,
+                connectedProfile = result.profile,
+                setup = result.setup,
+            )
+        }
+        refreshSettings()
+        watchLink(device, result.driver)
+        startVoltageMonitor()
+        applyNegotiation(result.negotiation)
+    }
+
     /** Re-runs protocol detection and the vehicle reads (e.g. after the ignition was turned on). */
     fun detectVehicle() {
         if (infoJob?.isActive == true || scanJob?.isActive == true) return
-        infoJob = viewModelScope.launch { detectVehicleInternal() }
+        val currentDriver = driver ?: return
+        val address = adapterAddress ?: return
+        val profile = _state.value.connectedProfile ?: connectionStore.activeProfile()
+        infoJob = viewModelScope.launch {
+            _state.update { it.copy(protocol = Readout.Loading, vin = Readout.Loading, ecus = emptyMap(), attempts = emptyList()) }
+            val negotiation = try {
+                connectionManager.detectProtocol(currentDriver, address, profile)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                NegotiationResult(null, emptyList()).also { appendLog("Protocol detection failed: ${e.message}") }
+            }
+            refreshSettings()
+            applyNegotiation(negotiation)
+        }
     }
 
     fun refreshBatteryVoltage() {
-        val currentDriver = driver ?: return
-        viewModelScope.launch {
-            _state.update { it.copy(batteryVoltage = Readout.Loading) }
-            readBatteryVoltage(currentDriver)
-        }
+        viewModelScope.launch { sampleVoltage() }
     }
 
     fun openLiveData() {
@@ -298,6 +395,14 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 scan = ScanUiState(),
                 rawLog = emptyList(),
                 selectedModuleKey = null,
+                connectedProfile = null,
+                setup = emptyList(),
+                attempts = emptyList(),
+                voltageHistory = emptyList(),
+                dtcs = emptyMap(),
+                reconnects = emptyList(),
+                terminal = emptyList(),
+                terminalBusy = false,
             )
         }
         refreshBluetooth()
@@ -307,40 +412,211 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { if (it.connection is ConnectionState.Failed) it.copy(connection = ConnectionState.Idle) else it }
     }
 
+    // ---- Connection settings ----------------------------------------------------------------------
+
+    private fun refreshSettings() {
+        _state.update {
+            it.copy(
+                settings = ConnectionSettingsState(
+                    profiles = connectionStore.profiles(),
+                    activeProfileId = connectionStore.activeProfileId(),
+                    remembered = connectionStore.remembered(),
+                    expertMode = connectionStore.expertModeEnabled,
+                ),
+            )
+        }
+    }
+
+    fun openSettings() {
+        pauseLiveData()
+        refreshSettings()
+        _state.update { if (it.screen == Screen.SETTINGS) it else it.copy(screen = Screen.SETTINGS, settingsReturn = it.screen) }
+    }
+
+    fun closeSettings() {
+        _state.update { it.copy(screen = it.settingsReturn, editingProfile = null) }
+    }
+
+    /** Takes effect on the next connection (or reconnect). */
+    fun selectProfile(id: String) {
+        runCatching { connectionStore.setActiveProfile(id) }.onFailure { appendLog("Profile: ${it.message}") }
+        refreshSettings()
+    }
+
+    fun newProfile() {
+        val base = connectionStore.activeProfile()
+        val profile = base.copy(id = "profile-${System.currentTimeMillis()}", name = "${base.name} (copy)")
+        _state.update { it.copy(screen = Screen.PROFILE_EDIT, editingProfile = profile) }
+    }
+
+    fun editProfile(id: String) {
+        val profile = connectionStore.profile(id) ?: return
+        _state.update { it.copy(screen = Screen.PROFILE_EDIT, editingProfile = profile) }
+    }
+
+    fun saveProfile(profile: ConnectionProfile) {
+        connectionStore.saveProfile(profile)
+        connectionStore.setActiveProfile(profile.id)
+        appendLog("Saved connection profile \"${profile.name}\"")
+        refreshSettings()
+        _state.update { it.copy(screen = Screen.SETTINGS, editingProfile = null) }
+    }
+
+    fun cancelProfileEdit() {
+        _state.update { it.copy(screen = Screen.SETTINGS, editingProfile = null) }
+    }
+
+    fun deleteProfile(id: String) {
+        runCatching { connectionStore.deleteProfile(id) }.onFailure { appendLog("Profile: ${it.message}") }
+        refreshSettings()
+    }
+
+    fun forgetProtocol(address: String) {
+        connectionStore.forgetProtocol(address)
+        refreshSettings()
+    }
+
+    fun setExpertMode(enabled: Boolean, riskAcknowledged: Boolean = false) {
+        if (enabled) {
+            if (!riskAcknowledged) return
+            connectionStore.enableExpertMode(riskAcknowledged = true)
+            appendLog("Expert mode enabled")
+        } else {
+            connectionStore.disableExpertMode()
+            appendLog("Expert mode disabled")
+            if (_state.value.screen == Screen.TERMINAL) closeTerminal()
+        }
+        refreshSettings()
+    }
+
+    // ---- Expert terminal --------------------------------------------------------------------------
+
+    fun openTerminal() {
+        val currentDriver = driver ?: return
+        if (!connectionStore.expertModeEnabled || scanJob?.isActive == true) return
+        pauseLiveData()
+        // The terminal talks to the adapter directly (not through the session's routing) and every
+        // diagnostic request still passes the read-only policy.
+        terminal = RawTerminal(currentDriver, session, expertMode = { connectionStore.expertModeEnabled })
+        _state.update { it.copy(screen = Screen.TERMINAL, terminal = terminal?.transcript.orEmpty()) }
+    }
+
+    fun sendTerminal(input: String) {
+        val current = terminal ?: return
+        if (input.isBlank() || terminalJob?.isActive == true) return
+        terminalJob = viewModelScope.launch {
+            _state.update { it.copy(terminalBusy = true) }
+            try {
+                current.send(input)
+            } finally {
+                _state.update { it.copy(terminalBusy = false, terminal = current.transcript) }
+            }
+        }
+    }
+
+    fun clearTerminal() {
+        terminal?.clear()
+        _state.update { it.copy(terminal = emptyList()) }
+    }
+
+    fun terminalText(): String = terminal?.text().orEmpty()
+
+    /** Restores the adapter settings the app depends on, then returns to the dashboard. */
+    fun closeTerminal() {
+        val current = terminal
+        terminalJob?.cancel()
+        _state.update { it.copy(screen = Screen.DASHBOARD, terminalBusy = false) }
+        if (current != null) {
+            viewModelScope.launch {
+                readOrNull { current.restore() }
+                appendLog("Terminal closed, adapter settings restored")
+            }
+        }
+    }
+
+    // ---- Logs and report --------------------------------------------------------------------------
+
+    fun logText(): String = _log.value.joinToString("\n")
+
+    fun clearLog() {
+        _log.value = emptyList()
+    }
+
+    /** Clears the raw log shown on screen. The log saved with the vehicle profile is kept. */
+    fun clearRawLog() {
+        _state.update { it.copy(rawLog = emptyList()) }
+    }
+
+    fun attemptsText(): String = _state.value.attempts.joinToString("\n") { a ->
+        "${a.selectCommand} (${a.label}): ${if (a.success) "OK" else "failed"} – ${a.result}" + (a.atdp?.let { " · ATDP $it" } ?: "")
+    }
+
+    /** Writes the diagnostic report to the cache and returns the file for the share sheet. */
+    suspend fun writeReport(): File {
+        val state = _state.value
+        val now = System.currentTimeMillis()
+        val vin = (state.vin as? Readout.Value)?.value?.takeIf(VinRules::isValid)
+        val app = getApplication<Application>()
+        val version = runCatching {
+            @Suppress("DEPRECATION")
+            app.packageManager.getPackageInfo(app.packageName, 0).versionName
+        }.getOrNull() ?: "?"
+        val data = ReportData(
+            generatedAtMs = now,
+            appVersion = version,
+            deviceName = state.connection.device?.name,
+            deviceAddress = state.connection.device?.address,
+            adapter = state.adapter,
+            profile = state.connectedProfile ?: state.settings.activeProfile,
+            setup = state.setup,
+            attempts = state.attempts,
+            protocol = (state.protocol as? Readout.Value)?.value?.description,
+            vin = (state.vin as? Readout.Value)?.value,
+            vehicle = state.savedProfile?.description?.title,
+            ecus = state.ecus,
+            voltage = state.voltageHistory,
+            dtcs = state.dtcs.values.mapNotNull { (it as? Readout.Value)?.value },
+            modules = state.modules.map { "${it.address.display} · ${it.displayName}" },
+            reconnects = state.reconnects,
+            adapterLog = _log.value,
+            rawLog = state.rawLog,
+            terminal = terminal?.text(),
+        )
+        val text = DiagnosticReport.build(data)
+        return withContext(Dispatchers.IO) { ReportSharer.write(app, DiagnosticReport.fileName(now, vin), text) }
+    }
+
     override fun onCleared() {
         disconnectInternal()
         super.onCleared()
     }
 
-    private suspend fun detectVehicleInternal() {
-        val currentDriver = driver ?: return
-        _state.update {
-            it.copy(protocol = Readout.Loading, vin = Readout.Loading, batteryVoltage = Readout.Loading, ecus = emptyMap())
-        }
-        val currentRecorder = RecordingExecutor(currentDriver)
-        recorder = currentRecorder
-
-        readBatteryVoltage(currentDriver)
-
-        val protocolInfo = try {
-            ProtocolDetector.detect(currentDriver)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            appendLog("Protocol detection failed: ${e.message}")
-            val reason = e.message ?: "Vehicle not detected"
+    /** Creates the session for the negotiated protocol and reads VIN and supported PIDs. */
+    private suspend fun applyNegotiation(negotiation: NegotiationResult) {
+        val currentRecorder = recorder ?: return
+        val protocolInfo = negotiation.protocol
+        _state.update { it.copy(attempts = negotiation.attempts, dtcs = emptyMap()) }
+        if (protocolInfo == null) {
+            val tried = negotiation.attempts.joinToString(", ") { it.selectCommand }.ifEmpty { "none" }
+            session = null
+            reader = null
             _state.update {
-                it.copy(protocol = Readout.Unavailable(reason), vin = Readout.Unavailable("Vehicle not detected"))
+                it.copy(
+                    protocol = Readout.Unavailable("No protocol answered (tried $tried)"),
+                    vin = Readout.Unavailable("Vehicle not detected"),
+                    ecus = emptyMap(),
+                )
             }
             return
         }
 
         // Requests go through the recorder so module scans can keep a raw request/response log.
-        val newSession = Session(currentRecorder, protocolInfo.protocol)
+        val options = (_state.value.connectedProfile ?: ConnectionProfile.DEFAULT).sessionOptions()
+        val newSession = Session(currentRecorder, protocolInfo.protocol, options)
         val newReader = VehicleReader(newSession, currentRecorder)
         session = newSession
         reader = newReader
-        _state.update { it.copy(protocol = Readout.Value(protocolInfo)) }
+        _state.update { it.copy(protocol = Readout.Value(protocolInfo), vin = Readout.Loading) }
 
         val vin = readOrNull { newReader.readVin() }
         _state.update { it.copy(vin = vin?.let { v -> Readout.Value(v) } ?: Readout.Unavailable("Not reported by vehicle")) }
@@ -350,13 +626,132 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(ecus = ecus) }
     }
 
-    /** Battery voltage as measured by the adapter (`ATRV`); works even when the ignition is off. */
-    private suspend fun readBatteryVoltage(currentDriver: AdapterDriver) {
-        val voltage = readOrNull {
-            currentDriver.execute("ATRV", 2_000L).takeIf { it.isSuccess }?.let { VoltageParser.parse(it.text) }
+    // ---- Link loss and reconnect ------------------------------------------------------------------
+
+    private fun watchLink(device: PairedAdapter, currentDriver: AdapterDriver) {
+        linkJob?.cancel()
+        linkJob = viewModelScope.launch {
+            val error = currentDriver.linkLost.filterNotNull().first()
+            if (driver === currentDriver) onLinkLost(device, error.message ?: "Bluetooth link lost")
         }
+    }
+
+    /**
+     * The adapter went away (out of range, unplugged, ignition cut its power). Stops everything that
+     * talks to it and reconnects with the policy's back-off; the remembered protocol is tried first.
+     */
+    private fun onLinkLost(device: PairedAdapter, reason: String) {
+        val wasLive = _state.value.screen == Screen.LIVE && _state.value.liveRunning
+        appendLog("Connection lost: $reason")
+        addReconnectNote("Link lost: $reason")
+        scanJob?.cancel()
+        liveJob?.cancel()
+        infoJob?.cancel()
+        dtcJob?.cancel()
+        terminalJob?.cancel()
+        voltageJob?.cancel()
+        driver?.close()
+        driver = null
+        session = null
+        reader = null
+        terminal = null
         _state.update {
-            it.copy(batteryVoltage = voltage?.let { v -> Readout.Value(v) } ?: Readout.Unavailable("No reading"))
+            it.copy(
+                liveRunning = false,
+                terminalBusy = false,
+                screen = if (it.screen == Screen.TERMINAL) Screen.DASHBOARD else it.screen,
+                connection = ConnectionState.Reconnecting(device, 1, reconnectPolicy.maxAttempts, reason),
+            )
+        }
+        reconnectJob?.cancel()
+        reconnectJob = viewModelScope.launch {
+            try {
+                val result = reconnectPolicy.retry(
+                    onAttempt = { attempt, waitMs ->
+                        appendLog("Reconnect attempt $attempt/${reconnectPolicy.maxAttempts} in ${waitMs / 1000} s")
+                        _state.update { it.copy(connection = ConnectionState.Reconnecting(device, attempt, reconnectPolicy.maxAttempts, reason)) }
+                    },
+                    onFailure = { attempt, error -> addReconnectNote("Attempt $attempt failed: ${error.message}") },
+                ) { openConnection(device) }
+                addReconnectNote("Reconnected (${result.negotiation.protocol?.description ?: "no protocol"})")
+                onConnected(device, result)
+                if (wasLive && _state.value.screen == Screen.LIVE) openLiveData()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                addReconnectNote("Gave up after ${reconnectPolicy.maxAttempts} attempts: ${e.message}")
+                appendLog("Reconnect failed: ${e.message}")
+                _state.update {
+                    it.copy(
+                        screen = Screen.DEVICES,
+                        connection = ConnectionState.Failed(
+                            device,
+                            "Connection lost ($reason) and ${reconnectPolicy.maxAttempts} reconnect attempts failed. " +
+                                "Check the adapter is plugged in and powered, then connect again.",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun addReconnectNote(note: String) {
+        val time = synchronized(timeFormat) { timeFormat.format(Date()) }
+        _state.update { it.copy(reconnects = (it.reconnects + "$time  $note").takeLast(50)) }
+    }
+
+    // ---- Battery voltage --------------------------------------------------------------------------
+
+    /** Samples `ATRV` periodically; paused during scans and while the expert terminal is open. */
+    private fun startVoltageMonitor() {
+        voltageJob?.cancel()
+        voltageJob = viewModelScope.launch {
+            while (isActive) {
+                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL
+                if (!busy) sampleVoltage()
+                delay(VOLTAGE_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Battery voltage as measured by the adapter (`ATRV`); works even when the ignition is off. */
+    private suspend fun sampleVoltage() {
+        val monitor = voltageMonitor ?: return
+        val sample = readOrNull { monitor.sample() }
+        _state.update {
+            it.copy(
+                batteryVoltage = sample?.let { s -> Readout.Value(s.volts) } ?: if (it.batteryVoltage is Readout.Value) it.batteryVoltage else Readout.Unavailable("No reading"),
+                voltageHistory = monitor.history,
+            )
+        }
+    }
+
+    // ---- OBD fault codes --------------------------------------------------------------------------
+
+    fun openDtcs() {
+        pauseLiveData()
+        _state.update { it.copy(screen = Screen.DTCS) }
+        if (_state.value.dtcs.isEmpty()) readDtcs()
+    }
+
+    /** Reads stored (03), pending (07) and permanent (0A) codes. Read-only: nothing is cleared. */
+    fun readDtcs() {
+        val currentSession = session ?: return
+        if (dtcJob?.isActive == true || scanJob?.isActive == true) return
+        dtcJob = viewModelScope.launch {
+            _state.update { it.copy(dtcs = DtcKind.entries.associateWith { Readout.Loading }) }
+            val reader = ObdDtcReader(currentSession)
+            for (kind in DtcKind.entries) {
+                val value: Readout<DtcReport> = try {
+                    Readout.Value(reader.read(kind))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    appendLog("${kind.label} codes: ${e.message}")
+                    Readout.Unavailable(e.message ?: "Read failed")
+                }
+                _state.update { it.copy(dtcs = it.dtcs + (kind to value)) }
+            }
         }
     }
 
@@ -543,6 +938,14 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun disconnectInternal() {
+        reconnectJob?.cancel()
+        linkJob?.cancel()
+        voltageJob?.cancel()
+        dtcJob?.cancel()
+        terminalJob?.cancel()
+        terminal = null
+        voltageMonitor = null
+        adapterAddress = null
         scanJob?.cancel()
         profileJob?.cancel()
         liveJob?.cancel()
@@ -557,7 +960,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun setStep(device: PairedAdapter, step: String) {
         appendLog(step)
-        _state.update { it.copy(connection = ConnectionState.Connecting(device, step)) }
+        // While reconnecting the banner keeps showing the attempt number; the steps go to the log.
+        _state.update { if (it.connection is ConnectionState.Reconnecting) it else it.copy(connection = ConnectionState.Connecting(device, step)) }
     }
 
     private suspend fun <T> readOrNull(block: suspend () -> T?): T? = try {
@@ -577,6 +981,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val LIVE_PAUSE_MS = 250L
+        const val VOLTAGE_INTERVAL_MS = 5_000L
         const val MAX_LOG_LINES = 300
     }
 }

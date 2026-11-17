@@ -108,6 +108,7 @@ data class ObdResponse(
 class Session(
     private val executor: CommandExecutor,
     initialProtocol: ObdProtocol,
+    val options: SessionOptions = SessionOptions.DEFAULT,
 ) {
     private val lock = Mutex()
 
@@ -176,16 +177,19 @@ class Session(
 
     private fun resetToDefaultRouting() {
         if (!protocol.isCan) return
+        // Only the adapter's power-on defaults are known; a custom broadcast filter is still to be sent.
         val default = HeaderCommands.routingFor(EcuTarget.Broadcast, protocol.headerFormat)
         appliedHeader = default.header
         appliedFilter = default.filter
         appliedFlowControl = default.flowControl
+        // With a custom broadcast filter the power-on state is not the broadcast routing the app wants.
+        appliedTarget = if (HeaderCommands.routingFor(EcuTarget.Broadcast, protocol.headerFormat, options) == default) EcuTarget.Broadcast else null
     }
 
     private suspend fun applyTarget(target: EcuTarget) {
         if (!protocol.isCan) return
         if (target == appliedTarget) return
-        val wanted = HeaderCommands.routingFor(target, protocol.headerFormat)
+        val wanted = HeaderCommands.routingFor(target, protocol.headerFormat, options)
         appliedTarget = null
         try {
             if (appliedHeader != wanted.header) {
@@ -223,7 +227,7 @@ class Session(
         if (elm.error != null && elm.error != ElmError.NO_DATA) throw ObdRequestException(elm.error, elm)
         if (elm.error != null) return ObdResponse(request, elm, emptyList(), emptyList())
 
-        val all = ResponseDecoder.decode(elm.lines, protocol)
+        val all = ResponseDecoder.decode(elm.lines, protocol, options.extendedAddressing)
         val responders = FrameParser.parse(elm.lines, protocol.headerFormat).map { it.header }.distinct()
         val service = request[0]
         val positive = all.filter { message -> matchesRequest(request, message.payload) }

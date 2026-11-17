@@ -85,10 +85,19 @@ object IsoTp {
 
 object ResponseDecoder {
     /** Turns adapter response lines into per-ECU messages for the given protocol. */
-    fun decode(lines: List<String>, protocol: ObdProtocol): List<EcuMessage> {
+    /**
+     * @param extendedAddressing ISO 15765-2 extended addressing: the first data byte of every CAN frame
+     *   is the address of the tester and is removed before ISO-TP reassembly.
+     */
+    fun decode(lines: List<String>, protocol: ObdProtocol, extendedAddressing: Boolean = false): List<EcuMessage> {
         val frames = FrameParser.parse(lines, protocol.headerFormat)
         return if (protocol.isCan) {
-            IsoTp.assemble(frames)
+            val transport = if (extendedAddressing) {
+                frames.mapNotNull { frame -> frame.data.drop(1).takeIf { it.isNotEmpty() }?.let { Frame(frame.header, it) } }
+            } else {
+                frames
+            }
+            IsoTp.assemble(transport)
         } else {
             // Non-CAN protocols have no transport layer: every line is its own message.
             frames.map { EcuMessage(it.header, it.data) }
