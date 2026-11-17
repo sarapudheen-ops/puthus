@@ -10,6 +10,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -54,6 +57,14 @@ class AdapterDriver(
     /** Set once the link is gone; every later command fails fast with this error. */
     @Volatile
     private var connectionError: TransportException? = null
+
+    private val _linkLost = MutableStateFlow<TransportException?>(null)
+
+    /**
+     * Becomes non-null when the link drops unexpectedly (read or write failure, remote close).
+     * Stays null after a deliberate [close], so observers can tell a loss from a disconnect.
+     */
+    val linkLost: StateFlow<TransportException?> = _linkLost.asStateFlow()
 
     @Volatile
     var capabilities: AdapterCapabilities = AdapterCapabilities.NONE
@@ -176,10 +187,10 @@ class AdapterDriver(
         logger("> $command")
         try {
             transport.write("$command\r".toByteArray(Charsets.US_ASCII))
-        } catch (e: TransportException) {
-            throw e
         } catch (e: Exception) {
-            throw TransportException("Write to adapter failed", e)
+            val error = e as? TransportException ?: TransportException("Write to adapter failed", e)
+            markLost(error)
+            throw error
         }
 
         val raw = withTimeoutOrNull(timeoutMs) { receivePrompt() }
@@ -227,12 +238,16 @@ class AdapterDriver(
             throw e
         } catch (e: Exception) {
             val error = e as? TransportException ?: TransportException("Read failed", e)
-            if (connectionError == null) {
-                connectionError = error
-                logger("Connection lost: ${e.message}")
-            }
+            markLost(error)
             prompts.close(error)
         }
+    }
+
+    private fun markLost(error: TransportException) {
+        if (connectionError != null) return
+        connectionError = error
+        logger("Connection lost: ${error.message}")
+        _linkLost.value = error
     }
 
     companion object {

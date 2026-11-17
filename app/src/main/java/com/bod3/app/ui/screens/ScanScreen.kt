@@ -41,6 +41,7 @@ fun ScanScreen(
     onOtherBusChange: (Boolean) -> Unit,
     onOpenModules: () -> Unit,
     rawLogText: () -> String,
+    onClearLog: () -> Unit,
 ) {
     val scan = state.scan
     Scaffold(
@@ -127,7 +128,7 @@ fun ScanScreen(
                         Button(onClick = onOpenModules, enabled = state.modules.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
                             Text("View modules")
                         }
-                        RawLogActions(rawLogText, "raw log", enabled = state.rawLog.isNotEmpty())
+                        RawLogActions(rawLogText, "raw log", enabled = state.rawLog.isNotEmpty() && !state.scan.running, onClear = onClearLog)
                     }
                 }
             }

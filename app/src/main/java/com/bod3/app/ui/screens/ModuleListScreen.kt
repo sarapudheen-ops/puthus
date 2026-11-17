@@ -42,6 +42,7 @@ fun ModuleListScreen(
     onOpenModule: (String) -> Unit,
     onRescan: () -> Unit,
     rawLogText: () -> String,
+    onClearLog: () -> Unit,
 ) {
     val profile = state.savedProfile
     val modules = state.modules
@@ -91,7 +92,7 @@ fun ModuleListScreen(
                     }
                     InfoRow("Modules", modules.size.toString())
                     InfoRow("Fault codes", modules.sumOf { it.dtcs.faultCount ?: 0 }.toString())
-                    RawLogActions(rawLogText, "raw log", enabled = state.rawLog.isNotEmpty())
+                    RawLogActions(rawLogText, "raw log", enabled = state.rawLog.isNotEmpty(), onClear = onClearLog)
                 }
             }
             if (modules.isEmpty()) {

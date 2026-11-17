@@ -4,12 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -27,12 +30,22 @@ internal fun limitForSharing(text: String): String =
         text.take(MAX_SHARE_CHARS) + "\n… truncated (${text.length - MAX_SHARE_CHARS} more characters)"
     }
 
-/** "Copy" and "Share" buttons for a raw log. [text] is only built when a button is tapped. */
+/**
+ * "Copy", "Share" and (with [onClear]) "Clear" buttons for a log. [text] is only built when a button
+ * is tapped. The buttons wrap onto a second line on narrow screens.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun RawLogActions(text: () -> String, label: String, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun RawLogActions(
+    text: () -> String,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClear: (() -> Unit)? = null,
+) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(
             enabled = enabled,
             onClick = {
@@ -43,6 +56,12 @@ fun RawLogActions(text: () -> String, label: String, modifier: Modifier = Modifi
         OutlinedButton(enabled = enabled, onClick = { shareText(context, label, limitForSharing(text())) }) {
             Icon(Icons.Filled.Share, contentDescription = null)
             Text(" Share")
+        }
+        if (onClear != null) {
+            TextButton(enabled = enabled, onClick = onClear) {
+                Icon(Icons.Filled.Delete, contentDescription = null)
+                Text(" Clear")
+            }
         }
     }
 }

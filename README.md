@@ -1,6 +1,6 @@
 # bod3
 
-Read-only OBD-II diagnostic app for Android, built with Kotlin, Jetpack Compose and Material 3.
+OBD-II diagnostic app for Android (read-only so far), built with Kotlin, Jetpack Compose and Material 3.
 Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC3313 chip (Vgate / vLinker).
 
 | | |
@@ -51,6 +51,40 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
   count), module detail (identifiers with raw hex, DTCs with status, raw request/response log).
   Copy or share the module or full log in one tap.
 
+## Features (M1): connection for any vehicle
+
+- **Protocol negotiation:** tries the protocol that last worked with this adapter first, then the
+  automatic search (`ATSP0`), then `ATSP5, 4, 3, 6, 7, 8, 9` (KWP fast, KWP slow, ISO 9141-2, the four
+  CAN variants). Each attempt sends `ATSPx`, the read-only probe `0100` and `ATDP`; the raw reply,
+  `ATDP` text and duration are logged and shown under "Protocol detection". The working protocol is
+  remembered per adapter. If nothing answers, the adapter stays connected so you can turn the ignition
+  on and tap *Detect vehicle*.
+- **Connection profiles** (gear icon on the adapter list and the dashboard): force a protocol (with or
+  without fallbacks), request and search timeouts, adapter reply timeout (`ATST`, or `VTTOST` when the
+  adapter supports vLinker VT commands), adaptive timing (`ATAT0/1/2`), a broadcast receive filter
+  (`ATCF`/`ATCM`), custom flow control (`ATFCSH`/`ATFCSD`/`ATFCSM1`) and ISO 15765-2 extended addressing
+  (`ATCEA`). Two built-in profiles (Automatic and a patient K-line profile). Rejected setup commands are
+  logged and skipped, never fatal.
+- **K-line** (ISO 9141-2, ISO 14230-4 KWP2000): live data, VIN (the five-message K-line reply) and OBD fault
+  codes; module scans stay CAN-only.
+- **Fault codes (OBD):** stored (03), pending (07) and permanent (0A) codes per ECU, on CAN and K-line.
+  Read-only.
+- **Reconnect:** if the Bluetooth link drops, live data and scans stop, and the app reconnects after 1,
+  3, 6 and 10 s, trying the remembered protocol first. Live data resumes after a successful reconnect.
+- **Adapter capabilities:** ATI, AT@1, VT (`VTVERS`) and ST (`STI`) detection, plus the profile's setup steps.
+- **Battery voltage monitor:** `ATRV` every 5 s with a graph, min/max and low/charging thresholds
+  (12.0 V / 13.2 V). It pauses during module scans and while the terminal is open.
+- **Logs:** every log (adapter log, raw scan log, module log, protocol attempts, terminal) has Copy, Share
+  and Clear. Clear only clears what is on screen; the raw log saved with a vehicle profile is kept.
+- **Share diagnostic report:** a text file with adapter info, profile, setup, protocol attempts, vehicle,
+  voltage, fault codes, modules, reconnects and all logs, shared through the share sheet (FileProvider,
+  cache only).
+- **Expert mode and raw terminal:** off by default; you must acknowledge the risks to turn it on. The terminal
+  sends AT commands as typed, except baud-rate, memory, low-power and monitor commands. ST/VT commands are
+  limited to identification queries. OBD/UDS requests must pass the same read-only policy as the rest of
+  the app, so writes, clears and actuator tests are blocked. When the terminal closes, the app restores
+  `ATE0 ATS0 ATH1 ATCAF1 ATR1` and, if routing was changed, re-selects the protocol and re-sends its routing.
+
 ## Architecture
 
 ```
@@ -70,6 +104,13 @@ obd/elm/RecordingExecutor  raw request/response log
 obd/VehicleReader   high-level reads (supported PIDs, VIN, voltage, live PIDs)
 profile/            VehicleProfileService, vPIC client + parser, offline VIN decoder, ModuleCodec
 profile/db/         Room entities, DAO, database, RoomProfileRepository (Android)
+obd/connection/     ConnectionProfile (+ JSON codec), ConnectionStore (profiles, remembered protocols,
+                    Expert mode), ProtocolNegotiator, AdapterSetup, ConnectionManager, VoltageMonitor,
+                    ReconnectPolicy
+obd/dtc/            ObdDtcReader: services 03 / 07 / 0A on CAN and K-line
+obd/terminal/       TerminalPolicy, RawTerminal (expert raw terminal)
+report/             DiagnosticReport (shareable text report)
+android/            SharedPreferences store, ReportSharer (FileProvider)
 ```
 
 Everything under `obd/` and `profile/` except `BluetoothSppTransport` and `profile/db/` is plain Kotlin
@@ -77,6 +118,9 @@ with no Android dependencies, and the unit tests under `app/src/test` cover it. 
 `testing/SimulatedCanAdapter`, a simulated ELM327 on a CAN bus. It models headers, receive filters, ISO-TP
 framing, both ID lengths and per-module behaviour (negative replies, response pending, lost flow
 control), and it fails any test that sends a request outside the read-only policy.
+`testing/SimulatedVehicleElm` simulates a vLinker MC+ plugged into a vehicle on any protocol (automatic
+search, explicit `ATSPx`, `ATDP`/`ATDPN`, VT detection, K-line framing with checksums, ISO-TP on CAN). The
+connection tests use it for negotiation fallbacks, profile setup, K-line VIN/live data/DTCs and link loss.
 
 **Adapter init:** `ATZ`, `ATE0`, `ATL0`, `ATS0`, `ATH1`, `ATSP0`, then `ATI`, `AT@1`. `ATH1` and `ATSP0` are
 required; the others are tolerated if a clone rejects them. ST/VT vendor commands are blocked until the
