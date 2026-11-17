@@ -31,7 +31,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Build debug APK, run lint and unit tests
-        run: ./gradlew assembleDebug lintDebug testDebugUnitTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug lintDebug testDebugUnitTest --continue --stacktrace 2>&1 | tee build.log
+
+      # Surface compiler errors, lint errors and test failures as annotations on the PR.
+      - name: Annotate build failures
+        if: failure()
+        run: .github/scripts/annotate-build-failures.sh build.log
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
@@ -46,6 +53,7 @@ jobs:
         with:
           name: build-reports
           path: |
+            build.log
             app/build/reports/
             app/build/test-results/
             build/reports/

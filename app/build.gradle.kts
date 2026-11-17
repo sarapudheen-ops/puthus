@@ -42,6 +42,9 @@ android {
         htmlReport = true
         xmlReport = true
         sarifReport = true
+        // Also print issues to the console so CI can annotate them.
+        textReport = true
+        textOutput = file("stdout")
     }
 }
 
