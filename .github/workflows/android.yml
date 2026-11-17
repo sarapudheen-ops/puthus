@@ -35,6 +35,15 @@ jobs:
           set -o pipefail
           ./gradlew assembleDebug lintDebug testDebugUnitTest --continue --stacktrace 2>&1 | tee build.log
 
+      - name: Summarise unit tests
+        if: always()
+        run: |
+          shopt -s nullglob
+          files=(app/build/test-results/testDebugUnitTest/*.xml)
+          [ ${#files[@]} -gt 0 ] || exit 0
+          sum() { grep -ho "<testsuite [^>]*" "${files[@]}" | grep -o " $1=\"[0-9]*\"" | grep -o "[0-9]*" | awk '{ t += $1 } END { print t + 0 }'; }
+          echo "::notice title=Unit tests::$(sum tests) tests, $(sum failures) failures, $(sum errors) errors, $(sum skipped) skipped in ${#files[@]} classes"
+
       # Surface compiler errors, lint errors and test failures as annotations on the PR.
       - name: Annotate build failures
         if: failure()
