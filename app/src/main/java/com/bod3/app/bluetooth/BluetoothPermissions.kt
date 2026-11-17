@@ -21,7 +21,7 @@ object BluetoothPermissions {
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
     /** Permissions to request at runtime on this device; empty below Android 12. */
-    @SuppressLint("InlinedApi")
+    @get:SuppressLint("InlinedApi")
     val runtimePermissions: Array<String>
         get() = if (isRuntimePermissionRequired) arrayOf(Manifest.permission.BLUETOOTH_CONNECT) else emptyArray()
 
