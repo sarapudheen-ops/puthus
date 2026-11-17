@@ -15,6 +15,9 @@
          The app never scans, so BLUETOOTH_SCAN and location permissions are not requested. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- Decoding VINs with the NHTSA vPIC web service. Optional: profiles still work offline. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

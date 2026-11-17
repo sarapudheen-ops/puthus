@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.bod3.app.R
 import com.bod3.app.ui.ConnectionState
+import com.bod3.app.ui.ProfileState
 import com.bod3.app.ui.Readout
 import com.bod3.app.ui.UiState
 
@@ -44,6 +45,8 @@ fun DashboardScreen(
     onRefreshVoltage: () -> Unit,
     onDetectVehicle: () -> Unit,
     onOpenLiveData: () -> Unit,
+    onOpenScan: () -> Unit,
+    onOpenModules: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     val deviceName = (state.connection as? ConnectionState.Connected)?.device?.name
@@ -81,6 +84,8 @@ fun DashboardScreen(
                 enabled = state.protocol is Readout.Value && !busy,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Live data") }
+
+            ProfileCard(state, busy, onOpenScan, onOpenModules)
 
             LogCard(log)
         }
@@ -129,6 +134,41 @@ private fun VehicleCard(state: UiState, onRefreshVoltage: () -> Unit, onDetectVe
         if (state.protocol is Readout.Unavailable) {
             Text(
                 "Turn the ignition on (engine may stay off), then tap Detect vehicle.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileCard(state: UiState, busy: Boolean, onOpenScan: () -> Unit, onOpenModules: () -> Unit) {
+    SectionCard("Vehicle profile & modules") {
+        when (val profile = state.profile) {
+            ProfileState.None -> Text(
+                if (state.vin is Readout.Value) "—" else "A profile is saved once the VIN is known (from OBD or a module scan).",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            ProfileState.Loading -> Text("Loading profile…")
+            is ProfileState.Failed -> Text("Profile unavailable: ${profile.message}", color = MaterialTheme.colorScheme.error)
+            is ProfileState.Loaded -> {
+                val p = profile.profile
+                InfoRow("Vehicle", p.description?.title ?: "Unknown make/model")
+                p.description?.note?.let { InfoRow("Decoding", it) }
+                InfoRow("Status", if (profile.isNew) "New profile" else "Saved profile loaded")
+                InfoRow("Saved modules", if (p.lastScanAtMs == null) "Not scanned yet" else "${p.modules.size} · ${p.totalFaults} fault(s)")
+                p.lastScanAtMs?.let { InfoRow("Last scan", formatTime(it)) }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onOpenScan, enabled = (state.canScan && !busy) || state.scan.running) {
+                Text(if (state.scan.running) "Scan running…" else "Scan modules")
+            }
+            OutlinedButton(onClick = onOpenModules, enabled = state.modules.isNotEmpty()) { Text("Modules (${state.modules.size})") }
+        }
+        if (state.protocol is Readout.Value && !state.canScan && !state.scan.running) {
+            Text(
+                "Module scan needs a CAN vehicle (ISO 15765-4).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
