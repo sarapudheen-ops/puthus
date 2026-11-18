@@ -15,9 +15,9 @@ from capstone.arm64 import ARM64_OP_IMM, ARM64_OP_REG, ARM64_OP_MEM
 from elftools.elf.elffile import ELFFile
 
 READERS = {
-    "libDEVICEID.so": ["fopenEx", "freadEx", "fseekEx", "andr_memfopen", "andr_memfread"],
-    "libSTD.so": ["GagDecrypt", "decrypt", "encrypt", "GetGAGOffsetFromGGP", "SearchIdOpenFile", "GetTextFromTextLib"],
-    "libTOYOTA_FILE.so": ["MyFopen", "MyFopenEx", "GetAllToyotaTblData", "GetToyotaTblData", "GetVehicleInfoData", "GetSystemListData"],
+    "libDEVICEID.so": ["@0x8dc4:0x254"],
+    "libSTD.so": ["OpenFileIssueSearchID", "EncryptNumber", "ggp_Open", "IdSearch"],
+    "libTOYOTA_FILE.so": ["GetVehicleInfoData", "GetSystemListData"],
     "libDIAG.so": ["FOPEN", "FOPEN_Ex", "OpenDiagReadFileDll", "OpenSearchIDDLL"],
 }
 
@@ -63,11 +63,14 @@ def reader_report(data: bytes, name: str, wanted: list[str]) -> str:
     md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
     md.detail = True
     for function in wanted:
-        symbol = symbols.get(function)
-        if symbol is None:
-            out.append(f"Missing symbol: {function}\n")
-            continue
-        start, size = symbol.entry.st_value, symbol.entry.st_size
+        if function.startswith("@"):
+            start, size = (int(s, 0) for s in function[1:].split(":"))
+        else:
+            symbol = symbols.get(function)
+            if symbol is None:
+                out.append(f"Missing symbol: {function}\n")
+                continue
+            start, size = symbol.entry.st_value, symbol.entry.st_size
         out.extend([f"## {function} @ {start:#x}, {size} bytes", "", "```text"])
         known = {}
         for ins in md.disasm(memory(start, min(size, 12000)), start):
