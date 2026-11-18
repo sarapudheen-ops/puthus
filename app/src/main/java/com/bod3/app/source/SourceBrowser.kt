@@ -211,10 +211,11 @@ class SourceBrowser(private val db: SourceSql, private val manifest: SourceManif
 
     private fun texts(req: SourceRequest, library: String): SourcePage {
         val info = one("SELECT * FROM text_library WHERE name=?", library)
-        // instr() unlike SQLite LIKE sees content after embedded NULs (code\0description).
+        // Old Android SQLite LOWER(), not just LIKE, stops at embedded NULs.
+        // Search the NUL-free derivative; previews/detail still use the original bytes.
         val rows = read("""SELECT id,value IS NULL AS opaque,
             CASE WHEN value IS NULL THEN substr(raw,1,64) ELSE substr(CAST(value AS BLOB),1,240) END AS preview
-            FROM text_record WHERE library=? AND (?='' OR instr(lower(id),lower(?))>0 OR instr(lower(value),lower(?))>0)
+            FROM text_record WHERE library=? AND (?='' OR instr(lower(id),lower(?))>0 OR instr(lower(search_text),lower(?))>0)
             ORDER BY id LIMIT 41 OFFSET ?""".trimIndent(), library, req.query, req.query, req.query, req.offset)
         return paged(req, rows, library, "Records are source data, not runnable formulas/recipes. Text previews are bounded; open a record for every byte. Embedded NULs are shown as \\0, not hidden.",
             fields = listOf(info.numberField("records", "Indexed records"), info.numberField("non_utf8", "Non-UTF-8 retained"), info.field("source_sha256", "Original member SHA-256")),

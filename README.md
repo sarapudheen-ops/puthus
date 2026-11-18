@@ -341,7 +341,8 @@ all 1,410 decoded files, all 198,091 English records (including non-UTF-8 bytes)
 regional system/ECU relationships and shared frame/byte dictionaries. Search, follow validated source
 links, inspect raw rows/opaque formats and share evidence pages offline. Catalog model pages can
 explicitly search the corresponding source paths. This is an indexed, lazily installed data pack
-(about 34 MiB compressed / 239 MiB installed), not new executable ECU/PID/coding/test definitions.
+(allow about 300 MiB free for installation; exact size is shown in the library), not new executable
+ECU/PID/coding/test definitions.
 Opening it never selects a vehicle or sends/evaluates recovered bytes or EXPRESS scripts.
 
 See [complete offline library, build steps and operational boundaries](docs/toyota-app-library.md),

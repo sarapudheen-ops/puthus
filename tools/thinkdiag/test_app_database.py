@@ -33,7 +33,14 @@ class AppDatabaseTest(unittest.TestCase):
         found = self.db.execute("SELECT id,value,raw FROM text_record ORDER BY id").fetchall()
         self.assertEqual(("00000001", "name\0value\0\0", b""), found[0])
         self.assertEqual(("00000002", None, b"\xff\xfe\0"), found[1])
+        self.assertEqual([("name value  ",), (None,)], self.db.execute("SELECT search_text FROM text_record ORDER BY id").fetchall())
         self.assertEqual((2, 1), self.db.execute("SELECT records,non_utf8 FROM text_library").fetchone())
+
+    def test_every_stored_payload_is_rehashed_even_if_damage_keeps_the_same_length(self):
+        insert_decoded(self.db, "SPECFUNC.BIN", b"abc", {})
+        self.db.execute("UPDATE source_file SET payload=?", (b"xyz",))
+        with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+            validate_database(self.db)
 
     def test_unknown_payload_is_retained_with_an_explicit_issue(self):
         insert_decoded(self.db, "SPECFUNC.BIN", b"\0opaque\xff", {})

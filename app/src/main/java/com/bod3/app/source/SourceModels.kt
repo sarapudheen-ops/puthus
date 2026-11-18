@@ -30,7 +30,7 @@ sealed interface SourceLocation {
 
 enum class FileFilter { ALL, ECUS, ISSUES }
 
-/** Fixed, bounded pages: never materialize the 239 MiB database as app state. */
+/** Fixed, bounded pages: never materialize the large database as app state. */
 data class SourceRequest(val location: SourceLocation = SourceLocation.Overview, val query: String = "", val offset: Long = 0) {
     init {
         require(query.length <= MAX_QUERY) { "Search is limited to $MAX_QUERY characters" }

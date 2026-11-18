@@ -52,9 +52,9 @@ class SourceBrowserTest {
         for ((name, count) in listOf("TCODE_EN.GAG" to 1, "EXPRESS.GAG" to 1, "VEHICLEADAS.GAG" to 1)) {
             insert("INSERT INTO text_library VALUES(?,?,?,?)", name, count, if (name == "VEHICLEADAS.GAG") 1 else 0, "0".repeat(64))
         }
-        insert("INSERT INTO text_record VALUES(?,?,?,?)", "TCODE_EN.GAG", "04012345", "P1234\u0000Engine speed\u0000", byteArrayOf())
-        insert("INSERT INTO text_record VALUES(?,?,?,?)", "EXPRESS.GAG", "00000001", "ID(ABCD); return 1 + 2;", byteArrayOf())
-        insert("INSERT INTO text_record VALUES(?,?,?,?)", "VEHICLEADAS.GAG", "D0000001", null, byteArrayOf(0xff.toByte(), 0xfe.toByte(), 0))
+        insert("INSERT INTO text_record VALUES(?,?,?,?,?)", "TCODE_EN.GAG", "04012345", "P1234\u0000Engine speed\u0000", byteArrayOf(), "P1234 Engine speed ")
+        insert("INSERT INTO text_record VALUES(?,?,?,?,?)", "EXPRESS.GAG", "00000001", "ID(ABCD); return 1 + 2;", byteArrayOf(), "ID(ABCD); return 1 + 2;")
+        insert("INSERT INTO text_record VALUES(?,?,?,?,?)", "VEHICLEADAS.GAG", "D0000001", null, byteArrayOf(0xff.toByte(), 0xfe.toByte(), 0), null)
         insert("INSERT INTO command VALUES(?,?,?,?,?,?)", "EU", 1, "21 00", null, 100, 2)
         insert("INSERT INTO command VALUES(?,?,?,?,?,?)", "EU", 2, "ff ff", null, 102, 2)
         insert("INSERT INTO command VALUES(?,?,?,?,?,?)", "EU", 3, "61 00", null, 104, 2)
@@ -151,6 +151,16 @@ class SourceBrowserTest {
         val record = load(SourceLocation.TextRecord("TCODE_EN.GAG", "04012345"))
         assertEquals("P1234\\0Engine speed\\0", record.rows.first().detail)
         assertTrue(record.rows.last().detail.contains("00 45 6e 67"))
+    }
+
+    @Test fun legacySqliteLowerCannotHideNulDelimitedDescriptions() {
+        // Reproduce Android 24's older LOWER() even on a modern JVM SQLite.
+        org.sqlite.Function.create(connection, "lower", object : org.sqlite.Function() {
+            override fun xFunc() { result(value_text(0)?.substringBefore('\u0000')?.lowercase()) }
+        })
+        val page = load(SourceLocation.Texts("TCODE_EN.GAG"), "engine")
+        assertEquals(1, page.rows.size)
+        assertTrue(page.rows.single().detail.contains("P1234\\0Engine speed\\0"))
     }
 
     @Test fun nonUtf8AndExpressRecordsRemainInertAndInspectable() {

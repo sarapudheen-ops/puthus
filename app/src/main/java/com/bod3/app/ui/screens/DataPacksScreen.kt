@@ -73,7 +73,7 @@ fun DataPacksScreen(state: PacksState, actions: DataPacksActions) {
             state.message?.let { MessageCard(it, actions.onDismissMessage) }
 
             SectionCard("Complete Toyota source library · offline") {
-                Text("Browse all 1,410 decoded files, 198,091 English records, the manual vehicle source menu, regional system/ECU links and shared frame/byte dictionaries. Opaque and damaged records are retained explicitly. First open installs about 240 MiB of private, non-backed-up data.", style = MaterialTheme.typography.bodySmall)
+                Text("Browse all 1,410 decoded files, 198,091 English records, the manual vehicle source menu, regional system/ECU links and shared frame/byte dictionaries. Opaque and damaged records are retained explicitly. Allow about 300 MiB free for first-open installation in private, non-backed-up storage.", style = MaterialTheme.typography.bodySmall)
                 Text("Separate from runnable catalog definitions. No vendor code or EXPRESS is executed, no source request is sent, and opening the library never selects a vehicle.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = actions.onToyotaSource) { Text("Browse recovered Toyota data") }
             }

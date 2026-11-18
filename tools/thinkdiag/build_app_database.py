@@ -154,7 +154,10 @@ def insert_english(db, name, data, format_xor):
             non_utf8 += 1
         # UTF-8 TEXT includes embedded/trailing NULs. Re-encoding it is lossless.
         # Non-UTF-8 remains raw, not guessed or removed.
-        db.execute("INSERT INTO text_record VALUES(?,?,?,?)", (name, key, value, raw if value is None else b""))
+        # Android 24 SQLite LOWER() stops at NUL. Only the search derivative
+        # replaces NULs; original value/raw remain byte-for-byte recoverable.
+        db.execute("INSERT INTO text_record VALUES(?,?,?,?,?)", (name, key, value, raw if value is None else b"",
+                   value.replace("\0", " ") if value is not None else None))
         if name == "TEXT_EN.GAG" and value is not None:
             texts[key] = value.rstrip("\0")
     db.execute("INSERT INTO text_library VALUES(?,?,?,?)", (name, library.count, non_utf8, sha(data)))
@@ -184,6 +187,11 @@ def validate_database(db):
         raise ValueError("Source payload byte count mismatch")
     if db.execute("SELECT count(*) FROM data_table t LEFT JOIN source_file f ON f.name=t.file WHERE f.name IS NULL OR t.source_offset<10 OR t.source_offset+t.body_bytes>f.bytes OR (t.stride IS NOT NULL AND t.row_count*t.stride!=t.body_bytes)").fetchone()[0]:
         raise ValueError("Typed-table index is out of source bounds")
+    for name, expected, payload in db.execute("SELECT name,sha256,payload FROM source_file"):
+        if sha(payload) != expected:
+            raise ValueError(f"Stored source SHA-256 mismatch: {name}")
+    if db.execute("SELECT count(*) FROM text_record WHERE (value IS NULL)!=(search_text IS NULL) OR (value IS NOT NULL AND (length(raw)!=0 OR length(CAST(value AS BLOB))!=length(CAST(search_text AS BLOB)) OR instr(search_text,char(0))>0))").fetchone()[0]:
+        raise ValueError("Invalid text search derivative or source-byte preservation")
     counts = {name: db.execute(f"SELECT count(*) FROM {name}").fetchone()[0] for name in
               ("archive_entry", "source_file", "data_table", "text_library", "text_record", "menu", "menu_edge", "vehicle", "system", "function_index", "command", "frame", "function_frame")}
     bad_commands = db.execute("SELECT count(*) FROM command WHERE error IS NOT NULL").fetchone()[0]

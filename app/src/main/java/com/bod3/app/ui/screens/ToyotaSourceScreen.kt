@@ -74,7 +74,7 @@ fun ToyotaSourceScreen(
             }
             if (state.loading) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(if (page == null) "Preparing the bundled source library… First open installs about 240 MiB in private storage. No network download or adapter is used." else "Reading source records…", style = MaterialTheme.typography.bodySmall)
+                Text(if (page == null) "Preparing the bundled source library… Allow about 300 MiB of free private storage on first open. No network download or adapter is used." else "Reading source records…", style = MaterialTheme.typography.bodySmall)
             }
             state.error?.let { error -> item {
                 SectionCard("Source library unavailable — no partial data used") {
