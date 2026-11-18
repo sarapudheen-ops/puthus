@@ -45,6 +45,24 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Sweep every diagnostic-table family and native reader
+        run: |
+          python3 tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/sweep --report .local/thinkdiag/report
+      - name: Publish exhaustive sweep evidence
+        if: always()
+        run: |
+          for report in .local/thinkdiag/report/sweep-*.md; do
+            [ -f "$report" ] || continue
+            name=$(basename "$report" .md)
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name="Toyota $name" -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=success \
+              -f "output[title]=Toyota structural research: $name" \
+              -F "output[summary]=@$report"
+          done
       - name: Convert unambiguous English DTC descriptions (no vehicle commands)
         run: |
           python3 tools/thinkdiag/convert_dtcs.py .local/thinkdiag/english/TCODE_EN.GAG.json \
@@ -80,6 +98,7 @@ jobs:
             .local/thinkdiag/decoded/
             .local/thinkdiag/english/
             .local/thinkdiag/converted/
+            .local/thinkdiag/sweep/
             .local/thinkdiag/report/decoded-manifest.json
             .local/thinkdiag/report/english-text.json
           retention-days: 14

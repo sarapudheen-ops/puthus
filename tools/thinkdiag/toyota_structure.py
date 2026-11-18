@@ -1,0 +1,121 @@
+"""Bounded Toyota V10.62 table structures, for offline research only.
+
+These parsers recover file boundaries/opaque fields, not executable diagnostic
+recipes. In particular, a section number, integer or text label is NOT a PID,
+CAN address, service or coding definition without independent reader evidence.
+"""
+from dataclasses import dataclass
+import struct
+
+MAX_RECORDS = 200_000
+
+
+def uint(data: bytes, offset: int, width: int) -> int:
+    if offset < 0 or width not in (1, 2, 4) or offset + width > len(data):
+        raise ValueError(f"Truncated integer at {offset:#x} ({width} bytes)")
+    return int.from_bytes(data[offset:offset + width], "little")
+
+
+@dataclass(frozen=True)
+class Section:
+    identity: int
+    offset: int
+    end: int
+
+
+def section_directory(data: bytes) -> list[Section]:
+    """Ecu_Data: LE32 count, then count (u8 kind, LE32 offset) entries.
+
+    All spans must fit before any are returned. Payload semantics stay opaque.
+    EOF padding is included in the final span, not interpreted as a record.
+    """
+    count = uint(data, 0, 4)
+    if not 1 <= count <= 256:
+        raise ValueError(f"Invalid section count {count}")
+    end = 4 + 5 * count
+    if end > len(data):
+        raise ValueError("Truncated section directory")
+    entries = [struct.unpack_from("<BI", data, 4 + 5 * i) for i in range(count)]
+    ids = [i for i, _ in entries]
+    offsets = [o for _, o in entries]
+    if len(set(ids)) != count or len(set(offsets)) != count:
+        raise ValueError("Duplicate section identity or offset")
+    if offsets != sorted(offsets) or offsets[0] < end or offsets[-1] >= len(data):
+        raise ValueError("Overlapping, unordered or out-of-range section offsets")
+    return [Section(identity, offset, stop) for (identity, offset), stop in
+            zip(entries, offsets[1:] + [len(data)])]
+
+
+def sentinel_index(data: bytes, start: int = 0, stride: int = 8) -> tuple[list[tuple[int, ...]], int]:
+    """LE32-keyed index terminated by a LE32 FFFFFFFF key.
+
+    SYSLIST uses 8-byte entries. FUNCDATA starts with a stride byte and has
+    28-byte entries. Values remain opaque here; consumers validate pointers.
+    """
+    if start < 0 or stride < 8 or stride > 128 or stride % 4:
+        raise ValueError("Invalid index shape")
+    rows = []
+    identities = set()
+    pos = start
+    while len(rows) < MAX_RECORDS:
+        identity = uint(data, pos, 4)
+        if identity == 0xFFFFFFFF:
+            return rows, pos + 4
+        if identity in identities:
+            raise ValueError(f"Duplicate index identity {identity}")
+        if pos + stride > len(data):
+            raise ValueError("Truncated index row / missing sentinel")
+        identities.add(identity)
+        rows.append(struct.unpack_from("<" + "I" * (stride // 4), data, pos))
+        pos += stride
+    raise ValueError("Index record limit exceeded / missing sentinel")
+
+
+def system_lists(data: bytes) -> tuple[list[tuple[int, int]], dict[int, list[bytes]]]:
+    """SYSLIST: keyed block offsets, LE16 count, packed 37-byte ECU rows.
+
+    Reader evidence: libTOYOTA_FILE.so GetVehicleInfoData / GetSystemListData
+    at 0x112B4 / 0x11574. Shared offsets are legal; partial overlaps are not.
+    """
+    index, header_end = sentinel_index(data)
+    blocks = {}
+    extents = []
+    for _, offset in index:
+        if offset < header_end:
+            raise ValueError("System-list block overlaps its index")
+        if offset in blocks:
+            continue
+        count = uint(data, offset, 2)
+        end = offset + 2 + count * 37
+        if end > len(data):
+            raise ValueError("Truncated packed system-list records")
+        blocks[offset] = [data[p:p + 37] for p in range(offset + 2, end, 37)]
+        extents.append((offset, end))
+    extents.sort()
+    if any(b[0] < a[1] for a, b in zip(extents, extents[1:])):
+        raise ValueError("Partially overlapping system-list blocks")
+    return index, blocks
+
+
+def system_fields(record: bytes) -> dict:
+    """Source fields, deliberately named by byte offset until semantics are traced."""
+    if len(record) != 37:
+        raise ValueError("A system-list record must contain exactly 37 bytes")
+    return {"u32": {str(i): uint(record, i, 4) for i in (0, 4, 8, 12, 16, 23, 28)},
+            "u8": {str(i): record[i] for i in (20, 21, 22, 27, 32, 33, 34, 35, 36)}}
+
+
+def function_index(data: bytes) -> tuple[list[tuple[int, ...]], int]:
+    """FUNCDATA's stride-tagged directory, with bounded section pointers.
+
+    Pointer columns are kept by offset, not assigned guessed command meanings.
+    """
+    stride = uint(data, 0, 1)
+    if stride != 28:
+        raise ValueError(f"Unknown FUNCDATA index stride {stride}")
+    rows, end = sentinel_index(data, 1, stride)
+    for row in rows:
+        for pointer in row[1:6]:
+            if pointer not in (0, 0xFFFFFFFF) and not end <= pointer < len(data):
+                raise ValueError("FUNCDATA pointer outside payload / overlapping index")
+    return rows, end
