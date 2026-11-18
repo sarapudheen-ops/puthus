@@ -133,7 +133,7 @@ enum class Screen {
     DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
     VEHICLES, CATALOG_EDIT, CATALOG_DATA, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
     ACTUATORS, ACTUATOR_RUN, CODING, CODING_RUN, CODING_EDITOR,
-    APP_SETTINGS, DATA_PACKS,
+    APP_SETTINGS, DATA_PACKS, TOYOTA_SOURCE,
 }
 
 sealed interface ConnectionState {
@@ -251,6 +251,10 @@ data class UiState(
     val settingsReturn: Screen = Screen.DEVICES,
     val data: DataState = DataState(),
     val catalog: CatalogState = CatalogState(),
+    /** Passive source browsing never changes catalog selection or diagnostic definitions. */
+    val toyotaSourceReturn: Screen = Screen.VEHICLES,
+    val toyotaSourceQuery: String? = null,
+    val toyotaSourceEntry: Long = 0,
     val liveConfig: LiveConfig = LiveConfig(),
     val freezeFrames: Readout<List<FreezeFrame>> = Readout.NotRead,
     val readiness: Readout<List<Readiness>> = Readout.NotRead,
@@ -1374,6 +1378,16 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             val back = if (it.screen == Screen.DEVICES || it.screen == Screen.DASHBOARD) it.screen else it.vehiclesReturn
             it.copy(screen = Screen.VEHICLES, vehiclesReturn = back, catalog = it.catalog.copy(linkingProfile = false))
         }
+    }
+
+    fun openToyotaSource(query: String? = null) {
+        pauseLiveData()
+        _state.update { it.copy(screen = Screen.TOYOTA_SOURCE, toyotaSourceReturn = it.screen,
+            toyotaSourceQuery = query, toyotaSourceEntry = it.toyotaSourceEntry + 1) }
+    }
+
+    fun closeToyotaSource() {
+        _state.update { it.copy(screen = it.toyotaSourceReturn) }
     }
 
     fun closeVehicles() {

@@ -23,57 +23,13 @@ from sweep_toyota import safe_source
 from toyota_structure import (ECU_FILE, audit_command_pool, function_index, menu_nodes,
                               section_directory, system_fields, system_lists, typed_table, uint)
 
-SCHEMA = 1
-DB_NAME = "toyota-source.db"
-MAX_ZIP_BYTES = 60 * 1024 * 1024
-MAX_DB_BYTES = 384 * 1024 * 1024
-DDL = """
-PRAGMA page_size=4096;
-PRAGMA journal_mode=OFF;
-PRAGMA synchronous=OFF;
-PRAGMA user_version=1;
-CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
-CREATE TABLE source_file (name TEXT PRIMARY KEY, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
- status TEXT NOT NULL, issue TEXT, payload BLOB NOT NULL) WITHOUT ROWID;
-CREATE TABLE data_table (id TEXT PRIMARY KEY, file TEXT NOT NULL, slot INTEGER NOT NULL, tag INTEGER NOT NULL,
- row_count INTEGER NOT NULL, stride INTEGER, source_offset INTEGER NOT NULL, body_bytes INTEGER NOT NULL) WITHOUT ROWID;
-CREATE INDEX table_file ON data_table(file,slot);
-CREATE TABLE archive_entry (path TEXT PRIMARY KEY, bytes INTEGER NOT NULL, kind TEXT NOT NULL,
- sha256 TEXT NOT NULL) WITHOUT ROWID;
-CREATE TABLE text_library (name TEXT PRIMARY KEY, records INTEGER NOT NULL, non_utf8 INTEGER NOT NULL,
- source_sha256 TEXT NOT NULL) WITHOUT ROWID;
-CREATE TABLE text_record (library TEXT NOT NULL, id TEXT NOT NULL, value TEXT, raw BLOB NOT NULL,
- PRIMARY KEY(library,id)) WITHOUT ROWID;
-CREATE TABLE menu (id INTEGER PRIMARY KEY, parent INTEGER, ordinal INTEGER NOT NULL, title_id TEXT NOT NULL,
- title TEXT NOT NULL, path TEXT NOT NULL, manual INTEGER NOT NULL, children INTEGER NOT NULL,
- down_task INTEGER NOT NULL, header_hex TEXT NOT NULL);
-CREATE INDEX menu_parent ON menu(parent,ordinal);
-CREATE TABLE menu_edge (parent INTEGER NOT NULL, ordinal INTEGER NOT NULL, target INTEGER NOT NULL,
- flags INTEGER NOT NULL, tag INTEGER NOT NULL, parameters TEXT NOT NULL, PRIMARY KEY(parent,ordinal)) WITHOUT ROWID;
-CREATE TABLE vehicle (region TEXT NOT NULL, id INTEGER NOT NULL, block INTEGER NOT NULL, PRIMARY KEY(region,id)) WITHOUT ROWID;
-CREATE TABLE system (region TEXT NOT NULL, block INTEGER NOT NULL, ordinal INTEGER NOT NULL,
- function_key INTEGER NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, ecu_file TEXT NOT NULL,
- transport TEXT NOT NULL, source_offset INTEGER NOT NULL, raw_hex TEXT NOT NULL,
- PRIMARY KEY(region,block,ordinal)) WITHOUT ROWID;
-CREATE TABLE function_index (region TEXT NOT NULL, id INTEGER NOT NULL, fields TEXT NOT NULL, PRIMARY KEY(region,id)) WITHOUT ROWID;
-CREATE TABLE command (region TEXT NOT NULL, id INTEGER NOT NULL, bytes_hex TEXT, error TEXT,
- source_offset INTEGER NOT NULL, length INTEGER NOT NULL, PRIMARY KEY(region,id)) WITHOUT ROWID;
-CREATE TABLE frame (region TEXT NOT NULL, id INTEGER NOT NULL, ref2 INTEGER NOT NULL, ref4 INTEGER NOT NULL,
- ref6 INTEGER NOT NULL, source_offset INTEGER NOT NULL, PRIMARY KEY(region,id)) WITHOUT ROWID;
-CREATE TABLE function_frame (region TEXT NOT NULL, ordinal INTEGER NOT NULL, key0 INTEGER NOT NULL,
- key2 INTEGER NOT NULL, key4 INTEGER NOT NULL, frame INTEGER NOT NULL, selector8 INTEGER NOT NULL,
- raw_hex TEXT NOT NULL, PRIMARY KEY(region,ordinal)) WITHOUT ROWID;
-"""
+from app_library_format import (DB_NAME, EXPECTED_COUNTS, FORMAT_VERSION, MAX_DB_BYTES, MAX_ZIP_BYTES, fingerprint)
+
+DDL = (Path(__file__).parent / "schema" / "app_schema.sql").read_text()
 
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
-
-
-def fingerprint():
-    root = Path(__file__).parent
-    return sha(b"".join((root / name).read_bytes() for name in
-                        ("build_app_database.py", "toyota_structure.py", "ggp.py", "yzjm.py")))
 
 
 def create_database(path):
@@ -281,18 +237,14 @@ def build(archive, decoded, english, manifest, output):
                 raise ValueError(f"Decoded hash mismatch: {name}")
             insert_decoded(db, name, data, texts)
         counts = validate_database(db)
-        expected = {"archive_entry": 1604, "source_file": 1410, "data_table": 15215, "text_library": 8,
-                    "text_record": 198091, "menu": 149731, "menu_edge": 149730, "vehicle": 10144,
-                    "system": 287030, "function_index": 1275, "command": 9774, "frame": 8775,
-                    "function_frame": 36997, "invalidCommands": 3, "opaqueFiles": 8}
-        for key, value in expected.items():
+        for key, value in EXPECTED_COUNTS.items():
             if counts[key] != value:
                 raise ValueError(f"Incomplete source library: {key}={counts[key]} not {value}")
         if db.execute("SELECT count(*) FROM text_record WHERE value IS NULL").fetchone()[0] != 4502:
             raise ValueError("Non-UTF-8 record census changed")
         if db.execute("SELECT count(*) FROM menu WHERE manual=1").fetchone()[0] == 0:
             raise ValueError("Manual branch not identified")
-        metadata = {"format": "bod3-toyota-source", "formatVersion": SCHEMA, "sourceSha256": TOYOTA_SHA256,
+        metadata = {"format": "bod3-toyota-source", "formatVersion": FORMAT_VERSION, "sourceSha256": TOYOTA_SHA256,
                     "sourceVersion": "Toyota V10.62", "processorSha256": fingerprint(), "counts": counts,
                     "executableDefinitions": 0, "expressExecution": False,
                     "sqliteVersion": sqlite3.sqlite_version, "manualSelectionOnly": True}

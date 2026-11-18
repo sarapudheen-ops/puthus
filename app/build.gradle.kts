@@ -38,6 +38,14 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets {
+        getByName("main").assets.srcDir(rootProject.file(".local/toyota-app-assets"))
+        getByName("test").resources.srcDir(rootProject.file("tools/thinkdiag/schema"))
+    }
+    androidResources {
+        // The database is already compressed. Do not inflate APK build/install work.
+        noCompress += "zip"
+    }
     lint {
         // Produce HTML/XML/SARIF reports under app/build/reports for CI artifacts
         htmlReport = true
@@ -48,6 +56,20 @@ android {
         textOutput = file("stdout")
     }
 }
+
+// Generated data is deliberately not checked into Git. Every APK (debug or release)
+// must contain the complete pinned library; there is no missing-data fallback build.
+val verifyToyotaSourceLibrary by tasks.registering(Exec::class) {
+    val source = rootProject.file(".local/toyota-app-assets/toyota-source")
+    val stamp = layout.buildDirectory.file("intermediates/toyota-source/verified.txt")
+    inputs.dir(source)
+    inputs.files(rootProject.fileTree("tools/thinkdiag") { include("*.py", "schema/*.sql") })
+    outputs.file(stamp)
+    workingDir(rootProject.projectDir)
+    commandLine("python3", "tools/thinkdiag/verify_app_database.py", "--directory", source.absolutePath,
+        "--stamp", stamp.get().asFile.absolutePath)
+}
+tasks.named("preBuild").configure { dependsOn(verifyToyotaSourceLibrary) }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
@@ -67,6 +89,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.core)
+    // Same SQLite queries as Android, exercised on the JVM against the shared schema.
+    testImplementation("org.xerial:sqlite-jdbc:3.46.1.0")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

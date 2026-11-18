@@ -51,6 +51,7 @@ class CatalogActions(
     val onOpenEcu: (EcuDefinition) -> Unit, val onImport: () -> Unit,
     val writeExport: suspend (String?, Boolean) -> File,
     val onLinkProfile: (String?) -> Unit, val onDismissMessage: () -> Unit,
+    val onToyotaSource: (String?) -> Unit,
 )
 
 /** Hierarchical manual browsing, cross-level search, favorites and recents. Never driven by a VIN. */
@@ -83,6 +84,15 @@ fun VehiclesScreen(state: UiState, actions: CatalogActions) {
                     Text("Make → Model → Generation → Variant. Browsing, importing and reading a VIN never select a vehicle. No generic vehicle fallback.", style = MaterialTheme.typography.bodySmall)
                     if (!state.offline) Text("Disconnect before changing vehicle or editing catalog configuration. ECU reads still use the current connection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                     if (active != null) TextButton(onClick = { actions.onSelect(null) }, enabled = state.offline) { Text("Clear manual selection") }
+                }
+            }
+            if (focused == null || path.firstOrNull()?.name in setOf("Toyota", "Lexus", "Toyota Thailand")) item {
+                SectionCard("Recovered Toyota diagnostic data") {
+                    Text("The complete recovered corpus is bundled separately: manual source menus, regional ECU relationships, typed tables, all eight text libraries and frame dictionaries. Loaded on demand, without changing your selected configuration.", style = MaterialTheme.typography.bodySmall)
+                    Text("Unresolved applicability, ECU addressing and formula mappings stay source-only; this is not automatic enhanced Toyota support.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = { actions.onToyotaSource(path.firstOrNull { it.level == CatalogLevel.MODEL }?.name) }) {
+                        Text(if (path.any { it.level == CatalogLevel.MODEL }) "Find this model in the source menu" else "Open complete Toyota data library")
+                    }
                 }
             }
             catalog.message?.let { message -> item { MessageCard(message, actions.onDismissMessage) } }

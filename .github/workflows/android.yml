@@ -30,6 +30,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Prepare complete offline Toyota app data
+        uses: ./.github/actions/prepare-toyota
+
       - name: Verify names-only catalog seed
         run: python3 tools/generate_catalog_seed.py --check
 
@@ -51,6 +54,11 @@ jobs:
       - name: Annotate build failures
         if: failure()
         run: .github/scripts/annotate-build-failures.sh build.log
+
+      - name: Verify the APK really bundles the complete Toyota source library
+        run: |
+          python3 tools/thinkdiag/verify_app_database.py --directory .local/toyota-app-assets/toyota-source \
+            --apk app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
