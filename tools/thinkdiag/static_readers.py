@@ -22,7 +22,8 @@ READERS = {
 }
 
 
-def reader_report(data: bytes, name: str, wanted: list[str]) -> str:
+def reader_report(data: bytes, name: str, wanted: list[str], *, include_symbols: bool = True,
+                  max_output_chars: int | None = 60000) -> str:
     elf = ELFFile(io.BytesIO(data))
     table = elf.get_section_by_name(".dynsym")
     symbols = {s.name: s for s in table.iter_symbols() if s.name}
@@ -73,7 +74,9 @@ def reader_report(data: bytes, name: str, wanted: list[str]) -> str:
             start, size = symbol.entry.st_value, symbol.entry.st_size
         out.extend([f"## {function} @ {start:#x}, {size} bytes", "", "```text"])
         known = {}
-        for ins in md.disasm(memory(start, min(size, 12000)), start):
+        decoded_bytes = 0
+        for ins in md.disasm(memory(start, size), start):
+            decoded_bytes += ins.size
             comment = ""
             ops = ins.operands
             if ins.mnemonic in ("bl", "b") and ops[0].type == ARM64_OP_IMM:
@@ -96,13 +99,18 @@ def reader_report(data: bytes, name: str, wanted: list[str]) -> str:
             if ins.mnemonic in ("bl", "blr"):
                 # Do not treat caller-saved registers as constants after a call.
                 known = {reg: value for reg, value in known.items() if md.reg_name(reg) in {f"x{i}" for i in range(19, 29)}}
+        out.extend(["```", "", f"Decoded {decoded_bytes}/{size} function bytes.", ""])
+    if include_symbols:
+        out.extend(["## Matching symbol names", "", "```text"])
+        for symbol in symbols.values():
+            if any(s in symbol.name.lower() for s in ("crypt", "file", "fopen", "fread", "bin", "ggp", "gag", "text", "tbl")):
+                out.append(f"{symbol.entry.st_value:#x} {symbol.entry.st_size:5} {symbol.name}")
         out.extend(["```", ""])
-    out.extend(["## Matching symbol names", "", "```text"])
-    for symbol in symbols.values():
-        if any(s in symbol.name.lower() for s in ("crypt", "file", "fopen", "fread", "bin", "ggp", "gag", "text", "tbl")):
-            out.append(f"{symbol.entry.st_value:#x} {symbol.entry.st_size:5} {symbol.name}")
-    out.extend(["```", ""])
-    return "\n".join(out)[:60000]
+    report = "\n".join(out)
+    if max_output_chars is not None and len(report) > max_output_chars:
+        note = "\n\n**Report truncated for display. Use the per-function sweep reports/artifact for full disassembly.**\n"
+        return report[:max_output_chars - len(note)] + note
+    return report
 
 
 if __name__ == "__main__":

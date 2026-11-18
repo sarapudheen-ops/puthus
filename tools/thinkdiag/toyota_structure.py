@@ -32,11 +32,53 @@ def typed_table(data: bytes, expected_id: int | None = None) -> TypedTable:
     identity, count, size = uint(data, 0, 2), uint(data, 2, 4), uint(data, 6, 4)
     if expected_id is not None and identity != expected_id:
         raise ValueError("Typed-table tag disagrees with directory/file")
-    if size > len(data) - 10 or len(data) - 10 - size > 3:
-        raise ValueError("Typed-table size exceeds span / unexplained trailing data")
+    if size > len(data) - 10:
+        raise ValueError(f"Typed-table size {size} exceeds span {len(data) - 10}")
+    if len(data) - 10 - size > 3:
+        raise ValueError(f"Typed-table has {len(data) - 10 - size} unexplained trailing bytes")
     if count > MAX_RECORDS * 10 or (count == 0) != (size == 0):
         raise ValueError("Invalid typed-table count/size")
     return TypedTable(identity, count, data[10:10 + size], data[10 + size:])
+
+
+def leading_typed_table(data: bytes) -> tuple[TypedTable, bytes]:
+    """The native loader reads only the leading size-declared table.
+
+    Return, rather than discard, any bytes outside that frame. They require
+    their own interpretation and are not silently called padding.
+    """
+    end = 10 + uint(data, 6, 4)
+    if end > len(data):
+        raise ValueError("Leading typed table is truncated")
+    return typed_table(data[:end]), data[end:]
+
+
+def command_pool(data: bytes) -> tuple[list[dict], bytes]:
+    """GetCmdDataInfo (libTOYOTA_COMM.so 0x1ACB0): six-byte descriptors.
+
+    Each has an LE32 blob-relative offset, u8 length, u8 opaque flag. Indices
+    are one-based; caller IDs above 10000 may use the native 10000 bias. These
+    are opaque byte sequences, NOT approved vehicle requests.
+    """
+    table, trailing = leading_typed_table(data)
+    descriptors = table.count * 6
+    if descriptors > len(table.body):
+        raise ValueError("Truncated command-pool descriptor array")
+    records = []
+    for index in range(table.count):
+        pos = index * 6
+        offset = uint(table.body, pos, 4)
+        length = table.body[pos + 4]
+        flag = table.body[pos + 5]
+        # The reader sign-extends this LE32 relative pointer. Never follow a
+        # negative pointer or a range outside the declared command-data blob.
+        if offset >= 0x80000000 or offset + length > len(table.body) - descriptors:
+            raise ValueError("Command-pool byte range is outside its declared blob")
+        start = descriptors + offset
+        records.append({"index": index + 1, "descriptorOffset": 10 + pos,
+                        "bytesOffset": 10 + start, "length": length, "flag": flag,
+                        "bytesHex": table.body[start:start + length].hex(" ")})
+    return records, trailing
 
 
 def menu_nodes(data: bytes) -> dict[int, dict]:

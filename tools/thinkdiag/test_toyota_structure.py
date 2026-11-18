@@ -1,8 +1,8 @@
 import struct
 import unittest
 
-from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_directory, sentinel_index,
-                              system_fields, system_lists, typed_table, uint)
+from toyota_structure import (ECU_FILE, command_pool, function_index, leading_typed_table, menu_nodes,
+                              section_directory, sentinel_index, system_fields, system_lists, typed_table, uint)
 
 
 class ToyotaStructureTest(unittest.TestCase):
@@ -25,6 +25,26 @@ class ToyotaStructureTest(unittest.TestCase):
                 typed_table(data, tag)
         self.assertIsNone(typed_table(struct.pack("<HII", 4, 2, 3) + b"abc").stride)
         self.assertEqual(b"", typed_table(struct.pack("<HII", 4, 0, 0)).body)
+
+    def test_command_pool_recovers_only_bounded_byte_sequences_and_retains_trailing_data(self):
+        body = struct.pack("<IBBIBB", 0, 2, 0, 2, 2, 1) + b"\x21\x01\x3e\x00"
+        source = struct.pack("<HII", 0, 2, len(body)) + body
+        rows, trailing = command_pool(source + b"uninterpreted")
+        self.assertEqual(b"uninterpreted", trailing)
+        self.assertEqual(["21 01", "3e 00"], [r["bytesHex"] for r in rows])
+        self.assertEqual([22, 24], [r["bytesOffset"] for r in rows])
+        self.assertEqual([1, 2], [r["index"] for r in rows])
+        table, trailing = leading_typed_table(source + b"uninterpreted")
+        self.assertEqual(body, table.body)
+        self.assertEqual(b"uninterpreted", trailing)
+        for offset in [0xFFFFFFFF, 3, 5]:
+            bad_body = struct.pack("<IBBIBB", offset, 2, 0, 2, 2, 1) + b"\x21\x01\x3e\x00"
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                command_pool(struct.pack("<HII", 0, 2, len(bad_body)) + bad_body)
+        with self.assertRaises(ValueError):
+            command_pool(struct.pack("<HII", 0, 3, len(body)) + body)
+        with self.assertRaises(ValueError):
+            leading_typed_table(source[:-1])
 
     def test_menu_boundaries_targets_and_saved_parameters(self):
         root = bytearray(61)

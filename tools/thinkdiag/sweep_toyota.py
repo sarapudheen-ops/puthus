@@ -19,7 +19,7 @@ import zipfile
 
 from analyze_toyota import TOYOTA_SHA256, checked_infos, native_info
 from static_readers import reader_report
-from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_directory,
+from toyota_structure import (ECU_FILE, command_pool, function_index, menu_nodes, section_directory,
                               system_fields, system_lists, typed_table, uint)
 
 FOCUSED_READERS = {
@@ -121,6 +121,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                     "Opaque fields stay named by source offset; pattern matches are not diagnostic definitions."]}
     all_files = []
     native_census = []
+    opaque_natives, top_level_data = [], []
     with zipfile.ZipFile(archive_path) as archive:
         for info in checked_infos(archive):
             if info.is_dir():
@@ -129,13 +130,17 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             data = archive.read(info)
             all_files.append({"path": info.filename, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
                               "type": "ELF" if data.startswith(b"\x7fELF") else name.rsplit(".", 1)[-1]})
+            if name.endswith((".BIN", ".GGP", ".GAG", ".DEV")):
+                top_level_data.append({"file": info.filename, "bytes": len(data), "prefixHex": data[:32].hex(" ")})
+            if name.endswith(".so") and not data.startswith(b"\x7fELF"):
+                opaque_natives.append({"file": info.filename, "bytes": len(data), "prefixHex": data[:32].hex(" ")})
             if name.endswith(".so") and data.startswith(b"\x7fELF"):
                 native = native_info(data, name)
                 exports = [f for f in native["functions"] if f["defined"]]
                 native_census.append({"library": name, "bytes": len(data), "machine": native["machine"],
                                       "exports": exports, "needed": native["needed"]})
                 for function in FOCUSED_READERS.get(name, []):
-                    report = reader_report(data, name, [function]).split("## Matching symbol names", 1)[0]
+                    report = reader_report(data, name, [function], include_symbols=False, max_output_chars=None)
                     publishable_report(report_dir, f"reader-{name}-{function}", f"{name}: {function}", report)
             if name == "BIN.ZIP":
                 import io
@@ -149,6 +154,8 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     findings["archiveEntriesIncludingNestedFiles"] = len(all_files)
     findings["archiveTypes"] = dict(Counter(f["type"] for f in all_files))
     findings["nativeLibraries"] = len(native_census)
+    findings["nonElfNativeFiles"] = opaque_natives
+    findings["topLevelDataFiles"] = top_level_data
     recovery = json.loads((report_dir / "english-text.json").read_text())
     findings["englishRecovery"] = {"indexedRecords": sum(i.get("records", 0) for i in recovery),
         "utf8Records": sum(i.get("utf8Records", 0) for i in recovery),
@@ -176,9 +183,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                             "prefixHex": block[:48].hex(" ")}
                     if len(block) >= 10:
                         item["opaqueHeader"] = {"u16At0": uint(block, 0, 2), "u32At2": uint(block, 2, 4), "u32At6": uint(block, 6, 4)}
-                        header_shapes[(section.identity, uint(block, 0, 2) == section.identity)] += 1
+                        header_shapes[(section.identity, uint(block, 0, 2))] += 1
                     try:
-                        table = typed_table(block, section.identity)
+                        # A directory slot and a table's embedded schema tag
+                        # are different namespaces (notably P5 sections >= 15).
+                        table = typed_table(block)
                         item["table"] = {"rows": table.count, "payloadBytes": len(table.body),
                                          "stride": table.stride, "paddingBytes": len(table.padding)}
                         section_strides[(section.identity, table.stride or 0)] += 1
@@ -196,28 +205,46 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         "parsedDirectories": len(section_files), "unparsed": unparsed,
         "sectionsById": dict(sorted(section_counts.items())), "rowsBySection": dict(sorted(section_row_totals.items())),
         "typedTableErrors": typed_errors, "strides": [{"section": k[0], "stride": k[1], "tables": v} for k, v in sorted(section_strides.items())],
-        "headerTagComparisons": [{"section": key[0], "matchesDirectoryTag": key[1], "count": value} for key, value in sorted(header_shapes.items())]}
+        "embeddedSchemaTags": [{"directorySection": key[0], "embeddedTag": key[1], "count": value}
+                               for key, value in sorted(header_shapes.items())]}
     # These three small source excerpts let an offline reviewer reproduce the
     # structural work without committing vendor data or executable libraries.
     (output / "structural-excerpts.json").write_text(json_text(samples))
     publishable_report(report_dir, "structural-excerpts", "SHA-pinned ECU structural excerpts", json_text(samples))
 
     parsed_other = set()
-    shared_tables = []
+    shared_tables, pools, pool_samples = [], [], []
     for name, path in sorted(paths.items()):
         match = re.fullmatch(r"(?:EU|JP|NA)/(?:Toyota|Viewer)_bin_([0-9a-fA-F]+)\.BIN", name)
         if not match:
             continue
+        data = path.read_bytes()
+        item = {"file": name, "prefixHex": data[:64].hex(" "),
+                "headerValues": {"tag": uint(data, 0, 2), "count": uint(data, 2, 4), "payloadBytes": uint(data, 6, 4)}}
         try:
-            table = typed_table(path.read_bytes(), int(match[1], 16))
-            shared_tables.append({"file": name, "tag": table.identity, "rows": table.count,
-                                  "payloadBytes": len(table.body), "stride": table.stride,
-                                  "paddingBytes": len(table.padding), "prefixHex": table.body[:64].hex(" ")})
+            table = typed_table(data)
+            item.update({"tag": table.identity, "rows": table.count, "payloadBytes": len(table.body),
+                         "stride": table.stride, "paddingBytes": len(table.padding)})
             parsed_other.add(name)
         except ValueError as error:
-            shared_tables.append({"file": name, "unparsed": str(error)})
+            item["unparsed"] = str(error)
+        shared_tables.append(item)
+        if name.endswith("Toyota_bin_00.BIN"):
+            pool_samples.append({"file": name, "sha256": hashlib.sha256(data).hexdigest(),
+                                 "bytes": len(data), "base64": base64.b64encode(data).decode("ascii")})
+            try:
+                commands, trailing = command_pool(data)
+                counts = Counter(c["bytesHex"].split(" ")[0] for c in commands if c["length"])
+                pools.append({"file": name, "entries": len(commands), "trailingBytes": len(trailing),
+                              "firstByteCounts": dict(counts), "examples": commands[:12]})
+                (output / (name.replace("/", "-") + ".commands.json")).write_text(json_text(commands))
+            except ValueError as error:
+                pools.append({"file": name, "unparsed": str(error)})
     findings["families"]["sharedTypedTables"] = shared_tables
+    findings["families"]["opaqueCommandPools"] = pools
     (output / "shared-tables.json").write_text(json_text(shared_tables))
+    (output / "command-pool-excerpts.json").write_text(json_text(pool_samples))
+    publishable_report(report_dir, "command-pool-excerpts", "Source command-pool excerpts (not executable recipes)", json_text(pool_samples))
 
     if "MENU.BIN" in paths:
         try:
@@ -226,7 +253,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             with (output / "menu-nodes.jsonl").open("w", encoding="utf-8") as dest:
                 for node in nodes.values():
                     dest.write(json.dumps(node, sort_keys=True) + "\n")
-            evidence, visited, queue = [], set(), deque([(0, [])])
+            evidence, leaf_examples, leaf_count, visited, queue = [], [], 0, set(), deque([(0, [])])
             while queue:
                 offset, trail = queue.popleft()
                 if offset in visited:
@@ -238,10 +265,15 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                 if re.search(SEARCHES["innova"], title, re.I):
                     evidence.append({"node": offset, "path": trail, "headerWords": node["headerWords"],
                                      "edges": node["edges"]})
+                if not node["edges"] and any(re.search(SEARCHES["innova"], part, re.I) for part in trail):
+                    leaf_count += 1
+                    if len(leaf_examples) < 30:
+                        leaf_examples.append({"node": offset, "path": trail, "headerWords": node["headerWords"]})
                 if len(trail) < 32:
                     queue.extend((edge["target"], trail) for edge in node["edges"] if edge["target"] in nodes)
             findings["families"]["MENU.BIN"] = {"nodes": len(nodes), "edges": sum(len(n["edges"]) for n in nodes.values()),
-                "titleIdsResolved": title_matches, "reachableNodesWithinDepth32": len(visited), "innovaPaths": evidence}
+                "titleIdsResolved": title_matches, "reachableNodesWithinDepth32": len(visited), "innovaPaths": evidence,
+                "innovaDescendantLeaves": leaf_count, "innovaLeafPathExamples": leaf_examples}
             parsed_other.add("MENU.BIN")
         except ValueError as error:
             findings["families"]["MENU.BIN"] = {"unparsed": str(error)}
@@ -289,6 +321,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                         stats["resolvedEcuFileExists"] += file_found
                         if not file_found:
                             missing_files[filename] += 1
+                            stats["unresolvedFileWithFlashLabel" if labels.get("28") == "FLASH" else "unresolvedFileWithNonFlashLabel"] += 1
                         protocols[labels.get("28", "<missing>")] += 1
                         item = {"file": name, "offset": offset + 2 + 37 * row_number, "rawHex": record.hex(" "),
                                 "fields": fields, "textMatchesByFieldOffset": labels}
