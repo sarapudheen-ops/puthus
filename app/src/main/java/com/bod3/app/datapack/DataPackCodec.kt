@@ -1,5 +1,6 @@
 package com.bod3.app.datapack
 
+import com.bod3.app.obd.kwp.DiagnosticLinkCodec
 import com.bod3.app.profile.JsonWriter
 import com.bod3.app.profile.MiniJson
 
@@ -62,7 +63,8 @@ object DataPackCodec {
     fun encodePid(p: CustomPid): Map<String, Any?> = linkedMapOf(
         "id" to p.id, "name" to p.name, "request" to p.request, "formula" to p.formula, "unit" to p.unit,
         "min" to p.min, "max" to p.max, "decimals" to p.decimals, "header" to p.header,
-        "responseHeader" to p.responseHeader, "notes" to p.notes,
+        "responseHeader" to p.responseHeader, "notes" to p.notes, "link" to p.link?.let(DiagnosticLinkCodec::encode),
+        "dataOffset" to p.dataOffset.takeIf { it != 0 }, "sourceRecords" to p.sourceRecords.takeIf { it.isNotEmpty() },
     ).filterValues { it != null }
 
     fun encodeVehicle(v: VehicleDefinition): Map<String, Any?> = linkedMapOf(
@@ -72,7 +74,8 @@ object DataPackCodec {
 
     fun encodeEcu(e: EcuDefinition): Map<String, Any?> = linkedMapOf(
         "address" to e.address, "name" to e.name, "requestId" to e.requestId, "responseId" to e.responseId,
-        "protocol" to e.protocol.name, "addressing" to if (e.is29Bit) "29" else "11", "notes" to e.notes,
+        "protocol" to e.protocol.name, "addressing" to (if (e.link?.kLine != null) null else if (e.is29Bit) "29" else "11"), "notes" to e.notes,
+        "link" to e.link?.let(DiagnosticLinkCodec::encode), "sourceRecords" to e.sourceRecords.takeIf { it.isNotEmpty() },
     ).filterValues { it != null }
 
     /** Parses and validates [json]. Never throws for bad input; problems are listed in the result. */
@@ -190,7 +193,10 @@ object DataPackCodec {
             val responseHeader = string(m, "responseHeader", p, required = false)?.uppercase()?.ifEmpty { null }
             val notes = string(m, "notes", p, required = false)
             if (errors.size > before || id == null || name == null || request == null || formula == null) return null
-            return CustomPid(id, name, request.uppercase(), formula, unit, min, max, decimals, header, responseHeader, notes)
+            val link = DiagnosticLinkCodec.decode(m["link"], "$p.link", errors)
+            val offset = int(m, "dataOffset", p, false) ?: 0
+            val records = com.bod3.app.recipe.JsonFields(errors).strings(m, "sourceRecords", p)
+            return CustomPid(id, name, request.uppercase(), formula, unit, min, max, decimals, header, responseHeader, notes, link, offset, records)
         }
 
         fun ecu(item: Any?, p: String): EcuDefinition? {
@@ -218,6 +224,8 @@ object DataPackCodec {
                 address = string(m, "address", p, required = false)?.ifEmpty { null },
                 name = name, requestId = request.uppercase(), responseId = response.uppercase(), protocol = protocol,
                 notes = string(m, "notes", p, required = false),
+                link = DiagnosticLinkCodec.decode(m["link"], "$p.link", errors),
+                sourceRecords = com.bod3.app.recipe.JsonFields(errors).strings(m, "sourceRecords", p),
             )
         }
 

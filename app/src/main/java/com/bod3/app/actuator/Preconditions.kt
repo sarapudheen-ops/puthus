@@ -12,6 +12,8 @@ import java.io.IOException
 
 /** Reads the vehicle state that preconditions depend on. Every value may be unknown (null). */
 interface VehicleStateProbe {
+    /** Select an explicit enhanced target; test/injected probes may already be vehicle-scoped. */
+    fun forTarget(target: EcuTarget.Physical): VehicleStateProbe = this
     suspend fun batteryVoltage(): Double?
     /** Engine speed from OBD PID 0C; null when no ECU answered (typically ignition off). */
     suspend fun engineRpm(): Int?
@@ -22,7 +24,13 @@ interface VehicleStateProbe {
 }
 
 /** [VehicleStateProbe] over the live session: `ATRV`, OBD `01 0C` / `01 0D` and UDS `22`. All read-only. */
-class SessionStateProbe(private val session: Session, private val executor: CommandExecutor) : VehicleStateProbe {
+class SessionStateProbe(
+    private val session: Session, private val executor: CommandExecutor,
+    private val stateTarget: EcuTarget = EcuTarget.Broadcast,
+) : VehicleStateProbe {
+    override fun forTarget(target: EcuTarget.Physical): VehicleStateProbe =
+        if (target.link?.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000) SessionStateProbe(session, executor, target) else this
+
     override suspend fun batteryVoltage(): Double? = try {
         executor.execute("ATRV", 2_000L).takeIf { it.isSuccess }?.let { VoltageParser.parse(it.text) }
     } catch (e: IOException) {
@@ -30,7 +38,7 @@ class SessionStateProbe(private val session: Session, private val executor: Comm
     }
 
     private suspend fun obdPid(pid: Int): List<Int>? = try {
-        session.request(EcuTarget.Broadcast, 0x01, pid).messages.firstOrNull()?.payload?.drop(2)
+        session.request(stateTarget, 0x01, pid).messages.firstOrNull()?.payload?.drop(2)
     } catch (e: IOException) {
         null
     } catch (e: UnsupportedOperationException) {
@@ -42,7 +50,8 @@ class SessionStateProbe(private val session: Session, private val executor: Comm
     override suspend fun vehicleSpeedKmh(): Int? = obdPid(0x0D)?.firstOrNull()
 
     override suspend fun readIdentification(target: EcuTarget.Physical, did: Int): String? =
-        when (val result = UdsClient(session).readDid(target, did)) {
+        // Never substitute UDS F187/F189 for an unconverted KWP 1A identification definition.
+        if (target.link?.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000) null else when (val result = UdsClient(session).readDid(target, did)) {
             is DidResult.Value -> DidText.decode(result.data)?.trim()?.ifEmpty { null }
             else -> null
         }
@@ -88,8 +97,9 @@ object PreconditionChecker {
         vehicle: VehicleContext,
     ): PreconditionReport {
         val items = mutableListOf<PreconditionItem>()
+        val scoped = probe.forTarget(target)
 
-        val volts = probe.batteryVoltage()
+        val volts = scoped.batteryVoltage()
         items += when {
             volts == null -> PreconditionItem("Battery voltage", CheckStatus.UNKNOWN, "No reading from the adapter")
             volts < pre.minVoltage -> PreconditionItem(
@@ -99,7 +109,7 @@ object PreconditionChecker {
             else -> PreconditionItem("Battery voltage", CheckStatus.PASS, "%.1f V".format(volts))
         }
 
-        val rpm = probe.engineRpm()
+        val rpm = scoped.engineRpm()
         if (pre.ignitionOn) {
             items += if (rpm == null) {
                 PreconditionItem("Ignition", CheckStatus.FAIL, "The engine ECU does not answer – switch the ignition on")
@@ -121,7 +131,7 @@ object PreconditionChecker {
             }
         }
         if (pre.speedZero) {
-            val speed = probe.vehicleSpeedKmh()
+            val speed = scoped.vehicleSpeedKmh()
             items += when {
                 speed == null -> PreconditionItem("Vehicle speed", CheckStatus.UNKNOWN, "Speed unknown – the vehicle must be stationary")
                 speed > 0 -> PreconditionItem("Vehicle speed", CheckStatus.FAIL, "$speed km/h – stop the vehicle")
@@ -139,7 +149,7 @@ object PreconditionChecker {
             )
         }
         if (applicability.partNumbers.isNotEmpty()) {
-            val part = probe.readIdentification(target, KnownDids.SPARE_PART_NUMBER.id)
+            val part = scoped.readIdentification(target, KnownDids.SPARE_PART_NUMBER.id)
             items += when (applicability.matchesPartNumber(part)) {
                 true -> PreconditionItem("Module part number", CheckStatus.PASS, part.orEmpty(), overridable = true)
                 false -> PreconditionItem("Module part number", CheckStatus.FAIL, "$part – written for ${applicability.partNumbers.joinToString(", ")}", overridable = true)
@@ -147,7 +157,7 @@ object PreconditionChecker {
             }
         }
         if (applicability.softwareVersions.isNotEmpty()) {
-            val version = probe.readIdentification(target, KnownDids.SOFTWARE_VERSION.id)
+            val version = scoped.readIdentification(target, KnownDids.SOFTWARE_VERSION.id)
             items += when (applicability.matchesSoftware(version)) {
                 true -> PreconditionItem("Module software", CheckStatus.PASS, version.orEmpty(), overridable = true)
                 false -> PreconditionItem("Module software", CheckStatus.FAIL, "$version – written for ${applicability.softwareVersions.joinToString(", ")}", overridable = true)

@@ -6,6 +6,7 @@ import com.bod3.app.audit.AuditRecorder
 import com.bod3.app.audit.AuditStore
 import com.bod3.app.obd.session.ExpertModeRequiredException
 import com.bod3.app.obd.session.Session
+import com.bod3.app.obd.session.WriteScope
 import com.bod3.app.obd.session.WriteGate
 import com.bod3.app.obd.session.WritePolicy
 import com.bod3.app.obd.session.WritePurpose
@@ -118,6 +119,11 @@ class ActuatorRunner(
         vehicle: VehicleContext = VehicleContext(),
         overrideApplicability: Boolean = false,
         onPhase: (RunPhase) -> Unit = {},
+    ): RunResult = session.withDiagnosticOperation { runExclusive(recipe, confirmation, control, vehicle, overrideApplicability, onPhase) }
+
+    private suspend fun runExclusive(
+        recipe: ActuatorRecipe, confirmation: ActuatorConfirmation, control: RunControl, vehicle: VehicleContext,
+        overrideApplicability: Boolean, onPhase: (RunPhase) -> Unit,
     ): RunResult {
         val log = AuditRecorder(clock)
         log.step("Recipe ${recipe.id}: ${recipe.name} on ${recipe.module.display}")
@@ -166,13 +172,28 @@ class ActuatorRunner(
         if (!report.passed(overrideApplicability)) return refuse("Preconditions not met: ${report.summary}", report)
         if (control.stopRequested) return refuse("Stopped before start")
 
+        return session.withEcuOperation(recipe.module.target) {
+            runPrepared(recipe, control, onPhase, log, report)
+        }
+    }
+
+    private suspend fun runPrepared(
+        recipe: ActuatorRecipe, control: RunControl, onPhase: (RunPhase) -> Unit,
+        log: AuditRecorder, report: PreconditionReport,
+    ): Pair<RunResult, CancellationException?> {
         val grant = try {
             WriteGate.issue(
                 WritePurpose.ACTUATOR_TEST, recipe.module.target, expertMode(), clock,
                 maxDurationMs = recipe.durationSeconds * 1_000L + GRANT_MARGIN_MS,
+                scope = WriteScope(when (recipe.kind) {
+                    ActuatorKind.LOCAL_IO_CONTROL, ActuatorKind.LOCAL_ROUTINE -> recipe.start.drop(1).take(1)
+                    ActuatorKind.ROUTINE -> recipe.start.drop(2).take(2)
+                    else -> recipe.start.drop(1).take(2)
+                }, recipe.session, recipe.security?.level, recipe.defaultSession),
             )
         } catch (e: ExpertModeRequiredException) {
-            return refuse(e.message!!)
+            log.step("Refused: ${e.message}", ok = false)
+            return RunResult(RunOutcome.REFUSED, e.message!!, preconditions = report) to null
         }
         val client = UdsWriteClient(session, grant)
 
@@ -188,7 +209,7 @@ class ActuatorRunner(
         var failure: RunResult? = null
         var lastStatus: String? = null
         try {
-            if (recipe.session != WritePolicy.DEFAULT_SESSION) {
+            if (recipe.session != recipe.defaultSession) {
                 onPhase(RunPhase.Preparing("Opening diagnostic session"))
                 val outcome = send("Open session %02X".format(recipe.session), listOf(WritePolicy.SESSION_CONTROL, recipe.session))
                 if (!outcome.isPositive) failure = failed("Could not open the diagnostic session: ${outcome.display}", outcome)
@@ -231,8 +252,8 @@ class ActuatorRunner(
                 if (!outcome.isPositive && outcome !is UdsOutcome.ConnectionLost) outcome = send("Stop (retry)", recipe.stop, STOP_TIMEOUT_MS)
                 confirmed = outcome.isPositive
             }
-            if (recipe.session != WritePolicy.DEFAULT_SESSION) {
-                send("Return to default session", listOf(WritePolicy.SESSION_CONTROL, WritePolicy.DEFAULT_SESSION))
+            if (recipe.session != recipe.defaultSession) {
+                send("Return to default session", listOf(WritePolicy.SESSION_CONTROL, recipe.defaultSession))
             }
             grant.revoke()
             confirmed

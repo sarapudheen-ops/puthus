@@ -1,5 +1,16 @@
 package com.bod3.app.obd.session
 
+import com.bod3.app.obd.kwp.DiagnosticDialect
+import com.bod3.app.obd.kwp.KLineAdapter
+import com.bod3.app.obd.kwp.KLineFrames
+import com.bod3.app.obd.kwp.KwpServices
+import com.bod3.app.recipe.Hex
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import java.io.IOException
 import com.bod3.app.obd.elm.AdapterException
 import com.bod3.app.obd.elm.CommandExecutor
 import com.bod3.app.obd.elm.ElmError
@@ -61,7 +72,7 @@ object ReadOnlyPolicy {
 
     /** OBD `04` and UDS `14 <3-byte group>`: allowed only with a [ClearConfirmation], never through [check]. */
     fun isClearRequest(request: List<Int>): Boolean =
-        (request.size == 1 && request[0] == 0x04) || (request.size == 4 && request[0] == 0x14)
+        (request.size == 1 && request[0] == 0x04) || (request.size in 3..4 && request[0] == 0x14)
 
     fun isAllowed(request: List<Int>): Boolean = try {
         check(request)
@@ -115,8 +126,44 @@ class Session(
     private val executor: CommandExecutor,
     initialProtocol: ObdProtocol,
     val options: SessionOptions = SessionOptions.DEFAULT,
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val wait: suspend (Long) -> Unit = { delay(it) },
+    private val logger: (String) -> Unit = {},
 ) {
     private val lock = Mutex()
+    private val operationLock = Mutex()
+    private class Lease(val session: Session, val target: EcuTarget.Physical?) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<Lease>
+    }
+
+    /** Serializes safety checks as well as the write. No stale checks while waiting behind a poll/run. */
+    suspend fun <T> withDiagnosticOperation(block: suspend () -> T): T {
+        if (currentCoroutineContext()[Lease]?.session === this) return block()
+        return operationLock.withLock { withContext(Lease(this, null)) { block() } }
+    }
+
+    /** Holds routing across session/security/write/verify/cleanup, excluding background live polls. */
+    suspend fun <T> withEcuOperation(target: EcuTarget.Physical, block: suspend () -> T): T = withDiagnosticOperation {
+        val lease = currentCoroutineContext()[Lease]
+        require(lease?.target == null || lease.target == target) { "An operation cannot change its ECU" }
+        withContext(Lease(this, target)) { block() }
+    }
+
+    private suspend fun <T> routedOperation(target: EcuTarget, block: suspend () -> T): T {
+        val lease = currentCoroutineContext()[Lease]
+        if (lease?.session === this) {
+            require(lease.target == null || target == lease.target) { "Operation is bound to a different ECU" }
+            return block()
+        }
+        return operationLock.withLock { block() }
+    }
+    private var baseProtocol = initialProtocol
+    private var lastExchangeAtMs: Long? = null
+
+    private fun isRead(target: EcuTarget, request: List<Int>): Boolean =
+        if ((target as? EcuTarget.Physical)?.link?.dialect == DiagnosticDialect.KWP2000)
+            KwpServices.readAllowed(request) || (request.firstOrNull() in ReadOnlyPolicy.obdServices && ReadOnlyPolicy.isAllowed(request))
+        else ReadOnlyPolicy.isAllowed(request)
 
     var protocol: ObdProtocol = initialProtocol
         private set
@@ -147,23 +194,62 @@ class Session(
         confirmation: ClearConfirmation? = null,
         grant: WriteGrant? = null,
     ): ObdResponse {
-        when {
-            confirmation != null && ReadOnlyPolicy.isClearRequest(request) -> confirmation.consume(request, target)
-            // Whitelisted non-read requests (actuator tests, coding) only with an Expert-mode grant.
-            grant != null && !ReadOnlyPolicy.isAllowed(request) -> grant.check(request, target)
-            else -> ReadOnlyPolicy.check(request)
-        }
-        require(request.all { it in 0..0xFF }) { "Request bytes must be 0..255" }
-
-        return lock.withLock {
-            if (target is EcuTarget.Physical && !protocol.isCan) {
-                throw UnsupportedOperationException("Physical ECU addressing needs a CAN protocol (vehicle uses ${protocol.displayName})")
+        require(request.isNotEmpty() && request.all { it in 0..0xFF }) { "Request must contain bytes in 0..255" }
+        require(timeoutMs > 0) { "Request timeout must be positive" }
+        return routedOperation(target) {
+            when {
+                confirmation != null && ReadOnlyPolicy.isClearRequest(request) -> confirmation.consume(request, target)
+                grant != null && !isRead(target, request) -> grant.check(request, target)
+                isRead(target, request) -> Unit
+                else -> throw ReadOnlyViolationException(request.first())
             }
-            applyTarget(target)
-            val command = request.joinToString("") { "%02X".format(it) }
-            val elm = executor.execute(command, timeoutMs)
-            interpret(request, elm)
+            lock.withLock { exchange(target, request, timeoutMs, grant != null && !isRead(target, request)) }
         }
+    }
+
+    /** Used by owned session keep-alives: never switches ECU, initializes a bus or resends a write. */
+    suspend fun keepAliveCurrent(target: EcuTarget.Physical, request: List<Int> = listOf(0x3E, 0x00)): Boolean {
+        require(request == listOf(0x3E) || request == listOf(0x3E, 0x00))
+        return routedOperation(target) { lock.withLock {
+            val k = target.link?.kLine
+            if (appliedTarget != target || (k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true)) return@withLock false
+            exchange(target, request, k?.p2StarMs?.toLong() ?: DEFAULT_REQUEST_TIMEOUT_MS, false).messages.isNotEmpty()
+        } }
+    }
+
+    private suspend fun exchange(target: EcuTarget, request: List<Int>, timeoutMs: Long, writing: Boolean): ObdResponse {
+        val physical = target as? EcuTarget.Physical
+        val k = physical?.link?.kLine
+        val expired = k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true
+        if (writing && k != null && (expired || appliedTarget != target)) {
+            throw IOException("K-line session is no longer current; re-read and confirm the operation again")
+        }
+        if (k != null && (appliedTarget != target || expired)) {
+            invalidateRouting()
+            KLineAdapter.initialize(executor, physical, logger)
+            protocol = physical.link!!.protocol
+            appliedTarget = target
+            lastExchangeAtMs = clock()
+        } else if (k == null) {
+            val wantedProtocol = physical?.link?.protocol ?: baseProtocol
+            if (protocol != wantedProtocol || (appliedTarget as? EcuTarget.Physical)?.link?.kLine != null) {
+                for (command in wantedProtocol.selectCommands(physical?.link?.baudKbps ?: protocolBaudKbps)) sendAll(listOf(command))
+                protocol = wantedProtocol
+                invalidateRouting()
+                if (!protocol.isCan) sendAll(listOf("ATSH " + if (protocol == ObdProtocol.ISO_9141_2) "686AF1" else "C033F1"))
+            }
+            if (physical != null && !protocol.isCan) throw UnsupportedOperationException("Enhanced K-line needs a complete per-ECU link")
+            applyTarget(target)
+        }
+        if (k != null) lastExchangeAtMs?.let { last ->
+            val remaining = k.p3MinMs - (clock() - last)
+            if (remaining > 0) wait(remaining)
+        }
+        val command = request.joinToString("") { "%02X".format(it) }
+        // Adapter supplies the length and checksum; the response is independently verified below.
+        val elm = executor.execute(command, timeoutMs)
+        lastExchangeAtMs = clock()
+        return interpret(target, request, elm)
     }
 
     suspend fun request(target: EcuTarget, vararg bytes: Int): ObdResponse = request(target, bytes.toList())
@@ -172,8 +258,9 @@ class Session(
      * Switches the adapter to another protocol (`ATSP<n>`), e.g. from 11-bit to 29-bit CAN on the same
      * bus for a module scan. All routing state is treated as unknown afterwards.
      */
-    suspend fun switchProtocol(newProtocol: ObdProtocol) = lock.withLock {
-        if (newProtocol == protocol) return@withLock
+    suspend fun switchProtocol(newProtocol: ObdProtocol) = routedOperation(EcuTarget.Broadcast) { lock.withLock {
+        baseProtocol = newProtocol
+        if (newProtocol == protocol && (appliedTarget as? EcuTarget.Physical)?.link?.kLine == null) return@withLock
         for (command in newProtocol.selectCommands(protocolBaudKbps)) {
             val response = executor.execute(command, HEADER_COMMAND_TIMEOUT_MS)
             if (!response.isOk) throw ObdRequestException(response.error ?: ElmError.UNKNOWN_COMMAND, response)
@@ -183,7 +270,7 @@ class Session(
         appliedFilter = null
         appliedFlowControl = null
         appliedTarget = null
-    }
+    } }
 
     /** Forgets the routing state, forcing the next request to re-send every routing command. */
     fun invalidateRouting() {
@@ -241,15 +328,23 @@ class Session(
         }
     }
 
-    private fun interpret(request: List<Int>, elm: ElmResponse): ObdResponse {
+    private fun interpret(target: EcuTarget, request: List<Int>, elm: ElmResponse): ObdResponse {
         if (elm.error != null && elm.error != ElmError.NO_DATA) throw ObdRequestException(elm.error, elm)
         if (elm.error != null) return ObdResponse(request, elm, emptyList(), emptyList())
 
-        val all = ResponseDecoder.decode(elm.lines, protocol, options.extendedAddressing)
-        val responders = FrameParser.parse(elm.lines, protocol.headerFormat).map { it.header }.distinct()
+        val physical = target as? EcuTarget.Physical
+        val link = physical?.link
+        val all = if (link?.kLine != null) {
+            val expected = requireNotNull(Hex.parse(physical.responseHeader.orEmpty()))
+            elm.lines.mapNotNull { KLineFrames.decode(it, expected, protocol == ObdProtocol.ISO_9141_2) }
+        } else ResponseDecoder.decode(elm.lines, protocol, options.extendedAddressing)
+        val responders = if (link?.kLine != null) all.mapNotNull { it.header }.distinct() else FrameParser.parse(elm.lines, protocol.headerFormat).map { it.header }.distinct()
         val service = request[0]
-        val positive = all.filter { message -> matchesRequest(request, message.payload) }
-        val negative = all.filter { message ->
+        val addressed = all.filter { m -> link?.kLine != null || physical?.responseHeader == null || physical.responseMask != null || m.header.equals(physical.responseHeader, true) }
+        val positive = addressed.filter { message ->
+            if (link?.dialect == DiagnosticDialect.KWP2000) KwpServices.matches(request, message.payload) else matchesRequest(request, message.payload)
+        }
+        val negative = addressed.filter { message ->
             message.payload.size >= 3 && message.payload[0] == 0x7F && message.payload[1] == service
         }
         return ObdResponse(request, elm, positive, negative, responders)

@@ -1,5 +1,8 @@
 package com.bod3.app.datapack
 
+import com.bod3.app.obd.kwp.DiagnosticLink
+import com.bod3.app.obd.kwp.DiagnosticDialect
+import com.bod3.app.obd.kwp.KwpServices
 import com.bod3.app.obd.pid.Formula
 import com.bod3.app.obd.session.EcuTarget
 import com.bod3.app.obd.session.ReadOnlyPolicy
@@ -31,6 +34,9 @@ data class CustomPid(
     /** Expected CAN response ID, or null for the standard pair / automatic receive. */
     val responseHeader: String? = null,
     val notes: String? = null,
+    val link: DiagnosticLink? = null,
+    val dataOffset: Int = 0,
+    val sourceRecords: List<String> = emptyList(),
 ) {
     /** Validation errors (empty when valid). Field names match the JSON keys. */
     fun problems(): List<String> = buildList {
@@ -39,7 +45,7 @@ data class CustomPid(
         val bytes = runCatching { parseHexBytes(request) }.getOrNull()
         when {
             bytes == null || bytes.isEmpty() -> add("request: must be hex bytes, e.g. 010C or 22F40C")
-            ReadOnlyPolicy.isClearRequest(bytes) || !ReadOnlyPolicy.isAllowed(bytes) ->
+            ReadOnlyPolicy.isClearRequest(bytes) || !(if (link?.dialect == DiagnosticDialect.KWP2000) KwpServices.readAllowed(bytes) else ReadOnlyPolicy.isAllowed(bytes)) ->
                 add("request: %02X is not a read service; custom PIDs may only read (01, 09, 22 …)".format(bytes[0]))
         }
         try {
@@ -49,10 +55,17 @@ data class CustomPid(
         }
         if (!(min < max)) add("min/max: min must be smaller than max")
         if (decimals !in 0..6) add("decimals: must be 0-6")
-        header?.let { if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("header: must be a 3- or 8-digit hex CAN ID") }
-        responseHeader?.let {
-            if (header == null) add("responseHeader: needs a header")
-            if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("responseHeader: must be a 3- or 8-digit hex CAN ID")
+        if (dataOffset !in 0..4095) add("dataOffset: must be 0-4095")
+        addAll(link?.problems().orEmpty())
+        if (link?.kLine != null) {
+            if (header == null || responseHeader == null) add("K-line PID needs an exact address pair")
+            else addAll(link.addressProblems(header, responseHeader))
+        } else {
+            header?.let { if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("header: must be a 3- or 8-digit hex CAN ID") }
+            responseHeader?.let {
+                if (header == null) add("responseHeader: needs a header")
+                if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("responseHeader: must be a 3- or 8-digit hex CAN ID")
+            }
         }
     }
 
@@ -62,7 +75,7 @@ data class CustomPid(
 
     val requestBytes: List<Int> get() = parseHexBytes(request)
 
-    val target: EcuTarget get() = header?.let { EcuTarget.Physical(it.uppercase(), responseHeader?.uppercase()) } ?: EcuTarget.Broadcast
+    val target: EcuTarget get() = header?.let { EcuTarget.Physical(it.uppercase(), responseHeader?.uppercase(), link = link) } ?: EcuTarget.Broadcast
 
     private val parsedFormula: Formula? by lazy { Formula.parseOrNull(formula) }
 
@@ -71,7 +84,7 @@ data class CustomPid(
         val request = runCatching { requestBytes }.getOrNull() ?: return null
         if (payload.size < request.size || payload[0] != request[0] + 0x40) return null
         if (payload.subList(1, request.size) != request.drop(1)) return null
-        return parsedFormula?.evaluate(payload.drop(request.size))
+        return parsedFormula?.evaluate(payload.drop(request.size + dataOffset))
     }
 
     fun format(value: Double): String = if (decimals == 0) Math.round(value).toString() else "%.${decimals}f".format(value)
@@ -97,10 +110,12 @@ data class EcuDefinition(
     val responseId: String,
     val protocol: EcuProtocol = EcuProtocol.UDS,
     val notes: String? = null,
+    val link: DiagnosticLink? = null,
+    val sourceRecords: List<String> = emptyList(),
 ) {
     val is29Bit: Boolean get() = requestId.length == 8
 
-    val target: EcuTarget.Physical get() = EcuTarget.Physical(requestId.uppercase(), responseId.uppercase())
+    val target: EcuTarget.Physical get() = EcuTarget.Physical(requestId.uppercase(), responseId.uppercase(), link = link)
 
     /** Stable key within a vehicle (the request ID). */
     val key: String get() = requestId.uppercase()
@@ -113,8 +128,11 @@ data class EcuDefinition(
             if (!(id.isHex() && (id.length == 3 || id.length == 8))) add("$field: must be a 3-digit (11-bit) or 8-digit (29-bit) hex CAN ID")
             else if ((id.toLongOrNull(16) ?: Long.MAX_VALUE) > if (id.length == 3) 0x7FFL else 0x1FFFFFFFL) add("$field: outside the ${if (id.length == 3) 11 else 29}-bit CAN ID range")
         }
-        check("requestId", requestId)
-        check("responseId", responseId)
+        addAll(link?.problems().orEmpty())
+        if (link?.kLine != null) addAll(link.addressProblems(requestId, responseId)) else {
+            check("requestId", requestId)
+            check("responseId", responseId)
+        }
         if (requestId.length != responseId.length) add("responseId: must use the same ID length as requestId")
         if (requestId.equals(responseId, ignoreCase = true)) add("responseId: must differ from requestId")
     }

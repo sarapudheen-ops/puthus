@@ -37,8 +37,16 @@ class ClearConfirmation private constructor(
         fun obdClear(clock: () -> Long = System::currentTimeMillis) =
             ClearConfirmation(listOf(0x04), EcuTarget.Broadcast, clock(), clock)
 
+        /** KWP 14 uses a two-byte group, unlike UDS. Bound to this physical ECU and exact group. */
+        fun kwpClear(target: EcuTarget.Physical, group: Int = 0xFFFF, clock: () -> Long = System::currentTimeMillis): ClearConfirmation {
+            require(target.link?.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000)
+            require(group in 0..0xFFFF)
+            return ClearConfirmation(listOf(0x14, group shr 8, group and 255), target, clock(), clock)
+        }
+
         /** UDS `14 <group>` to one module; group `FFFFFF` = all DTCs. */
         fun udsClear(target: EcuTarget.Physical, group: Int = 0xFFFFFF, clock: () -> Long = System::currentTimeMillis): ClearConfirmation {
+            require(target.link?.dialect != com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000) { "KWP clear needs an exact two-byte group" }
             require(group in 0..0xFFFFFF) { "DTC group must be 3 bytes" }
             return ClearConfirmation(listOf(0x14, (group shr 16) and 0xFF, (group shr 8) and 0xFF, group and 0xFF), target, clock(), clock)
         }

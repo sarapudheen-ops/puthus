@@ -1,6 +1,7 @@
 package com.bod3.app.obd.session
 
 import java.util.concurrent.atomic.AtomicBoolean
+import com.bod3.app.obd.kwp.DiagnosticDialect
 
 /** Why non-read requests are being sent. Each purpose has its own small whitelist of UDS services. */
 enum class WritePurpose(val label: String) {
@@ -34,6 +35,10 @@ object WritePolicy {
     const val IO_CONTROL = 0x2F
     const val ROUTINE_CONTROL = 0x31
     const val WRITE_DATA_BY_IDENTIFIER = 0x2E
+    const val LOCAL_IO_CONTROL = 0x30
+    const val WRITE_LOCAL_IDENTIFIER = 0x3B
+    const val STOP_LOCAL_ROUTINE = 0x32
+    const val LOCAL_ROUTINE_RESULTS = 0x33
 
     const val DEFAULT_SESSION = 0x01
     const val EXTENDED_SESSION = 0x03
@@ -47,25 +52,26 @@ object WritePolicy {
 
     private val common = setOf(SESSION_CONTROL, SECURITY_ACCESS, TESTER_PRESENT)
 
-    fun services(purpose: WritePurpose): Set<Int> = common + when (purpose) {
-        WritePurpose.ACTUATOR_TEST -> setOf(IO_CONTROL, ROUTINE_CONTROL)
-        WritePurpose.CODING -> setOf(WRITE_DATA_BY_IDENTIFIER)
+    fun services(purpose: WritePurpose, dialect: DiagnosticDialect = DiagnosticDialect.UDS): Set<Int> = common + when (purpose) {
+        WritePurpose.ACTUATOR_TEST -> if (dialect == DiagnosticDialect.KWP2000)
+            setOf(LOCAL_IO_CONTROL, ROUTINE_CONTROL, STOP_LOCAL_ROUTINE, LOCAL_ROUTINE_RESULTS) else setOf(IO_CONTROL, ROUTINE_CONTROL)
+        WritePurpose.CODING -> if (dialect == DiagnosticDialect.KWP2000) setOf(WRITE_LOCAL_IDENTIFIER, WRITE_DATA_BY_IDENTIFIER) else setOf(WRITE_DATA_BY_IDENTIFIER)
     }
 
     /** Every service any grant can permit, used by simulators to tell writes from violations. */
-    val allServices: Set<Int> = WritePurpose.entries.flatMap { services(it) }.toSet()
+    val allServices: Set<Int> = WritePurpose.entries.flatMap { p -> DiagnosticDialect.entries.flatMap { services(p, it) } }.toSet()
 
     /** Throws [WriteNotPermittedException] unless [request] is on the whitelist for [purpose]. */
-    fun check(purpose: WritePurpose, request: List<Int>) {
+    fun check(purpose: WritePurpose, request: List<Int>, dialect: DiagnosticDialect = DiagnosticDialect.UDS) {
         if (request.isEmpty()) throw WriteNotPermittedException("Empty request")
         val service = request[0]
-        if (service !in services(purpose)) {
+        if (service !in services(purpose, dialect)) {
             throw WriteNotPermittedException("Service 0x%02X is not allowed for %s".format(service, purpose.label.lowercase()))
         }
         val sub = request.getOrNull(1)
         fun refuse(reason: String): Nothing = throw WriteNotPermittedException("0x%02X: %s".format(service, reason))
         when (service) {
-            SESSION_CONTROL -> if (request.size != 2 || (sub!! and 0x7F) !in allowedSessions) {
+            SESSION_CONTROL -> if (request.size != 2 || (if (dialect == DiagnosticDialect.KWP2000) sub !in setOf(0x01, 0x03, 0x81, 0x89, 0x92) else (sub!! and 0x7F) !in allowedSessions)) {
                 refuse("only the default (01) and extended (03) sessions may be opened")
             }
             SECURITY_ACCESS -> if (sub == null || (sub and 0x7F) !in 0x01..0x7E) refuse("security level must be 01-7E")
@@ -73,15 +79,45 @@ object WritePolicy {
             IO_CONTROL -> if (request.size < 4 || request[3] !in ioControlParameters) {
                 refuse("needs <DID> <ioControlParameter 00-03>")
             }
-            ROUTINE_CONTROL -> if (request.size < 4 || (sub!! and 0x7F) !in routineSubFunctions) {
+            ROUTINE_CONTROL -> if (if (dialect == DiagnosticDialect.KWP2000) request.size < 2 else request.size < 4 || (sub!! and 0x7F) !in routineSubFunctions) {
                 refuse("needs <01|02|03> <routine id>")
             }
             WRITE_DATA_BY_IDENTIFIER -> if (request.size < 4) refuse("needs <DID> and at least one data byte")
+            LOCAL_IO_CONTROL -> if (request.size < 3 || request[2] !in ioControlParameters) refuse("needs <local id> <control 00-03>")
+            WRITE_LOCAL_IDENTIFIER -> if (request.size < 3) refuse("needs <local id> <data>")
+            STOP_LOCAL_ROUTINE, LOCAL_ROUTINE_RESULTS -> if (request.size < 2) refuse("needs one local routine id")
         }
     }
 
-    fun isAllowed(purpose: WritePurpose, request: List<Int>): Boolean =
-        runCatching { check(purpose, request) }.isSuccess
+    fun isAllowed(purpose: WritePurpose, request: List<Int>, dialect: DiagnosticDialect = DiagnosticDialect.UDS): Boolean =
+        runCatching { check(purpose, request, dialect) }.isSuccess
+}
+
+/** One operation cannot address a second DID/local identifier or unlock another security level. */
+data class WriteScope(
+    val identifier: List<Int>,
+    val session: Int = WritePolicy.EXTENDED_SESSION,
+    val securityLevel: Int? = null,
+    val defaultSession: Int = WritePolicy.DEFAULT_SESSION,
+) {
+    init { require(identifier.size in 1..2 && identifier.all { it in 0..255 }) }
+    fun check(request: List<Int>, dialect: DiagnosticDialect) {
+        val service = request.first()
+        val allowed = when (service) {
+            0x10 -> request.getOrNull(1) in setOf(session, defaultSession)
+            0x27 -> securityLevel != null && request.getOrNull(1) in setOf(securityLevel, securityLevel + 1)
+            0x3E -> true
+            else -> {
+                val id = when {
+                    dialect == DiagnosticDialect.KWP2000 && service in setOf(0x30, 0x31, 0x32, 0x33, 0x3B) -> request.drop(1).take(1)
+                    service == 0x31 -> request.drop(2).take(2)
+                    else -> request.drop(1).take(2)
+                }
+                id == identifier
+            }
+        }
+        if (!allowed) throw WriteNotPermittedException("Permission is scoped to one identifier, session and security level")
+    }
 }
 
 /**
@@ -96,6 +132,7 @@ class WriteGrant internal constructor(
     private val issuedAtMs: Long,
     val maxDurationMs: Long,
     private val clock: () -> Long,
+    val scope: WriteScope? = null,
 ) {
     private val revoked = AtomicBoolean(false)
 
@@ -108,7 +145,10 @@ class WriteGrant internal constructor(
         if (revoked.get()) throw WriteNotPermittedException("The ${purpose.label.lowercase()} has ended; start it again")
         if (clock() - issuedAtMs > maxDurationMs) throw WriteNotPermittedException("The ${purpose.label.lowercase()} timed out; start it again")
         if (target != this.target) throw WriteNotPermittedException("The permission was given for a different module")
-        WritePolicy.check(purpose, request)
+        val dialect = target.let { (it as? EcuTarget.Physical)?.link?.dialect } ?: DiagnosticDialect.UDS
+        if (dialect == DiagnosticDialect.KWP2000 && scope == null) throw WriteNotPermittedException("KWP writes require an exact identifier scope")
+        WritePolicy.check(purpose, request, dialect)
+        scope?.check(request, dialect)
     }
 }
 
@@ -122,10 +162,11 @@ object WriteGate {
         expertModeEnabled: Boolean,
         clock: () -> Long = System::currentTimeMillis,
         maxDurationMs: Long = DEFAULT_MAX_DURATION_MS,
+        scope: WriteScope? = null,
     ): WriteGrant {
         if (!expertModeEnabled) throw ExpertModeRequiredException(purpose)
         require(maxDurationMs in 1..60 * 60_000L) { "Grant duration must be 1 ms to 1 hour" }
-        return WriteGrant(purpose, target, clock(), maxDurationMs, clock)
+        return WriteGrant(purpose, target, clock(), maxDurationMs, clock, scope)
     }
 }
 
