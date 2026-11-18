@@ -68,8 +68,8 @@ def analyze(path: Path, output: Path) -> None:
                 data = archive.read(info)
                 binary.append({
                     "name": name, "size": len(data), "headHex": data[:256].hex(" "),
-                    "prefixBase64": base64.b64encode(data[:1024]).decode("ascii"),
-                    "tailHex": data[-128:].hex(" "), "entropy": entropy(data[:65536]),
+                    "prefixBase64": base64.b64encode(data[:1024] if name in {"MENU.BIN", "FUNCH_CFG.BIN", "TOYOTA_EN.GGP"} else data[:128]).decode("ascii"),
+                    "tailHex": data[-64:].hex(" "), "entropy": entropy(data[:65536]),
                 })
             elif name == "BIN.ZIP":
                 with zipfile.ZipFile(io.BytesIO(archive.read(info))) as inner:
