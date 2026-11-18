@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from toyota_structure import (ECU_FILE, audit_command_pool, command_pool, function_index, leading_typed_table, menu_nodes,
+from toyota_structure import (ECU_FILE, audit_command_pool, command_pool, frame_pool_references, function_index, leading_typed_table, menu_nodes,
                               section_directory, sentinel_index, system_fields, system_lists, typed_table, uint)
 
 
@@ -60,6 +60,22 @@ class ToyotaStructureTest(unittest.TestCase):
         self.assertEqual(3, audit_command_pool(source + b"xyz")["trailingBytes"])
         with self.assertRaises(ValueError):
             audit_command_pool(struct.pack("<HII", 0, 5, len(body)) + body)
+
+    def test_frame_references_use_native_bias_and_preserve_bad_links_as_errors(self):
+        pool_body = struct.pack("<IBBIBB", 0, 2, 0, 2, 2, 0) + b"\x21\x01\x61\x01"
+        pool = audit_command_pool(struct.pack("<HII", 0, 2, len(pool_body)) + pool_body)
+        body = struct.pack("<HHHHHHHH", 17, 10001, 2, 0, 18, 3, 10000, 0)
+        frames = frame_pool_references(struct.pack("<HII", 17, 2, len(body)) + body, pool)
+        self.assertEqual(17, frames[0]["frameId"])
+        refs = frames[0]["referencesByFieldOffset"]
+        self.assertEqual({"sourceId": 10001, "poolIndex": 1, "bytesHex": "21 01"}, refs["2"])
+        self.assertEqual("61 01", refs["4"]["bytesHex"])
+        self.assertEqual("", refs["6"]["bytesHex"])
+        self.assertIn("error", frames[1]["referencesByFieldOffset"]["2"])
+        self.assertEqual(10000, frames[1]["referencesByFieldOffset"]["4"]["poolIndex"])
+        self.assertNotIn("bytesHex", frames[1]["referencesByFieldOffset"]["4"])
+        with self.assertRaises(ValueError):
+            frame_pool_references(struct.pack("<HII", 17, 1, 4) + b"\0" * 4, pool)
 
     def test_menu_boundaries_targets_and_saved_parameters(self):
         root = bytearray(61)

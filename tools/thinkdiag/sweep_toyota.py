@@ -19,12 +19,12 @@ import zipfile
 
 from analyze_toyota import TOYOTA_SHA256, checked_infos, native_info
 from static_readers import reader_report
-from toyota_structure import (ECU_FILE, audit_command_pool, function_index, menu_nodes, section_directory,
+from toyota_structure import (ECU_FILE, audit_command_pool, frame_pool_references, function_index, menu_nodes, section_directory,
                               system_fields, system_lists, typed_table, uint)
 
 FOCUSED_READERS = {
     "libTOYOTA_FILE.so": ["GetVehicleInfoData", "GetSystemListData", "GetAllToyotaTblData", "GetToyotaTblData", "GetInfoFromAddrPart",
-        "GetSystemEnterInfoData", "GetSysFuncInfoData", "GetRDtcDataFromRDTCPart",
+        "GetSystemEnterInfoData", "GetInfoFromEnterList", "GetSysFuncInfoData", "GetRDtcDataFromRDTCPart",
         "GetDsSubMenuInfoData", "GetDsSubMenuItemList", "GetSFDataFromSFList", "GetCustomizeFuncData",
         "GetEcuTblData", "GetDsDataFromDSPart", "GetActDataFromACTPart", "GetCDtcDataFromCDTCPart",
         "GetSFDataFromSFPart", "GetRoBDataFromRoBPart", "GetCustItemInfoData"],
@@ -36,7 +36,7 @@ FOCUSED_READERS = {
     "libTOYOTA_CALC.so": ["ResultCalcFromCalcID", "Calc_C"],
     "libDIAG.so": ["InitMenuTree", "MenuTreeDispose_Ex", "GetMenuSubItemTextID_Ex",
         "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID",
-        "GetMenuID_Ex", "GetCurrentMenuSaveData"],
+        "GetMenuID_Ex", "GetCurrentMenuSaveData", "MenuPro_Ex"],
     "libTOYOTA_SCAN.so": ["GetSysListNo", "TransferVehicleInfo", "InitTopSystemList"],
 }
 SEARCHES = {
@@ -219,8 +219,12 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         "typedTableErrors": typed_errors, "strides": [{"section": k[0], "stride": k[1], "tables": v} for k, v in sorted(section_strides.items())],
         "embeddedSchemaTags": [{"directorySection": key[0], "embeddedTag": key[1], "count": value}
                                for key, value in sorted(header_shapes.items())]}
-    # A few bounded legacy/P5 excerpts let an offline reviewer reproduce the
-    # structural work without committing vendor data or executable libraries.
+    if "SYSTEMENTER.BIN" in paths and paths["SYSTEMENTER.BIN"].stat().st_size < 128000:
+        data = paths["SYSTEMENTER.BIN"].read_bytes()
+        samples.append({"file": "SYSTEMENTER.BIN", "sha256": hashlib.sha256(data).hexdigest(),
+                        "bytes": len(data), "base64": base64.b64encode(data).decode("ascii")})
+    # A few bounded legacy/P5/entry-table excerpts let an offline reviewer reproduce
+    # the structural work without committing vendor data or executable libraries.
     (output / "structural-excerpts.json").write_text(json_text(samples))
     emit_report("structural-excerpts", "SHA-pinned ECU structural excerpts", json_text(samples))
 
@@ -248,7 +252,25 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                                  "bytes": len(data), "base64": base64.b64encode(data).decode("ascii")})
             try:
                 audit = audit_command_pool(data)
-                commands = audit.pop("entries")
+                commands = audit["entries"]
+                frames_path = paths.get(name.replace("Toyota_bin_00", "Toyota_bin_11"))
+                if frames_path:
+                    frames = frame_pool_references(frames_path.read_bytes(), audit)
+                    refs = [ref for frame in frames for ref in frame["referencesByFieldOffset"].values()]
+                    frame_ids = {frame["frameId"] for frame in frames}
+                    bindings = typed_table(paths[name.replace("Toyota_bin_00", "Toyota_bin_12")].read_bytes())
+                    if bindings.stride != 16:
+                        raise ValueError("Unknown function/frame-binding stride")
+                    eligible = [uint(bindings.body, i * 16 + 6, 2) for i in range(bindings.count)
+                                if uint(bindings.body, i * 16 + 8, 2) == 0]
+                    audit["frameLinks"] = {"frames": len(frames), "uniqueFrameIds": len(frame_ids),
+                        "dictionaryReferences": len(refs), "unresolvedReferences": sum("error" in ref for ref in refs),
+                        "functionBindingRows": bindings.count, "eligibleFunctionBindings": len(eligible),
+                        "eligibleBindingsWithFrame": sum(identity in frame_ids for identity in eligible),
+                        "readShapedExamples": [frame for frame in frames
+                            if frame["referencesByFieldOffset"]["2"].get("bytesHex", "").startswith(("21 ", "22 "))][:10]}
+                    (output / (name.replace("/", "-") + ".frames.json")).write_text(json_text(frames))
+                audit.pop("entries")
                 counts = Counter(c["bytesHex"].split(" ")[0] for c in commands if c["length"] and "bytesHex" in c)
                 pools.append({"file": name, **audit, "firstByteCounts": dict(counts), "examples": commands[:12],
                               "readShapedExamples": [c for c in commands if c.get("bytesHex", "").startswith(("21 ", "22 "))][:12]})

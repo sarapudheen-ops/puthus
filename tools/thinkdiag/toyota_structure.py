@@ -113,6 +113,37 @@ def command_pool(data: bytes) -> tuple[list[dict], bytes]:
     return records, trailing
 
 
+def frame_pool_references(data: bytes, pool_audit: dict) -> list[dict]:
+    """Toyota_bin_11 -> Toyota_bin_00, COMM GetCommFrameInfo 0x1A7C8.
+
+    GetAllToyotaTblData puts these files at base+0x38/base+0. Frame rows are
+    four LE16s: key and three dictionary references. Keep the three roles
+    named by offset until the transport consumer is independently traced.
+    """
+    table = typed_table(data)
+    if table.stride != 8:
+        raise ValueError("Unknown communication-frame row layout")
+    pool = {row["index"]: row for row in pool_audit["entries"]}
+    records = []
+    for index in range(table.count):
+        pos = index * 8
+        refs = {}
+        for field in (2, 4, 6):
+            identity = uint(table.body, pos + field, 2)
+            normalized = identity - 10000 if identity > 10000 else identity
+            reference = {"sourceId": identity, "poolIndex": normalized}
+            if normalized == 0:
+                reference["bytesHex"] = ""
+            elif normalized not in pool or "error" in pool[normalized]:
+                reference["error"] = "Unresolved or out-of-bounds command-pool entry"
+            else:
+                reference["bytesHex"] = pool[normalized]["bytesHex"]
+            refs[str(field)] = reference
+        records.append({"rowOffset": 10 + pos, "frameId": uint(table.body, pos, 2),
+                        "referencesByFieldOffset": refs})
+    return records
+
+
 def menu_nodes(data: bytes) -> dict[int, dict]:
     """MENU packed nodes: 38-byte header and 23-byte edge records.
 
