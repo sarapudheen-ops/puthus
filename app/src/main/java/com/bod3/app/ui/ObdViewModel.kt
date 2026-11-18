@@ -3,11 +3,35 @@ package com.bod3.app.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bod3.app.android.AssetDataPacks
 import com.bod3.app.android.ReportSharer
+import com.bod3.app.datapack.CustomPid
+import com.bod3.app.datapack.DataPackStore
+import com.bod3.app.datapack.DataRepository
+import com.bod3.app.datapack.EcuDefinition
+import com.bod3.app.datapack.EcuProtocol
+import com.bod3.app.datapack.LiveDisplay
+import com.bod3.app.datapack.LiveSelection
+import com.bod3.app.datapack.VehicleDefinition
+import com.bod3.app.datapack.VehicleSource
+import com.bod3.app.diagnostics.EcuWorkbench
+import com.bod3.app.live.CsvExporter
+import com.bod3.app.live.LiveCatalog
+import com.bod3.app.live.LiveHistory
+import com.bod3.app.live.LiveReader
+import com.bod3.app.live.LiveRecorder
+import com.bod3.app.live.LiveValueDef
+import com.bod3.app.live.RecordedRow
+import com.bod3.app.obd.dtc.FreezeFrame
+import com.bod3.app.obd.dtc.FreezeFrameReader
+import com.bod3.app.obd.dtc.Readiness
+import com.bod3.app.obd.dtc.ReadinessDecoder
+import com.bod3.app.obd.session.ClearConfirmation
+import com.bod3.app.obd.uds.Nrc
+import com.bod3.app.obd.uds.UdsClearResult
 import com.bod3.app.android.SharedPrefsKeyValueStore
 import com.bod3.app.bluetooth.BluetoothRepository
 import com.bod3.app.bluetooth.PairedAdapter
-import com.bod3.app.obd.PidReading
 import com.bod3.app.obd.VehicleReader
 import com.bod3.app.obd.connection.ConnectionManager
 import com.bod3.app.obd.connection.ConnectionProfile
@@ -28,7 +52,6 @@ import com.bod3.app.obd.elm.AdapterDriver
 import com.bod3.app.obd.elm.AdapterInfo
 import com.bod3.app.obd.elm.RawExchange
 import com.bod3.app.obd.elm.RecordingExecutor
-import com.bod3.app.obd.pid.PidDefinition
 import com.bod3.app.obd.pid.Pids
 import com.bod3.app.obd.scan.DiscoveredModule
 import com.bod3.app.obd.scan.ModuleReport
@@ -67,11 +90,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Screen { DEVICES, DASHBOARD, LIVE, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL }
+enum class Screen {
+    DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
+    VEHICLES, VEHICLE_EDIT, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT,
+}
 
 sealed interface ConnectionState {
     data object Idle : ConnectionState
@@ -135,8 +163,6 @@ sealed interface ProfileState {
     data class Failed(val message: String) : ProfileState
 }
 
-data class LiveItem(val definition: PidDefinition, val reading: PidReading? = null, val status: String? = null)
-
 data class UiState(
     val screen: Screen = Screen.DEVICES,
     val bluetoothAvailable: Boolean = true,
@@ -173,7 +199,17 @@ data class UiState(
     /** Profile being edited (a copy; saved explicitly), and where the settings screen returns to. */
     val editingProfile: ConnectionProfile? = null,
     val settingsReturn: Screen = Screen.DEVICES,
+    val data: DataState = DataState(),
+    val liveConfig: LiveConfig = LiveConfig(),
+    val freezeFrames: Readout<List<FreezeFrame>> = Readout.NotRead,
+    val readiness: Readout<List<Readiness>> = Readout.NotRead,
+    val obdClear: ClearState? = null,
+    val ecuDetail: EcuDetailState? = null,
+    /** Where the vehicle screen returns to (device list or dashboard). */
+    val vehiclesReturn: Screen = Screen.DASHBOARD,
 ) {
+    val isConnected: Boolean get() = connection is ConnectionState.Connected && protocol is Readout.Value
+
     val savedProfile: VehicleProfile? get() = (profile as? ProfileState.Loaded)?.profile
 
     /** Modules to list: an unsaved scan result if there is one, otherwise the saved profile's modules. */
@@ -217,6 +253,18 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private var liveJob: Job? = null
     private var scanJob: Job? = null
     private var profileJob: Job? = null
+    private var ecuJob: Job? = null
+
+    private val dataStore = DataPackStore(SharedPrefsKeyValueStore(application))
+    private val bundledPacks = AssetDataPacks.load(application)
+    private val repository = DataRepository(bundledPacks.packs, dataStore)
+
+    private var liveDefs: List<LiveValueDef> = emptyList()
+    private var liveTarget: EcuTarget = EcuTarget.Broadcast
+    private var liveEcu: String? = null
+    private val liveHistory = LiveHistory()
+    private val liveRecorder = LiveRecorder()
+    private var lastRecording: com.bod3.app.live.Recording? = null
 
     private val profiles: VehicleProfileService by lazy {
         VehicleProfileService(
@@ -230,6 +278,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     init {
         refreshBluetooth()
         refreshSettings()
+        refreshData()
+        bundledPacks.errors.forEach { appendLog("Data pack: $it") }
     }
 
     fun refreshBluetooth() {
@@ -327,35 +377,75 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openLiveData() {
         if (scanJob?.isActive == true) return
-        val currentReader = reader ?: return
+        if (reader == null || session == null) return
         val state = _state.value
         val protocolInfo = (state.protocol as? Readout.Value)?.value ?: return
 
         // Use the ECU that supports the most PIDs (normally the engine ECU).
         val primaryEcu = state.ecus.maxByOrNull { it.value.size }?.key
         val supported = primaryEcu?.let { state.ecus[it] }.orEmpty()
-        val definitions = Pids.live.filter { supported.isEmpty() || it.pid in supported }
         // On CAN, address that ECU physically: faster (no waiting for other ECUs) and exercises ATSH/ATCRA.
-        val target = primaryEcu?.let { EcuTarget.physicalFor(it, protocolInfo.protocol.headerFormat) }
-            ?: EcuTarget.Broadcast
+        liveTarget = primaryEcu?.let { EcuTarget.physicalFor(it, protocolInfo.protocol.headerFormat) } ?: EcuTarget.Broadcast
+        liveEcu = primaryEcu
 
+        val available = LiveCatalog.available(supported, repository.customPids())
+        val saved = dataStore.liveSelection()
+        val keys = saved?.keys?.filter { key -> available.any { it.key == key } }?.takeIf { it.isNotEmpty() }
+            ?: LiveCatalog.defaultKeys(supported)
+        liveDefs = keys.mapNotNull { key -> available.firstOrNull { it.key == key } }
+        liveHistory.clear()
         _state.update {
-            it.copy(screen = Screen.LIVE, live = definitions.map { d -> LiveItem(d) }, liveRunning = true, liveEcu = primaryEcu)
+            it.copy(
+                screen = Screen.LIVE,
+                live = liveDefs.map { def -> LiveItem(def) },
+                liveEcu = primaryEcu,
+                liveConfig = it.liveConfig.copy(available = available, display = saved?.display.orEmpty(), history = emptyMap()),
+            )
         }
+        startLiveLoop()
+    }
+
+    private fun startLiveLoop() {
+        val currentSession = session ?: return
+        val currentReader = reader ?: return
+        val defs = liveDefs
+        val target = liveTarget
+        val primaryEcu = liveEcu
+        val liveReader = LiveReader(currentSession, currentReader)
         liveJob?.cancel()
+        _state.update { it.copy(liveRunning = true) }
         liveJob = viewModelScope.launch {
-            while (isActive) {
-                for (definition in definitions) {
-                    if (!isActive) break
+            while (true) {
+                val row = mutableMapOf<String, Double?>()
+                for (def in defs) {
+                    currentCoroutineContext().ensureActive()
                     val item = try {
-                        val reading = currentReader.readPid(definition, target, preferredEcu = primaryEcu)
-                        LiveItem(definition, reading, status = if (reading == null) "No data" else null)
+                        val value = liveReader.read(def, target, primaryEcu)
+                        row[def.key] = value
+                        value?.let { liveHistory.add(def.key, it) }
+                        LiveItem(def, value, status = if (value == null) "No data" else null)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        LiveItem(definition, status = e.message ?: "Error")
+                        row[def.key] = null
+                        LiveItem(def, status = e.message ?: "Error")
                     }
-                    _state.update { s -> s.copy(live = s.live.map { if (it.definition.pid == definition.pid) item else it }) }
+                    val history = liveHistory.snapshot()
+                    _state.update { s ->
+                        s.copy(
+                            live = s.live.map { if (it.def.key == def.key) item else it },
+                            liveConfig = s.liveConfig.copy(history = history),
+                        )
+                    }
+                }
+                if (liveRecorder.isRecording) {
+                    liveRecorder.add(RecordedRow(System.currentTimeMillis(), row))
+                    if (liveRecorder.isFull) {
+                        appendLog("Recording stopped: limit of ${liveRecorder.rowCount} rows reached")
+                        stopRecording(full = true)
+                    } else {
+                        _state.update { it.copy(liveConfig = it.liveConfig.copy(recording = it.liveConfig.recording.copy(rows = liveRecorder.rowCount))) }
+                    }
                 }
                 delay(LIVE_PAUSE_MS)
             }
@@ -368,13 +458,79 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resumeLiveData() {
-        if (_state.value.screen == Screen.LIVE && liveJob?.isActive != true) openLiveData()
+        if (_state.value.screen == Screen.LIVE && liveJob?.isActive != true) {
+            if (liveDefs.isEmpty() && _state.value.live.isEmpty()) openLiveData() else startLiveLoop()
+        }
     }
 
     fun closeLiveData() {
         pauseLiveData()
+        if (liveRecorder.isRecording) stopRecording()
         // No need to reset headers here: the Session switches back to broadcast on the next broadcast request.
         _state.update { it.copy(screen = Screen.DASHBOARD) }
+    }
+
+    fun openLiveSelection() {
+        _state.update { it.copy(screen = Screen.LIVE_SELECT) }
+    }
+
+    fun closeLiveSelection() {
+        _state.update { it.copy(screen = Screen.LIVE) }
+    }
+
+    /** Saves which values are shown (in this order) and restarts polling with them. */
+    fun setLiveSelection(keys: List<String>) {
+        val config = _state.value.liveConfig
+        if (liveRecorder.isRecording) stopRecording()
+        dataStore.saveLiveSelection(LiveSelection(keys, config.display.filterKeys { it in keys }))
+        liveDefs = keys.mapNotNull { key -> config.available.firstOrNull { it.key == key } }
+        _state.update { s ->
+            val old = s.live.associateBy { it.def.key }
+            s.copy(screen = Screen.LIVE, live = liveDefs.map { old[it.key] ?: LiveItem(it) })
+        }
+        if (session != null) startLiveLoop()
+    }
+
+    fun setLiveDisplay(key: String, display: LiveDisplay) {
+        val config = _state.value.liveConfig
+        val newDisplay = config.display + (key to display)
+        dataStore.saveLiveSelection(LiveSelection(liveDefs.map { it.key }, newDisplay))
+        _state.update { it.copy(liveConfig = it.liveConfig.copy(display = newDisplay)) }
+    }
+
+    fun startRecording() {
+        if (liveDefs.isEmpty()) return
+        val now = System.currentTimeMillis()
+        liveRecorder.start(liveDefs, now)
+        lastRecording = null
+        appendLog("Recording ${liveDefs.size} live values")
+        _state.update { it.copy(liveConfig = it.liveConfig.copy(recording = RecordingUi(active = true, startedAtMs = now))) }
+        if (liveJob?.isActive != true) startLiveLoop()
+    }
+
+    fun stopRecording(full: Boolean = false) {
+        val recording = liveRecorder.stop() ?: return
+        lastRecording = recording
+        appendLog("Recording stopped: ${recording.rows.size} rows, ${recording.durationMs / 1000} s")
+        _state.update {
+            it.copy(liveConfig = it.liveConfig.copy(recording = RecordingUi(lastRows = recording.rows.size, full = full)))
+        }
+    }
+
+    /** Writes the last recording as CSV to the share cache; null when there is nothing to export. */
+    suspend fun writeRecordingCsv(): File? {
+        val recording = lastRecording ?: return null
+        val state = _state.value
+        val title = listOfNotNull(
+            "bod3 live data",
+            state.data.selectedVehicle?.vehicle?.title,
+            (state.vin as? Readout.Value)?.value,
+            (state.protocol as? Readout.Value)?.value?.protocol?.displayName,
+            state.liveEcu?.let { "ECU $it" },
+        ).joinToString(" · ")
+        return withContext(Dispatchers.IO) {
+            ReportSharer.write(getApplication<Application>(), CsvExporter.fileName(recording.startedAtMs), CsvExporter.format(recording, title))
+        }
     }
 
     fun disconnect() {
@@ -403,6 +559,10 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 reconnects = emptyList(),
                 terminal = emptyList(),
                 terminalBusy = false,
+                freezeFrames = Readout.NotRead,
+                readiness = Readout.NotRead,
+                obdClear = null,
+                ecuDetail = null,
             )
         }
         refreshBluetooth()
@@ -648,8 +808,26 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         liveJob?.cancel()
         infoJob?.cancel()
         dtcJob?.cancel()
+        ecuJob?.cancel()
         terminalJob?.cancel()
         voltageJob?.cancel()
+        if (liveRecorder.isRecording) stopRecording()
+        val lost = ClearState.Done("Connection lost while clearing. Read the fault codes again to see whether they were cleared.", success = false)
+        _state.update { s ->
+            s.copy(
+                obdClear = if (s.obdClear == ClearState.Running) lost else s.obdClear,
+                ecuDetail = s.ecuDetail?.let { d ->
+                    d.copy(
+                        identificationLoading = false,
+                        dtcs = if (d.dtcs == Readout.Loading) Readout.Unavailable("Connection lost") else d.dtcs,
+                        records = d.records.mapValues { (_, r) -> if (r == Readout.Loading) Readout.Unavailable("Connection lost") else r },
+                        clear = if (d.clear == ClearState.Running) lost else d.clear,
+                    )
+                },
+                freezeFrames = if (s.freezeFrames == Readout.Loading) Readout.Unavailable("Connection lost") else s.freezeFrames,
+                readiness = if (s.readiness == Readout.Loading) Readout.Unavailable("Connection lost") else s.readiness,
+            )
+        }
         driver?.close()
         driver = null
         session = null
@@ -734,25 +912,83 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.dtcs.isEmpty()) readDtcs()
     }
 
-    /** Reads stored (03), pending (07) and permanent (0A) codes. Read-only: nothing is cleared. */
+    /** Reads stored (03), pending (07) and permanent (0A) codes, then readiness (01 01) and freeze frame (02). */
     fun readDtcs() {
         val currentSession = session ?: return
         if (dtcJob?.isActive == true || scanJob?.isActive == true) return
         dtcJob = viewModelScope.launch {
-            _state.update { it.copy(dtcs = DtcKind.entries.associateWith { Readout.Loading }) }
+            _state.update {
+                it.copy(dtcs = DtcKind.entries.associateWith { Readout.Loading }, readiness = Readout.Loading, freezeFrames = Readout.Loading)
+            }
             val reader = ObdDtcReader(currentSession)
             for (kind in DtcKind.entries) {
-                val value: Readout<DtcReport> = try {
-                    Readout.Value(reader.read(kind))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    appendLog("${kind.label} codes: ${e.message}")
-                    Readout.Unavailable(e.message ?: "Read failed")
-                }
+                val value: Readout<DtcReport> = readout("${kind.label} codes") { reader.read(kind) }
                 _state.update { it.copy(dtcs = it.dtcs + (kind to value)) }
             }
+            val readiness = readout("Readiness") { ReadinessDecoder.read(currentSession) }
+            _state.update { it.copy(readiness = readiness) }
+            val frames = readout("Freeze frame") { FreezeFrameReader(currentSession).read() }
+            _state.update { it.copy(freezeFrames = frames) }
         }
+    }
+
+    private suspend fun <T> readout(what: String, block: suspend () -> T): Readout<T> = try {
+        Readout.Value(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        appendLog("$what: ${e.message}")
+        Readout.Unavailable(e.message ?: "Read failed")
+    }
+
+    /**
+     * Clears emission-related fault codes (service 04) on all OBD ECUs. Called only from the confirmation
+     * dialog: the one-shot [ClearConfirmation] created here is what lets the Session send the request.
+     * Refused while the engine is running (most ECUs reject it anyway, with NRC 22).
+     */
+    fun clearObdDtcs() {
+        val currentSession = session ?: return
+        val currentReader = reader ?: return
+        if (dtcJob?.isActive == true || scanJob?.isActive == true) return
+        pauseLiveData()
+        dtcJob = viewModelScope.launch {
+            _state.update { it.copy(obdClear = ClearState.Running) }
+            val result = try {
+                val rpm = readOrNull { currentReader.readPid(Pids.ENGINE_RPM) }?.value
+                if (rpm != null && rpm > ENGINE_RUNNING_RPM) {
+                    ClearState.Done("Engine running (%.0f rpm). Switch the engine off, leave the ignition on and try again.".format(rpm), false)
+                } else {
+                    appendLog("Clearing OBD fault codes (service 04), confirmed by the user")
+                    val outcome = ObdDtcReader(currentSession).clear(ClearConfirmation.obdClear())
+                    val refused = outcome.refused.entries.joinToString("; ") { (ecu, nrc) -> "ECU $ecu refused: ${Nrc.describe(nrc)}" }
+                    when {
+                        outcome.noResponse -> ClearState.Done("No ECU answered. Check that the ignition is on.", false)
+                        outcome.cleared.isEmpty() -> ClearState.Done(refused, false)
+                        else -> ClearState.Done(
+                            "Cleared by ECU ${outcome.cleared.joinToString(", ")}." + if (refused.isNotEmpty()) " $refused" else "",
+                            outcome.refused.isEmpty(),
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ClearState.Done("Clear failed: ${e.message}", false)
+            }
+            appendLog("OBD clear: ${result.message}")
+            _state.update { it.copy(obdClear = result) }
+        }
+        dtcJob?.invokeOnCompletion { cause -> if (cause == null) viewModelScope.launch { readDtcs() } }
+    }
+
+    fun dismissClearResult() {
+        _state.update { it.copy(obdClear = null, ecuDetail = it.ecuDetail?.copy(clear = null)) }
+    }
+
+    /** Saves (or with blank [text] removes) the user's own description of a fault code. */
+    fun setDtcDescription(code: String, text: String) {
+        runCatching { dataStore.setDtcDescription(code, text) }.onFailure { appendLog("Description: ${it.message}") }
+        refreshData()
     }
 
     // ---- Vehicle profile -------------------------------------------------------------------------
@@ -903,6 +1139,254 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ---- Data packs: vehicles, ECUs, custom PIDs ------------------------------------------------------
+
+    private fun refreshData() {
+        val vehicles = runCatching { repository.vehicles() }.getOrElse { appendLog("Vehicles: ${it.message}"); emptyList() }
+        val selectedKey = dataStore.selectedVehicleKey
+        val userPack = dataStore.userPack()
+        _state.update {
+            it.copy(
+                data = it.data.copy(
+                    vehicles = vehicles,
+                    selectedVehicle = vehicles.firstOrNull { v -> v.vehicle.key == selectedKey },
+                    customPids = repository.customPids(),
+                    userPidIds = userPack.pids.map { p -> p.id }.toSet(),
+                    descriptions = repository.dtcDescriptions(),
+                    packErrors = bundledPacks.errors,
+                ),
+            )
+        }
+    }
+
+    fun openVehicles() {
+        pauseLiveData()
+        refreshData()
+        _state.update {
+            val back = if (it.screen == Screen.DEVICES || it.screen == Screen.DASHBOARD) it.screen else it.vehiclesReturn
+            it.copy(screen = Screen.VEHICLES, vehiclesReturn = back)
+        }
+    }
+
+    fun closeVehicles() {
+        _state.update { it.copy(screen = if (it.vehiclesReturn == Screen.DASHBOARD && it.connection is ConnectionState.Idle) Screen.DEVICES else it.vehiclesReturn) }
+    }
+
+    fun selectVehicle(key: String?) {
+        dataStore.selectedVehicleKey = key
+        refreshData()
+    }
+
+    /** Opens the editor for an existing vehicle, or for a new one when [key] is null. */
+    fun editVehicle(key: String?) {
+        val existing = key?.let { repository.vehicle(it)?.vehicle }
+        val vehicle = existing ?: VehicleDefinition(make = "", model = "", ecus = listOf(EcuDefinition(address = "01", name = "Engine", requestId = "7E0", responseId = "7E8")))
+        _state.update { it.copy(screen = Screen.VEHICLE_EDIT, data = it.data.copy(editingVehicle = vehicle, editingVehicleKey = existing?.key, vehicleError = null)) }
+    }
+
+    fun saveVehicle(vehicle: VehicleDefinition) {
+        val originalKey = _state.value.data.editingVehicleKey
+        val cleaned = vehicle.copy(
+            make = vehicle.make.trim(),
+            model = vehicle.model.trim(),
+            years = vehicle.years?.trim()?.ifEmpty { null },
+            ecus = vehicle.ecus.map { e ->
+                e.copy(
+                    address = e.address?.trim()?.uppercase()?.ifEmpty { null },
+                    name = e.name.trim(),
+                    requestId = e.requestId.trim().uppercase(),
+                    responseId = e.responseId.trim().uppercase(),
+                )
+            },
+        )
+        val error = runCatching {
+            if (originalKey == null && repository.vehicle(cleaned.key) != null) {
+                throw IllegalArgumentException("${cleaned.title} already exists. Edit that vehicle instead.")
+            }
+            dataStore.saveVehicle(cleaned)
+            // Renamed a user vehicle: remove the old entry (bundled vehicles cannot be removed).
+            if (originalKey != null && originalKey != cleaned.key && repository.bundledVehicle(originalKey) == null) {
+                dataStore.deleteVehicle(originalKey)
+            }
+        }.exceptionOrNull()
+        if (error != null) {
+            _state.update { it.copy(data = it.data.copy(vehicleError = error.message)) }
+            return
+        }
+        appendLog("Saved vehicle ${cleaned.title} (${cleaned.ecus.size} ECUs)")
+        if (originalKey == null || dataStore.selectedVehicleKey == originalKey) dataStore.selectedVehicleKey = cleaned.key
+        _state.update { it.copy(screen = Screen.VEHICLES, data = it.data.copy(editingVehicle = null, editingVehicleKey = null, vehicleError = null)) }
+        refreshData()
+    }
+
+    fun cancelVehicleEdit() {
+        _state.update { it.copy(screen = Screen.VEHICLES, data = it.data.copy(editingVehicle = null, editingVehicleKey = null, vehicleError = null)) }
+    }
+
+    /** Deletes a user vehicle, or for a bundled vehicle removes the user's changes. */
+    fun deleteVehicle(key: String) {
+        val entry = repository.vehicle(key) ?: return
+        if (entry.source == VehicleSource.BUNDLED) return
+        dataStore.deleteVehicle(key)
+        if (entry.source == VehicleSource.USER && dataStore.selectedVehicleKey == key) dataStore.selectedVehicleKey = null
+        appendLog(if (entry.source == VehicleSource.USER) "Deleted vehicle ${entry.vehicle.title}" else "Restored bundled ECU list of ${entry.vehicle.title}")
+        _state.update { it.copy(screen = Screen.VEHICLES, data = it.data.copy(editingVehicle = null, editingVehicleKey = null)) }
+        refreshData()
+    }
+
+    /** Opens an ECU of the selected vehicle and reads its identification and fault codes. */
+    fun openEcu(ecu: EcuDefinition) {
+        pauseLiveData()
+        _state.update { it.copy(screen = Screen.ECU_DETAIL, ecuDetail = EcuDetailState(ecu)) }
+        readEcu()
+    }
+
+    fun closeEcu() {
+        ecuJob?.cancel()
+        _state.update { it.copy(screen = Screen.VEHICLES, ecuDetail = null) }
+    }
+
+    private fun updateEcu(change: (EcuDetailState) -> EcuDetailState) {
+        _state.update { s -> s.ecuDetail?.let { s.copy(ecuDetail = change(it)) } ?: s }
+    }
+
+    private fun canUseBus(): Boolean = session != null && scanJob?.isActive != true && ecuJob?.isActive != true
+
+    fun readEcu() {
+        val currentSession = session ?: return
+        val ecu = _state.value.ecuDetail?.ecu ?: return
+        if (!canUseBus()) return
+        val workbench = EcuWorkbench(currentSession)
+        ecuJob = viewModelScope.launch {
+            updateEcu { d -> d.copy(identification = emptyList(), identificationLoading = true, dtcs = Readout.Loading, records = emptyMap()) }
+            try {
+                workbench.readIdentification(ecu) { reading ->
+                    updateEcu { d -> d.copy(identification = d.identification + reading) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appendLog("${ecu.display} identification: ${e.message}")
+            }
+            updateEcu { d -> d.copy(identificationLoading = false) }
+            val dtcs = readout("${ecu.display} fault codes") { workbench.readDtcs(ecu) }
+            updateEcu { d -> d.copy(dtcs = dtcs) }
+        }
+    }
+
+    fun readEcuRecords(code: String) {
+        val currentSession = session ?: return
+        val detail = _state.value.ecuDetail ?: return
+        val record = ((detail.dtcs as? Readout.Value)?.value as? com.bod3.app.obd.uds.DtcReadResult.Read)?.records?.firstOrNull { it.code == code } ?: return
+        if (!canUseBus() || detail.ecu.protocol != EcuProtocol.UDS) return
+        ecuJob = viewModelScope.launch {
+            updateEcu { d -> d.copy(records = d.records + (code to Readout.Loading)) }
+            val records = readout("$code records") { EcuWorkbench(currentSession).readRecords(detail.ecu, record) }
+            updateEcu { d -> d.copy(records = d.records + (code to records)) }
+        }
+    }
+
+    /** Clears this ECU's fault memory (`14 FF FF FF`). Called only from the confirmation dialog. */
+    fun clearEcuDtcs() {
+        val currentSession = session ?: return
+        val ecu = _state.value.ecuDetail?.ecu ?: return
+        if (!canUseBus() || ecu.protocol != EcuProtocol.UDS) return
+        ecuJob = viewModelScope.launch {
+            updateEcu { d -> d.copy(clear = ClearState.Running) }
+            appendLog("Clearing fault memory of ${ecu.display} (${ecu.requestId}), confirmed by the user")
+            val result = try {
+                when (val outcome = EcuWorkbench(currentSession).clear(ecu, ClearConfirmation.udsClear(ecu.target))) {
+                    UdsClearResult.Cleared -> ClearState.Done("Fault memory cleared.", true)
+                    else -> ClearState.Done(outcome.display, false)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ClearState.Done("Clear failed: ${e.message}", false)
+            }
+            appendLog("${ecu.display} clear: ${result.message}")
+            updateEcu { d -> d.copy(clear = result) }
+            // Read the codes again to show what is left.
+            val dtcs = readout("${ecu.display} fault codes") { EcuWorkbench(currentSession).readDtcs(ecu) }
+            updateEcu { d -> d.copy(dtcs = dtcs, records = emptyMap()) }
+        }
+    }
+
+    fun openCustomPids() {
+        pauseLiveData()
+        refreshData()
+        _state.update { it.copy(screen = Screen.CUSTOM_PIDS) }
+    }
+
+    fun closeCustomPids() {
+        _state.update { it.copy(screen = if (it.connection is ConnectionState.Idle) Screen.DEVICES else Screen.DASHBOARD) }
+    }
+
+    fun editPid(id: String?) {
+        val existing = id?.let { key -> repository.customPids().firstOrNull { it.id == key } }
+        val pid = existing ?: CustomPid(id = "", name = "", request = "01", formula = "A", unit = "")
+        _state.update { it.copy(screen = Screen.PID_EDIT, data = it.data.copy(editingPid = pid, editingPidId = existing?.id, pidError = null, pidTest = null)) }
+    }
+
+    fun savePid(pid: CustomPid) {
+        val originalId = _state.value.data.editingPidId
+        val error = runCatching {
+            if (pid.id != originalId && repository.customPids().any { it.id == pid.id } && !repository.isUserPid(pid.id)) {
+                // Saving under a bundled id deliberately overrides that bundled PID.
+                appendLog("Custom PID ${pid.id} overrides the bundled definition")
+            }
+            dataStore.savePid(pid)
+            if (originalId != null && originalId != pid.id && repository.isUserPid(originalId)) dataStore.deletePid(originalId)
+        }.exceptionOrNull()
+        if (error != null) {
+            _state.update { it.copy(data = it.data.copy(pidError = error.message)) }
+            return
+        }
+        appendLog("Saved custom PID ${pid.name} (${pid.request}: ${pid.formula})")
+        _state.update { it.copy(screen = Screen.CUSTOM_PIDS, data = it.data.copy(editingPid = null, editingPidId = null, pidError = null, pidTest = null)) }
+        refreshData()
+    }
+
+    fun deletePid(id: String) {
+        if (!repository.isUserPid(id)) return
+        dataStore.deletePid(id)
+        _state.update { it.copy(screen = Screen.CUSTOM_PIDS, data = it.data.copy(editingPid = null, editingPidId = null)) }
+        refreshData()
+    }
+
+    fun cancelPidEdit() {
+        _state.update { it.copy(screen = Screen.CUSTOM_PIDS, data = it.data.copy(editingPid = null, editingPidId = null, pidError = null, pidTest = null)) }
+    }
+
+    /** Sends the PID's request once and shows the decoded value (only when connected and valid). */
+    fun testPid(pid: CustomPid) {
+        val currentSession = session ?: return
+        val problems = pid.problems()
+        if (problems.isNotEmpty()) {
+            _state.update { it.copy(data = it.data.copy(pidTest = problems.joinToString("\n"))) }
+            return
+        }
+        if (!canUseBus()) return
+        ecuJob = viewModelScope.launch {
+            _state.update { it.copy(data = it.data.copy(pidTest = "Reading…")) }
+            val text = try {
+                val response = currentSession.request(pid.target, pid.requestBytes)
+                val value = response.messages.firstNotNullOfOrNull { pid.decode(it.payload) }
+                val raw = response.messages.joinToString("; ") { m -> "${m.header}: ${m.payload.joinToString(" ") { "%02X".format(it) }}" }
+                when {
+                    value != null -> "${pid.format(value)} ${pid.unit}".trim() + "\nReply $raw"
+                    response.messages.isEmpty() -> "No reply"
+                    else -> "Reply could not be decoded with this formula\nReply $raw"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "Failed: ${e.message}"
+            }
+            _state.update { it.copy(data = it.data.copy(pidTest = text)) }
+        }
+    }
+
     // ---- Module screens ---------------------------------------------------------------------------
 
     fun openModules() {
@@ -938,6 +1422,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun disconnectInternal() {
+        if (liveRecorder.isRecording) stopRecording()
+        ecuJob?.cancel()
         reconnectJob?.cancel()
         linkJob?.cancel()
         voltageJob?.cancel()
@@ -981,6 +1467,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val LIVE_PAUSE_MS = 250L
+        const val ENGINE_RUNNING_RPM = 300.0
         const val VOLTAGE_INTERVAL_MS = 5_000L
         const val MAX_LOG_LINES = 300
     }

@@ -57,6 +57,10 @@ object ReadOnlyPolicy {
         }
     }
 
+    /** OBD `04` and UDS `14 <3-byte group>`: allowed only with a [ClearConfirmation], never through [check]. */
+    fun isClearRequest(request: List<Int>): Boolean =
+        (request.size == 1 && request[0] == 0x04) || (request.size == 4 && request[0] == 0x14)
+
     fun isAllowed(request: List<Int>): Boolean = try {
         check(request)
         true
@@ -135,8 +139,13 @@ class Session(
         target: EcuTarget,
         request: List<Int>,
         timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
+        confirmation: ClearConfirmation? = null,
     ): ObdResponse {
-        ReadOnlyPolicy.check(request)
+        if (confirmation != null && ReadOnlyPolicy.isClearRequest(request)) {
+            confirmation.consume(request, target)
+        } else {
+            ReadOnlyPolicy.check(request)
+        }
         require(request.all { it in 0..0xFF }) { "Request bytes must be 0..255" }
 
         return lock.withLock {

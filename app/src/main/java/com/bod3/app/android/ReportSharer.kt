@@ -18,14 +18,20 @@ object ReportSharer {
         return File(directory, fileName).apply { writeText(text) }
     }
 
-    fun share(context: Context, file: File) {
+    fun share(
+        context: Context,
+        file: File,
+        mimeType: String = "text/plain",
+        subject: String = "bod3 diagnostic report",
+        chooserTitle: String = "Share diagnostic report",
+    ) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.reports", file)
         val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "bod3 diagnostic report")
+            type = mimeType
+            putExtra(Intent.EXTRA_SUBJECT, subject)
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(send, "Share diagnostic report"))
+        context.startActivity(Intent.createChooser(send, chooserTitle))
     }
 }

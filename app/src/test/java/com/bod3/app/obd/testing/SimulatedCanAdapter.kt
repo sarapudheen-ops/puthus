@@ -43,6 +43,9 @@ class SimulatedCanAdapter(
     val requests = mutableListOf<SentRequest>()
     val violations = mutableListOf<String>()
 
+    /** Fault-memory clear requests (04 / 14) that reached the bus. Only possible with a ClearConfirmation. */
+    val clears = mutableListOf<SentRequest>()
+
     /** Called before every data request; tests use it to cancel mid-scan or count probes. */
     var onRequest: (SentRequest) -> Unit = {}
 
@@ -102,7 +105,7 @@ class SimulatedCanAdapter(
         val tx = header ?: if (is29) "18DB33F1" else "7DF"
         val sent = SentRequest(protocolCode, tx, payload)
         requests += sent
-        if (!ReadOnlyPolicy.isAllowed(payload)) violations += "$tx $c"
+        if (ReadOnlyPolicy.isClearRequest(payload)) clears += sent else if (!ReadOnlyPolicy.isAllowed(payload)) violations += "$tx $c"
         onRequest(sent)
         failWith?.let { return it }
 

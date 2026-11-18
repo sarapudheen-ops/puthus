@@ -25,7 +25,34 @@ object KnownDids {
         SUPPLIER_HARDWARE_VERSION, SUPPLIER_SOFTWARE_VERSION, SUPPLIER, SERIAL_NUMBER, VIN, ODX_FILE, VW_CODING,
     )
 
-    fun label(id: Int): String = default.firstOrNull { it.id == id }?.label ?: "Identifier %04X".format(id)
+    /** Every standard identification DID of ISO 14229-1 (F180-F19E), read on the ECU detail screen. */
+    val identification: List<DidDefinition> = listOf(
+        DidDefinition(0xF180, "Boot software identification"),
+        DidDefinition(0xF181, "Application software identification"),
+        DidDefinition(0xF182, "Application data identification"),
+        DidDefinition(0xF183, "Boot software fingerprint"),
+        DidDefinition(0xF184, "Application software fingerprint"),
+        DidDefinition(0xF185, "Application data fingerprint"),
+        DidDefinition(0xF186, "Active diagnostic session"),
+        SPARE_PART_NUMBER, SOFTWARE_NUMBER, SOFTWARE_VERSION, SUPPLIER,
+        DidDefinition(0xF18B, "ECU manufacturing date"),
+        SERIAL_NUMBER,
+        DidDefinition(0xF18D, "Supported functional units"),
+        DidDefinition(0xF18E, "Kit assembly part number"),
+        VIN, HARDWARE_NUMBER,
+        DidDefinition(0xF192, "Supplier hardware number"),
+        SUPPLIER_HARDWARE_VERSION,
+        DidDefinition(0xF194, "Supplier software number"),
+        SUPPLIER_SOFTWARE_VERSION,
+        DidDefinition(0xF196, "Exhaust regulation / type approval number"),
+        SYSTEM_NAME,
+        DidDefinition(0xF198, "Repair shop code / tester serial number"),
+        DidDefinition(0xF199, "Programming date"),
+        DidDefinition(0xF19D, "ECU installation date"),
+        ODX_FILE, VW_CODING,
+    )
+
+    fun label(id: Int): String = (default + identification).firstOrNull { it.id == id }?.label ?: "Identifier %04X".format(id)
 }
 
 /** Outcome of reading one identifier. Negative responses are a normal result, not an error. */

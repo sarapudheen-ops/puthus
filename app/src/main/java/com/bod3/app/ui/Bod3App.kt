@@ -8,6 +8,13 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bod3.app.ui.screens.ConnectionSettingsScreen
+import com.bod3.app.ui.screens.CustomPidsScreen
+import com.bod3.app.ui.screens.EcuDetailScreen
+import com.bod3.app.ui.screens.LiveActions
+import com.bod3.app.ui.screens.LiveSelectScreen
+import com.bod3.app.ui.screens.PidEditorScreen
+import com.bod3.app.ui.screens.VehicleEditorScreen
+import com.bod3.app.ui.screens.VehiclesScreen
 import com.bod3.app.ui.screens.DashboardActions
 import com.bod3.app.ui.screens.DashboardScreen
 import com.bod3.app.ui.screens.DevicePickerScreen
@@ -38,6 +45,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             onConnect = viewModel::connect,
             onDismissError = viewModel::dismissError,
             onOpenSettings = viewModel::openSettings,
+            onOpenVehicles = viewModel::openVehicles,
         )
 
         Screen.DASHBOARD -> {
@@ -53,6 +61,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onOpenScan = viewModel::openScan,
                     onOpenModules = viewModel::openModules,
                     onOpenTerminal = viewModel::openTerminal,
+                    onOpenVehicles = viewModel::openVehicles,
+                    onOpenCustomPids = viewModel::openCustomPids,
                     onOpenSettings = viewModel::openSettings,
                     onDisconnect = viewModel::disconnect,
                     logText = viewModel::logText,
@@ -65,7 +75,14 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
 
         Screen.DTCS -> {
             BackHandler(onBack = viewModel::backToDashboard)
-            DtcScreen(state = state, onBack = viewModel::backToDashboard, onRefresh = viewModel::readDtcs)
+            DtcScreen(
+                state = state,
+                onBack = viewModel::backToDashboard,
+                onRefresh = viewModel::readDtcs,
+                onClear = viewModel::clearObdDtcs,
+                onDismissClear = viewModel::dismissClearResult,
+                onSaveDescription = viewModel::setDtcDescription,
+            )
         }
 
         Screen.SETTINGS -> {
@@ -108,10 +125,103 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             BackHandler(onBack = viewModel::closeLiveData)
             LiveDataScreen(
                 state = state,
-                onBack = viewModel::closeLiveData,
-                onPause = viewModel::pauseLiveData,
-                onResume = viewModel::resumeLiveData,
+                actions = LiveActions(
+                    onBack = viewModel::closeLiveData,
+                    onPause = viewModel::pauseLiveData,
+                    onResume = viewModel::resumeLiveData,
+                    onSelect = viewModel::openLiveSelection,
+                    onDisplay = viewModel::setLiveDisplay,
+                    onStartRecording = viewModel::startRecording,
+                    onStopRecording = { viewModel.stopRecording() },
+                    writeCsv = viewModel::writeRecordingCsv,
+                ),
             )
+        }
+
+        Screen.LIVE_SELECT -> {
+            BackHandler(onBack = viewModel::closeLiveSelection)
+            LiveSelectScreen(
+                available = state.liveConfig.available,
+                selected = state.live.map { it.def.key },
+                onApply = viewModel::setLiveSelection,
+                onCancel = viewModel::closeLiveSelection,
+            )
+        }
+
+        Screen.VEHICLES -> {
+            BackHandler(onBack = viewModel::closeVehicles)
+            VehiclesScreen(
+                state = state,
+                onBack = viewModel::closeVehicles,
+                onSelect = viewModel::selectVehicle,
+                onEdit = viewModel::editVehicle,
+                onOpenEcu = viewModel::openEcu,
+            )
+        }
+
+        Screen.VEHICLE_EDIT -> {
+            BackHandler(onBack = viewModel::cancelVehicleEdit)
+            val vehicle = state.data.editingVehicle
+            if (vehicle == null) {
+                LaunchedEffect(Unit) { viewModel.cancelVehicleEdit() }
+            } else {
+                val key = state.data.editingVehicleKey
+                VehicleEditorScreen(
+                    vehicle = vehicle,
+                    source = key?.let { k -> state.data.vehicles.firstOrNull { it.vehicle.key == k }?.source },
+                    error = state.data.vehicleError,
+                    onSave = viewModel::saveVehicle,
+                    onDelete = { key?.let(viewModel::deleteVehicle) },
+                    onCancel = viewModel::cancelVehicleEdit,
+                )
+            }
+        }
+
+        Screen.ECU_DETAIL -> {
+            BackHandler(onBack = viewModel::closeEcu)
+            val detail = state.ecuDetail
+            if (detail == null) {
+                LaunchedEffect(Unit) { viewModel.closeEcu() }
+            } else {
+                EcuDetailScreen(
+                    detail = detail,
+                    descriptions = state.data.descriptions,
+                    connected = state.isConnected,
+                    onBack = viewModel::closeEcu,
+                    onRefresh = viewModel::readEcu,
+                    onReadRecords = viewModel::readEcuRecords,
+                    onClear = viewModel::clearEcuDtcs,
+                    onDismissClear = viewModel::dismissClearResult,
+                    onSaveDescription = viewModel::setDtcDescription,
+                )
+            }
+        }
+
+        Screen.CUSTOM_PIDS -> {
+            BackHandler(onBack = viewModel::closeCustomPids)
+            CustomPidsScreen(state = state, onBack = viewModel::closeCustomPids, onEdit = viewModel::editPid)
+        }
+
+        Screen.PID_EDIT -> {
+            BackHandler(onBack = viewModel::cancelPidEdit)
+            val pid = state.data.editingPid
+            if (pid == null) {
+                LaunchedEffect(Unit) { viewModel.cancelPidEdit() }
+            } else {
+                val originalId = state.data.editingPidId
+                PidEditorScreen(
+                    pid = pid,
+                    isUserPid = originalId != null && originalId in state.data.userPidIds,
+                    isNew = originalId == null,
+                    connected = state.isConnected,
+                    error = state.data.pidError,
+                    testResult = state.data.pidTest,
+                    onSave = viewModel::savePid,
+                    onTest = viewModel::testPid,
+                    onDelete = { originalId?.let(viewModel::deletePid) },
+                    onCancel = viewModel::cancelPidEdit,
+                )
+            }
         }
 
         Screen.SCAN -> {

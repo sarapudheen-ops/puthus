@@ -21,10 +21,18 @@ class SimulatedVehicleElm(
     var permanentDtcs: List<Int> = listOf(0x0420),
     /** Commands that get no reply at all (simulating a hung adapter). */
     val silent: MutableSet<String> = mutableSetOf(),
+    /** DTC that stored freeze frame 0 (null = no freeze frame). */
+    var freezeFrameDtc: Int? = 0x0420,
+    /** PID 01 01 bytes A B C D: MIL on, 4 codes; spark; catalyst and O2 sensor incomplete. */
+    var readiness: List<Int> = listOf(0x84, 0x07, 0x65, 0x21),
+    /** Service 04 is refused with NRC 22 while the engine runs. */
+    var engineRunning: Boolean = false,
     /** Commands the adapter does not know (answers `?`), e.g. `ATCEA` on old clones. */
     val rejected: MutableSet<String> = mutableSetOf(),
 ) {
     val commands = mutableListOf<String>()
+    var clearCount = 0
+        private set
     private var selected = '0'
     private var found: Char? = null
     private var auto = true
@@ -93,13 +101,39 @@ class SimulatedVehicleElm(
             listOf(0x03) -> dtcReplies(0x43, storedDtcs)
             listOf(0x07) -> dtcReplies(0x47, pendingDtcs)
             listOf(0x0A) -> dtcReplies(0x4A, permanentDtcs)
-            else -> emptyList()
+            listOf(0x01, 0x01) -> listOf(listOf(0x41, 0x01) + readiness)
+            listOf(0x04) -> if (engineRunning) {
+                listOf(listOf(0x7F, 0x04, 0x22))
+            } else {
+                clearCount++
+                storedDtcs = emptyList(); pendingDtcs = emptyList(); freezeFrameDtc = null
+                readiness = listOf(0x00, readiness[1] or 0x00, readiness[2], readiness[2]) // all monitors incomplete
+                listOf(listOf(0x44))
+            }
+            else -> if (request.size == 3 && request[0] == 0x02) freezeFrame(request[1], request[2]) else emptyList()
         }
         if (replies.isEmpty()) return "NO DATA"
         return replies.flatMap(::frame).joinToString("\r")
     }
 
     private val isCan: Boolean get() = vehicleProtocol in '6'..'9'
+
+    /** Freeze frame 0: PIDs 02 (DTC), 04 load 50 %, 05 coolant 83 °C, 0C 750 rpm, 0D 0 km/h. */
+    private fun freezeFrame(pid: Int, frame: Int): List<List<Int>> {
+        val dtc = freezeFrameDtc
+        if (frame != 0) return emptyList()
+        val data = when (pid) {
+            0x02 -> if (dtc == null) listOf(0x00, 0x00) else listOf(dtc shr 8, dtc and 0xFF)
+            0x00 -> listOf(0x58, 0x18, 0x00, 0x00)
+            0x04 -> listOf(0x80)
+            0x05 -> listOf(0x7B)
+            0x0C -> listOf(0x0B, 0xB8)
+            0x0D -> listOf(0x00)
+            else -> return emptyList()
+        }
+        if (dtc == null && pid != 0x02) return emptyList()
+        return listOf(listOf(0x42, pid, frame) + data)
+    }
 
     private fun vinReplies(): List<List<Int>> {
         val text = vin ?: return emptyList()
