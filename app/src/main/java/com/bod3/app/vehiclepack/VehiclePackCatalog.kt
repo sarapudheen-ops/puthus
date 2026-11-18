@@ -158,7 +158,8 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
             coding = data.coding.map { it.copy(verified = true) }, security = data.security.map { it.copy(verified = true) })
         val ecu = m["ecuSource"] as? Map<*, *>
         val function = m["functionSource"] as? Map<*, *>
-        val pages = listOfNotNull(ecu?.get("pages") as? List<*>, function?.get("livePages") as? List<*>).flatten().map(::range)
+        val entry = m["entrySource"] as? Map<*, *>
+        val pages = listOfNotNull(entry?.get("pages") as? List<*>, ecu?.get("pages") as? List<*>, function?.get("livePages") as? List<*>).flatten().map(::range)
         return PackSystem(choice.id, choice.name, choice.enabled, why, counts, sources, trusted, pages)
     }
 

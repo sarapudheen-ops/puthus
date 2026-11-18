@@ -30,13 +30,18 @@ def fixture():
     system = bytearray(37)
     for at, value in ((0, 1), (4, 5), (23, 6), (28, 7)):
         struct.pack_into("<I", system, at, value)
+    system[27] = 0x11
     syslist = struct.pack("<IIIH", 7, 12, 0xFFFFFFFF, 1) + system
     directory = struct.pack("<I", 1) + struct.pack("<BI", 10, 9)
     ecu = directory + struct.pack("<HII", 0x1234, 2, 8) + b"12345678"
     function = bytes([28]) + struct.pack("<7I", 1, 0, 0, 33, 0, 0, 1) + b"\xff" * 4
     function += struct.pack("<HH", 1, 1) + bytes(range(30)) + bytes.fromhex("022100")
+    # One synthetic SYSTEMENTER directory and framed record. No addresses are
+    # inferred from its opaque runtime fields.
+    entry = bytes.fromhex("01 00 00 00 11 01 81 a0 28 00 00 12 34 00 02 07 07 05 3c 00 19 19 00 00 00")
+    enter = bytes([1, 1]) + struct.pack("<I", 6) + struct.pack("<HII", 1, 1, 16) + entry
     sources = {"MENU.BIN": bytes(menu), "SYSLIST_EU.BIN": syslist, "FUNCDATA_EU.BIN": function,
-               "EU/Ecu_Data_ffff.BIN": ecu}
+               "EU/Ecu_Data_ffff.BIN": ecu, "SYSTEMENTER.BIN": enter}
     for region in ("NA", "JP"):
         sources[f"SYSLIST_{region}.BIN"] = b"\xff" * 4
         sources[f"FUNCDATA_{region}.BIN"] = bytes([28]) + b"\xff" * 4
@@ -93,8 +98,10 @@ class ConversionTest(unittest.TestCase):
             self.assertEqual(0, index["summary"]["executableDefinitions"])
             self.assertEqual(1, index["summary"]["manualLeavesWithSystemJoin"])
             items = [json.loads(line) for line in gzip.decompress((Path(d) / "unresolved-items.jsonl.gz").read_bytes()).splitlines()]
-            self.assertEqual(3, len(items))  # two exact ECU source rows, one exact declared live row
-            self.assertEqual(3, len({r["id"] for r in items}))
+            self.assertEqual(4, len(items))  # exact ECU entry, two ECU rows, one declared live row
+            self.assertEqual(4, len({r["id"] for r in items}))
+            self.assertEqual(1, index["summary"]["systemEntryRecords"])
+            self.assertEqual(1, index["summary"]["systemsWithExactEntryJoin"])
             self.assertTrue(all(r["sourceVerified"] and not r["enabled"] and r["reasons"] for r in items))
             container = Path(d) / index["container"]
             page = read_object(container, index["root"])
@@ -109,6 +116,11 @@ class ConversionTest(unittest.TestCase):
             self.assertEqual({"converted": 0, "unresolved": 1}, system["counts"]["pids"])
             self.assertEqual({"converted": 0, "unresolved": None}, system["counts"]["coding"])
             self.assertEqual({}, system["data"])
+            self.assertEqual(0x11, system["entrySource"]["selector"])
+            entry = read_object(container, system["entrySource"]["pages"][0])["items"][0]
+            self.assertEqual("1234", entry["sourceFields"]["runtime107b0"])
+            self.assertIn(entry["id"], system["sourceRecords"])
+            self.assertTrue((Path(d) / "entry-index.json").exists())
             self.assertTrue((Path(d) / "conversion-report.md").read_text().startswith("# Toyota conversion report"))
 
     def test_malformed_known_layout_is_not_forgiven_or_padded(self):
@@ -130,6 +142,18 @@ class ConversionTest(unittest.TestCase):
             converter.finish()
             records = [json.loads(line) for line in gzip.decompress((Path(d) / "systems.jsonl.gz").read_bytes()).splitlines()]
             self.assertIn("missing_ecu_file", records[0]["reasons"])
+
+    def test_missing_exact_selector_never_uses_same_low_nibble_or_another_ecu(self):
+        with tempfile.TemporaryDirectory() as d:
+            sources, labels = fixture()
+            bad = bytearray(sources["SYSLIST_EU.BIN"])
+            bad[14 + 27] = 0x51
+            sources["SYSLIST_EU.BIN"] = bytes(bad)
+            index = Converter(sources, labels, Path(d)).finish()
+            self.assertEqual(0, index["summary"].get("systemsWithExactEntryJoin", 0))
+            records = [json.loads(line) for line in gzip.decompress((Path(d) / "systems.jsonl.gz").read_bytes()).splitlines()]
+            self.assertIn("missing_system_entry", records[0]["reasons"])
+            self.assertEqual(0, index["summary"]["executableDefinitions"])
 
     def test_original_archive_is_pinned_before_any_output(self):
         with tempfile.TemporaryDirectory() as d:

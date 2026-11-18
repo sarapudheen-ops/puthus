@@ -69,6 +69,28 @@ Only these literal source paths have been normalized so far. This is not coverag
 No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.
 Source verification is distinct from completed conversion and from physical vehicle testing.
 
+## Exact ECU-entry joins (reader-backed; not operational settings)
+
+The bounds-checked `SYSTEMENTER.BIN` reader now retains **1,308 entries in 1,276 lists** across three
+regional directories, including every init/keep-alive/exit binding ID and all five unclaimed spans
+(four `ffffffff` markers and the two trailing zero bytes). Field names describe native runtime offsets;
+they are **not yet approved ECU addresses or adapter timings**. The converter publishes `entry-index.json`
+and individual disabled-entry pages, links them into each selected system's on-demand pack, and lists
+an explicit `missing_system_entry` reason when a complete selector byte does not match.
+
+The verified full regional SYSLIST excerpts give these exact joins (no low-nibble/protocol fallback):
+
+| Region | Systems | Exact entry joins | Missing exact entry joins |
+|---|---:|---:|---:|
+| EU | 157,500 | 157,348 | 152 |
+| NA | 74,985 | 74,256 | 729 |
+| JP | 54,545 | 54,545 | 0 |
+| Total | 287,030 | 286,149 | 881 |
+
+These joins do not change the **zero executable definitions** figure. The accounting table above is
+from the previously published full conversion; new generated ledgers/container sizes must be observed
+in Actions before attributing them to the current revision.
+
 ## Evidence and current integration status
 
 This is the **full 1,307-ECU-source accounting**, published by

@@ -71,9 +71,18 @@ object. That failed device run is not offline-cache or stock-Android-24 network 
 
 CI now synchronizes only the disposable emulator's system CA store with the runner's existing trusted
 CA bundle and records verified host issuers/fingerprints. It does **not** change the app's TLS configuration,
-ship a CI/proxy CA, disable hostname/certificate verification, or trust a downloaded leaf. The rerun must
-still pass. Even a pass with current CAs is not proof that an unmaintained 2016 device CA store trusts the
-current release service; that compatibility boundary remains explicit.
+ship a CI/proxy CA, disable hostname/certificate verification, or trust a downloaded leaf.
+
+For `7148ffdb`, [push run 44373983385](https://github.com/sarapudheen-ops/puthus/actions/runs/44373983385)
+passed both actual-APK Android 24 tests (job `135053798575`, evidence check `135054693825`): the small-index /
+corpus-exclusion check and the exact selected-path range download → private offline-cache check.
+The device did not select a vehicle automatically and sent no ECU requests. PR Android run
+[44373996151](https://github.com/sarapudheen-ops/puthus/actions/runs/44373996151) and full inspection / conversion run
+[44373983393](https://github.com/sarapudheen-ops/puthus/actions/runs/44373983393) also passed.
+The disposable emulator added 120 runner-trusted roots, preserving existing roots; the runner CA-bundle
+SHA-256 was `185d96cba669be5e215d2b73c15e289930779717163f9d5c6ea3c0a55f2183cc`.
+This is delivery/cache proof with current CAs, **not** proof that an untouched 2016 device CA store trusts
+the current release service, and not proof of executable recovered Toyota diagnostics.
 
 ## Build and reproduce
 

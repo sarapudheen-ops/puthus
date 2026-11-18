@@ -18,6 +18,7 @@ from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_dire
                               system_lists, typed_table, uint)
 from vehicle_bundle import BundleWriter, SOURCE_SHA256, canonical, read_object
 from reviewed_hierarchy import normalize
+from toyota_entries import EntryIndex
 
 REGIONS = {0xFEE9: "EU", 0xFEEA: "NA", 0xFEEB: "JP"}
 REASONS = {
@@ -29,6 +30,7 @@ REASONS = {
     "flash_unsupported": "Source system uses FLASH; flashing/download services are intentionally outside the app's write whitelist.",
     "missing_ecu_file": "Source ECU file could not be joined. No generic ECU or address is substituted.",
     "missing_function": "No regional FUNCDATA row joins this source function key.",
+    "missing_system_entry": "No SYSTEMENTER entry exactly matches this region, function and complete selector byte; another selector or ECU is never substituted.",
     "missing_system_key": "The ordinary manual MENU leaf has no matching SYSLIST key in its source region.",
     "nonordinary_menu_task": "This manual leaf uses a special task, not the proven ordinary VehicleSystemScan key path.",
 }
@@ -82,6 +84,8 @@ class Converter:
         self.vehicle_report = []
         self.hierarchy_issues = []
         self.normalized = []
+        self.entries = None
+        self.entry_pages = {}
 
     def record(self, item):
         self.ledger.write(canonical(item) + b"\n")
@@ -98,6 +102,24 @@ class Converter:
                 "enabled": False, "reasons": reasons, "rawHex": raw.hex(), **fields}
         self.record(item)
         return item
+
+    def convert_entries(self):
+        self.entries = EntryIndex(self.sources["SYSTEMENTER.BIN"])
+        for item in self.entries.lists.values():
+            for entry in item.entries:
+                report = entry.report()
+                identity = report.pop("id")
+                raw = report.pop("rawHex")
+                disabled = self.disabled(identity, "ecu-entry-candidate", bytes.fromhex(raw),
+                                         ["ecu_entry_untranslated"], **report)
+                self.entry_pages[entry.offset] = self.pages([disabled])
+                self.census["systemEntryRecords"] += 1
+        # Markers/padding stay explicit; they are not silently decoded as zero
+        # features, guessed requests or a second ECU's configuration.
+        for span in self.entries.unclaimed:
+            self.disabled(source_id("SYSTEMENTER.BIN", span["offset"], "#unclaimed"), "unclassified-entry-span",
+                          bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
+        (self.output / "entry-index.json").write_bytes(canonical(self.entries.report()) + b"\n")
 
     def convert_ecus(self):
         for name, raw in sorted(self.sources.items()):
@@ -171,10 +193,22 @@ class Converter:
                     transport = self.text(uint(raw, 28, 4))
                     ecu = self.ecus.get(f"{region}/{ecu_file}".casefold())
                     function = self.functions.get((region, key))
+                    region_id = {"EU": 1, "NA": 2, "JP": 3}[region]
+                    entry = self.entries.select(region_id, key, raw[27])
+                    entry_source = None
+                    sources = [identity]
+                    if function is not None: sources.append(function["sourceRecord"])
+                    if entry is not None:
+                        function_row = self.entries.regions[region_id][key]
+                        sources += [source_id("SYSTEMENTER.BIN", function_row["offset"]), entry.source_id]
+                        entry_source = {"sourceRecord": entry.source_id, "selector": entry.descriptor,
+                                        "pages": self.entry_pages[entry.offset]}
+                        self.census["systemsWithExactEntryJoin"] += 1
                     reasons = ["ecu_entry_untranslated"]
                     if transport == "FLASH": reasons = ["flash_unsupported"]
                     if ecu is None: reasons.append("missing_ecu_file")
                     if function is None: reasons.append("missing_function")
+                    if entry is None: reasons.append("missing_system_entry")
                     # Operational category denominators are UNKNOWN until their row schemas/joins
                     # are translated. Zero is only used for the number actually made executable.
                     counts = {kind: {"converted": 0, "unresolved": None} for kind in
@@ -182,10 +216,10 @@ class Converter:
                     counts["pids"]["unresolved"] = function["declaredLiveRows"] if function else None
                     value = {"kind": "vehicle-system", "id": identity,
                         "name": self.text(uint(raw, 4, 4)) or f"System {key}",
-                        "description": self.text(uint(raw, 8, 4)), "sourceRecords": [identity],
+                        "description": self.text(uint(raw, 8, 4)), "sourceRecords": sources,
                         "sourceVerified": True, "enabled": False, "reasons": reasons,
                         "functionKey": key, "entrySelector": raw[27], "transportLabel": transport,
-                        "rawHex": raw.hex(), "ecuSource": ecu, "functionSource": function,
+                        "rawHex": raw.hex(), "ecuSource": ecu, "functionSource": function, "entrySource": entry_source,
                         "counts": counts, "data": {}}
                     ref = self.writer.add(value)
                     brief = {"id": identity, "name": value["name"], "counts": counts,
@@ -193,7 +227,9 @@ class Converter:
                     refs.append(brief)
                     self.systems[identity] = ref
                     self.system_report.append({"id": identity, "region": region, "system": value["name"],
-                                               "counts": counts, "reasons": reasons})
+                        "functionKey": key, "entrySelector": raw[27], "ecuFile": ecu_file,
+                        "sourceRecords": sources, "entrySource": entry.source_id if entry else None,
+                        "counts": counts, "reasons": reasons})
                 for key, block in index:
                     if block == offset:
                         self.vehicle_systems[region, key] = refs
@@ -282,6 +318,7 @@ class Converter:
         return write(tree)["object"]
 
     def finish(self):
+        self.convert_entries()
         self.convert_ecus()
         self.convert_functions()
         self.convert_systems()
@@ -300,7 +337,8 @@ class Converter:
             "| Measure | Count |", "|---|---:|"]
         report += [f"| {key} | {value} |" for key, value in sorted(self.census.items())]
         report += ["| Executable definitions | 0 |", "", "## Exact per-item accounting", "",
-            "- `unresolved-items.jsonl.gz`: every framed ECU row and declared live row, stable file/offset/slot/row ID, exact source bytes and all disabling reasons.",
+            "- `unresolved-items.jsonl.gz`: every framed ECU row, declared live row, SYSTEMENTER entry and unclaimed entry-file span, stable file/offset/slot/row ID, exact source bytes and all disabling reasons.",
+            "- `entry-index.json`: complete reader-backed regional function/selector directory, framed entry fields, binding IDs and every unclaimed byte span. Opaque header/timing values are not approved transport settings.",
             "- `vehicles.jsonl.gz`: every manual source leaf, full exact path, region/key, all system IDs and hierarchy reasons.",
             "- `systems.jsonl.gz`: every regional system record and converted/unresolved category counts. `null` means **unknown**, not zero or no source support.",
             "- The range bundle retains the same per-system pages. Selecting a vehicle does not fetch the full corpus.",
