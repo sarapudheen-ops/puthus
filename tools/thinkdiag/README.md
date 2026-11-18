@@ -1,6 +1,6 @@
 # Toyota database recovery tools
 
-Data-only research/conversion for this repository's [`assets-v1/TOYOTA.zip`](https://github.com/sarapudheen-ops/puthus/releases/tag/assets-v1) release asset. These tools do not run the vendor app, `dlopen`/execute its native libraries, alter activation or generate vehicle commands. The bundled result and limitations are described in [`docs/toyota-data.md`](../../docs/toyota-data.md).
+Data-only research/conversion for this repository's [`assets-v1/TOYOTA.zip`](https://github.com/sarapudheen-ops/puthus/releases/tag/assets-v1) release asset. These tools do not run the vendor app, `dlopen`/execute its native libraries, alter activation, evaluate EXPRESS or enable/send vehicle commands. Opaque source byte sequences recovered for research are **not** runnable diagnostic recipes. The bundled result is described in [`docs/toyota-data.md`](../../docs/toyota-data.md); the [renewed full diagnostic-source sweep](../../docs/toyota-diagnostic-sweep.md) documents the much broader source data and unresolved semantics.
 
 ## Reproduce
 
@@ -22,6 +22,10 @@ PY=.local/thinkdiag/venv/bin/python
   --output .local/thinkdiag/decoded --report .local/thinkdiag/report
 "$PY" tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
   --output .local/thinkdiag/english --report .local/thinkdiag/report
+"$PY" tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \
+  --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+  --manifest .local/thinkdiag/report/decoded-manifest.json \
+  --output .local/thinkdiag/sweep --report .local/thinkdiag/report
 "$PY" tools/thinkdiag/convert_dtcs.py .local/thinkdiag/english/TCODE_EN.GAG.json \
   --output .local/thinkdiag/converted --report .local/thinkdiag/report
 cmp .local/thinkdiag/converted/toyota-lexus-dtcs.json app/src/main/assets/datapacks/toyota-lexus-dtcs.json
@@ -51,9 +55,46 @@ The GitHub Actions workflow `.github/workflows/thinkdiag-data.yml` runs the same
 - `ggp.py` returns raw record bytes; `extract_english.py` writes all original member files plus ID-to-UTF-8 maps. It omits non-UTF-8 records from the JSON rather than guessing an encoding and reports their counts/examples. Their original member bytes remain available.
 - **TCODE pairs contain a literal NUL byte (`00`) between the explicit code and text.** A check/log renderer may display NUL as `\^@`; splitting on that visible rendering produces no real pairs. The converter uses the actual NUL-delimited JSON data, not check-rendered samples, and rejects extra fields.
 
+### Diagnostic table and menu evidence
+
+`sweep_toyota.py` inventories every archive/nested file, all native exports and all recovered English libraries. It checks every decoded payload against its SHA-256 manifest, rather than extrapolating from one ECU. It emits a complete MENU graph, regional system/function indexes, per-ECU section records, shared-table schemas/strides, command/frame-reference audits and explicit whole-file/record exceptions. These outputs are research-only; nothing is imported into the app.
+
+`toyota_structure.py` implements bounded reader-backed layouts:
+
+- SYSLIST: LE32 vehicle-key/offset pairs to an FFFFFFFF sentinel; blocks have an LE16 count and packed 37-byte rows. Function key is at row offset 0; filename text ID at 23; transport-label text ID at 28. Numeric/text namespaces collide, so other fields remain named by source offset until traced.
+- FUNCDATA: stride byte 28 and seven-LE32 directory rows to an FFFFFFFF sentinel. File offsets stay file offsets, not CAN identifiers.
+- ECU files: **hexadecimal** filename suffixes; LE32 section count followed by five-byte `(u8 slot, LE32 absolute offset)` entries. All spans validate before use.
+- Typed table: LE16 schema tag, LE32 count, LE32 body size, body at +10, up to three padding bytes. **Directory slot, schema tag and filename suffix need not match.** This matters for P5 and revised EU tables. Row layouts remain table-specific.
+- MENU: length-prefixed 38-byte node headers and 23-byte edges; title ID at node+8 and child targets at edge+19. Raw task/saved-parameter fields are retained, never executed or treated as vehicle keys without reader evidence.
+- Shared command pool: six-byte `(signed LE32 blob-relative offset, u8 length, u8 opaque flag)` descriptors, one-based IDs, native 10000 bias. The strict reader refuses out-of-bounds data. The separate **audit** preserves malformed descriptors as errors, without padding missing bytes or returning an invalid byte sequence.
+- Shared frame table: eight-byte `(u16 key, three u16 dictionary references)` rows, with references resolved by original field offset. Function-binding references at row+6 are cross-checked separately; their selector semantics are not guessed.
+
+Native evidence includes FILE `GetVehicleInfoData`, `GetSystemListData`, `GetAllToyotaTblData`, `GetEcuTblData` and the DS/ACT/customization readers; COMM `GetCmdDataInfo`/`GetCommFrameInfo`/`GetFuncCommFrameInfo`; CALC `ResultCalcFromCalcID`; and DIAG's packed-menu readers. Full per-function reports include a decoded-byte count and are split losslessly. Display-limited legacy reports explicitly announce truncation.
+
 ### Semantic boundaries
 
-Static Toyota readers identify SYSLIST vehicle-ID/section-offset pairs and 37-byte ECU records, but the request/protocol/text-ID relationships are not yet established. Live-data text/unit labels and EXPRESS source-like records do **not** prove formulas or request mappings. Never evaluate the recovered EXPRESS text or promote decoded tables into writes, coding or actuator recipes without validated vehicle/ECU-specific definitions and the existing gated app flows.
+The recovered source clearly extends beyond DTC text: vehicle/system-to-ECU links, frame/byte dictionaries, live-data/expression tables and dedicated coding/actuator/customization paths are present. This does **not** establish the complete vehicle → ECU → addressing/session → request/response → extraction/formula/unit chain needed for an app definition. Counts are often duplicated across regions and are not unique PIDs or confirmed vehicle coverage. Live-data labels and EXPRESS records alone do not prove usable formulas or request mappings. Never evaluate recovered EXPRESS or promote decoded tables into writes, coding or actuator recipes without validated vehicle/ECU-specific definitions and the existing gated app flows.
+
+### Retrieve complete sweep evidence through the GitHub API
+
+The workflow keeps the full reports in `toyota-data-inspection` and a readable **Toyota diagnostic sweep** check. Detailed text reports are compressed JSON/base64 in numbered **Toyota sweep evidence NNN** checks, with compressed and uncompressed SHA-256 hashes. This avoids lossy control-byte rendering and excessive individual check publications. A publication failure has a GitHub error annotation, and recovered-data/report uploads use `always()`.
+
+When release/artifact download redirects are blocked, choose a **successful** sweep's commit SHA and restore its checks without any vendor execution:
+
+```sh
+REPO=sarapudheen-ops/puthus
+SHA=86a0667b732d34e6cbcf859466717d991676fe9d  # or the reviewed successful commit
+EVIDENCE=".local/thinkdiag/evidence-$SHA"
+mkdir -p "$EVIDENCE/parts"
+gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" --paginate \
+  --jq '.check_runs[] | select(.name | startswith("Toyota sweep evidence ")) | .id' |
+while read -r id; do
+  gh api "repos/$REPO/check-runs/$id" --jq '.output.summary' > "$EVIDENCE/parts/$id.json"
+done
+python3 tools/thinkdiag/sweep_reports.py unpack "$EVIDENCE"/parts/*.json --output "$EVIDENCE/reports"
+```
+
+Use a fresh directory / one coherent run: missing, duplicate, inconsistent, corrupted or oversized parts are rejected. The bundle is non-executable report text, not a diagnostic import. Source-byte excerpts inside it remain research files outside Git and must be checked against their own declared size/SHA-256 before inspection.
 
 ## Conversion audit
 

@@ -411,6 +411,9 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         f"- Inventoried {len(all_files):,} archive/nested files and {len(native_census)} ELF libraries.",
         f"- Verified {len(manifest):,} decoded payload hashes ({findings['decodedBytes']:,} bytes).",
         f"- Parsed {len(section_files):,} ECU directories; {len(unparsed)} directory errors.",
+        f"- Framed {sum(section_counts.values()):,} ECU typed sections; {len(typed_errors):,} section framing errors (semantics remain table-specific).",
+        f"- Whole-file structural parsers accept {findings['structuralCoverage']['parsedDecodedFiles']:,}/{len(manifest):,}; "
+        f"{findings['structuralCoverage']['uninterpretedDecodedFiles']} whole-file exceptions remain explicit.",
         f"- Parsed {menu.get('nodes', 0):,} menu nodes; {menu.get('titleIdsResolved', 0):,} title IDs resolved.",
         f"- Found {len(menu.get('innovaPaths', []))} Innova-labelled menu nodes.", "",
         "| Region | Vehicle index rows | System rows | ECU-file links resolved |",
@@ -424,6 +427,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         overview.append(f"- {pool['file']}: {pool.get('boundedEntries', 0)}/{pool.get('declaredEntries', 0)} bounded entries; "
                         f"{len(pool.get('invalidEntries', []))} invalid, {pool.get('bodyShortfallBytes', 0)} missing declared bytes. "
                         + pool.get("unparsed", ""))
+        links = pool.get("frameLinks", {})
+        if links:
+            overview.append(f"  - {links['frames']:,} frame rows; {links['dictionaryReferences']:,} dictionary references, "
+                            f"{links['unresolvedReferences']} unresolved; {links['eligibleBindingsWithFrame']:,}/"
+                            f"{links['eligibleFunctionBindings']:,} eligible function/frame references resolve.")
     overview.extend(["", "**No new diagnostic operations were enabled in the app.** Vendor code and EXPRESS were not executed. "
         "Source anomalies and uninterpreted formats remain explicit in the detailed reports.", "",
         "Complete, checksum-verified text reports are available in the `Toyota sweep evidence NNN` checks "

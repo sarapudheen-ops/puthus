@@ -1,5 +1,7 @@
 # Toyota/Lexus release data recovery
 
+> **Renewed diagnostic-source sweep:** the folder contains vehicle/system/ECU maps, communication-byte/frame dictionaries, live-data/expression tables and actuator/customization reader paths beyond DTC text. See the [full findings and unresolved conversion work](toyota-diagnostic-sweep.md). The passive-only limitation below describes what is currently integrated in bod3, **not** what exists in the source archive.
+
 ## What is usable in bod3 now
 
 `app/src/main/assets/datapacks/toyota-lexus-dtcs.json` is a **passive English DTC reference**, recovered from this repository's `assets-v1/TOYOTA.zip` release asset (Toyota V10.62).
@@ -62,7 +64,7 @@ The original outer ZIP is **not password-encrypted**. Its contained database for
 
 The eight members are TEXT_EN.GAG (35,882 records), DSTREAM_EN.GAG (44,800), TCODE_EN.GAG (27,035), RCODE_EN.GAG (1,885), EXPRESS.GAG (12,594), VEHICLEADAS.GAG (61,656), VEHICLEMANUAL.GAG (13,538), and VEHICLEDTCS.GAG (701).
 
-**Not yet converted:** vehicle/system-to-ECU mappings, request/response definitions, live-data formulas/units/request links, legacy protocols, coding and bidirectional operations. A decoded label or source-like expression is not enough to establish any of those semantics. EXPRESS content is never evaluated. Vendor vehicle-year coverage claims are not bod3 coverage.
+**Not yet integrated as enhanced app operations:** vehicle/system-to-ECU mappings, request/response definitions, live-data formulas/units/request links, legacy protocols, coding and bidirectional operations. The [renewed sweep](toyota-diagnostic-sweep.md) recovers structural relationships and reader-backed references across these source families; the remaining work is semantic conversion and validation, not finding only DTC text. A decoded label or source-like expression alone is not enough to establish a usable diagnostic definition. EXPRESS content is never evaluated. Vendor vehicle-year coverage claims are not bod3 coverage.
 
 ## Reproduce and retrieve the results
 
@@ -70,8 +72,8 @@ See [`tools/thinkdiag/README.md`](../tools/thinkdiag/README.md) for local comman
 
 Its artifacts are:
 
-- **`toyota-recovered-data`** (14 days): decoded YZJM payloads, all eight original GGP member files, ID-to-UTF-8 JSON maps, the converted app pack, the per-code source-ID/conflict audit, and the binary manifest/text-library summaries. Non-UTF-8 records can still be recovered from the retained member files with the data-only reader.
-- **`toyota-data-inspection`** (7 days): bounded inspection, disassembly, extraction and conversion reports. The main reports are also published as check summaries; compact converted-text shards are checksummed for inspection where artifact-download hosts are blocked.
+- **`toyota-recovered-data`** (14 days): decoded YZJM payloads, all eight original GGP member files, ID-to-UTF-8 JSON maps, the converted app pack, the per-code source-ID/conflict audit, and the binary manifest/text-library summaries; also the full menu/system/section inventories and diagnostic frame/byte-reference audits from the renewed sweep. Non-UTF-8 records can still be recovered from the retained member files with the data-only reader.
+- **`toyota-data-inspection`** (7 days): inspection, full selected-reader disassembly, extraction and conversion reports. The sweep overview is a readable check; complete detailed reports are in checksum-verified compressed `Toyota sweep evidence NNN` checks. Compact converted-text shards also remain checksummed for inspection where artifact-download hosts are blocked.
 - **`app-debug-apk`** from **Android CI**: the debug APK including the scoped reference.
 
 Regenerate the research artifacts when they expire. Full archives, raw libraries and decoded research datasets stay in ignored `.local/thinkdiag/`, **not in Git or the APK**. The only bundled Toyota dataset is the validated passive DTC subset. Existing read-only/Expert-mode, confirmation, coding-engine and actuator-engine restrictions are unchanged.
