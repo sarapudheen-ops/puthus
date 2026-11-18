@@ -166,7 +166,7 @@ object KwpScenarios {
         check(adapter.commands.none { it.startsWith("STIFI") || it == "ATSI" })
     }
 
-    suspend fun lease() = coroutineScope {
+    suspend fun lease(): Unit = coroutineScope {
         val b = Bench()
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
         val owner = launch {
@@ -231,6 +231,24 @@ object KwpScenarios {
             check(r.outcome == RunOutcome.COMPLETED && r.stopConfirmed) { r.toString() }
             check(!b.adapter.ecu.output && !b.adapter.ecu.routine && b.adapter.ecu.session == 1)
         }
+    }
+
+    suspend fun actuatorCancellation() = coroutineScope {
+        val b = Bench(); val audit = AuditStore(InMemoryKeyValueStore())
+        val recipe = ActuatorRecipe("synthetic-cancel", "Synthetic cancellation", "Not vehicle data",
+            ActuatorModule("Synthetic ECU", requestId = "8010F1", responseId = "80F110", link = link),
+            session = 0x81, start = listOf(0x30, 0x20, 3, 1), stop = listOf(0x30, 0x20, 0),
+            durationSeconds = 2, safetyNotes = listOf("Synthetic test only"))
+        b.client.readLocal(0x20)
+        var run: Deferred<RunResult>? = null
+        val runner = ActuatorRunner(b.session, probe, { true }, audit, clock = { b.now }, sleep = {
+            b.now += it
+            if (b.now > 1500) run!!.cancel()
+        })
+        run = async(start = CoroutineStart.LAZY) { runner.run(recipe, ActuatorConfirmation.forRecipe(recipe) { b.now }) }
+        fails<CancellationException> { run.await() }
+        check(!b.adapter.ecu.output && b.adapter.ecu.session == 1)
+        check(audit.records().single().details["Stop reason"] == "Cancelled")
     }
 
     fun formulaOffset() {

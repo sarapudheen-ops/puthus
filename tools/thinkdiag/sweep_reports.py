@@ -76,20 +76,62 @@ def unpack_parts(parts):
     return reports
 
 
+def parts_from_checks(checks):
+    """Deduplicate accepted-POST/failed-response retries, then require one complete bundle.
+
+    Strict unpack_parts intentionally rejects duplicate raw part inputs. Recovery
+    from GitHub checks first permits *only byte-identical part objects* within a
+    checksum group; conflicting content is an error, never latest-wins guessing.
+    Pass check-runs from one explicitly selected commit, not the repository-wide
+    stream. Multiple different complete bundles require an explicit selection.
+    """
+    groups = {}
+    for check in checks:
+        if not check.get("name", "").startswith("Toyota sweep evidence "):
+            continue
+        if check.get("conclusion") != "success":
+            continue
+        part = json.loads(check["output"]["summary"])
+        if part.get("format") != FORMAT:
+            raise ValueError("Unexpected evidence check format")
+        count, number = part["parts"], part["part"]
+        if type(count) is not int or not 1 <= count <= 1000 or type(number) is not int or not 1 <= number <= count:
+            raise ValueError("Invalid evidence part number/count")
+        key = (count, part["compressedSha256"], part["uncompressedSha256"])
+        parts = groups.setdefault(key, {})
+        if number in parts and parts[number] != part:
+            raise ValueError("Conflicting retry content for one evidence part")
+        parts[number] = part
+    complete = [list(parts.values()) for (count, _, _), parts in groups.items()
+                if isinstance(count, int) and set(parts) == set(range(1, count + 1))]
+    if len(complete) != 1:
+        raise ValueError("Need exactly one complete checksum group of sweep evidence")
+    # Validate the entire compressed payload before callers can write any reports.
+    unpack_parts(complete[0])
+    return sorted(complete[0], key=lambda p: p["part"])
+
+
 def publish_check(repository, head, name, summary):
     payload = {"name": name, "head_sha": head, "status": "completed", "conclusion": "success",
                "output": {"title": name, "summary": summary}}
-    for attempt in range(3):
-        result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{repository}/check-runs",
-                                 "--input", "-", "--jq", ".id"], input=json.dumps(payload),
-                                text=True, capture_output=True, timeout=60)
-        if result.returncode == 0:
-            print(f"Published {name}: {result.stdout.strip()}")
-            return
-        if attempt < 2 and re.search(r"rate limit|secondary|HTTP 429", result.stderr, re.I):
-            time.sleep(10 * (attempt + 1))
+    for attempt in range(5):
+        try:
+            result = subprocess.run(["gh", "api", "--method", "POST", f"repos/{repository}/check-runs",
+                                     "--input", "-", "--jq", ".id"], input=json.dumps(payload),
+                                    text=True, capture_output=True, timeout=60)
+            if result.returncode == 0:
+                print(f"Published {name}: {result.stdout.strip()}")
+                return
+            error = result.stderr
+        except subprocess.TimeoutExpired:
+            error = "request timeout"
+        # gh can receive a transient truncated response after accepting a POST. Repeated
+        # names are harmless; recovery chooses a consistent complete bundle by part number.
+        transient = re.search(r"rate limit|secondary|HTTP (?:429|5[0-9]{2})|EOF|unexpected end|timeout|connection reset", error, re.I)
+        if attempt < 4 and transient:
+            time.sleep(min(45, 5 * 2 ** attempt))
             continue
-        raise RuntimeError(f"Failed to publish {name}: {result.stderr[:3000]}")
+        raise RuntimeError(f"Failed to publish {name}: {error[:3000]}")
 
 
 def publish(reports_dir, output, repository, head):
@@ -124,6 +166,9 @@ if __name__ == "__main__":
     restore = commands.add_parser("unpack")
     restore.add_argument("parts", type=Path, nargs="+")
     restore.add_argument("--output", type=Path, required=True)
+    recover = commands.add_parser("recover-checks", help="Read gh api --paginate --slurp commit check-runs JSON")
+    recover.add_argument("checks", type=Path)
+    recover.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "publish":
         try:
@@ -133,7 +178,13 @@ if __name__ == "__main__":
             print(f"::error title=Sweep evidence publication::{message}", flush=True)
             raise
     else:
-        reports = unpack_parts([json.loads(p.read_text()) for p in args.parts])
+        if args.command == "recover-checks":
+            pages = json.loads(args.checks.read_text())
+            pages = pages if isinstance(pages, list) else [pages]
+            parts = parts_from_checks([check for page in pages for check in page["check_runs"]])
+        else:
+            parts = [json.loads(p.read_text()) for p in args.parts]
+        reports = unpack_parts(parts)
         args.output.mkdir(parents=True, exist_ok=True)
         for report in reports:
             path = args.output / report["file"]

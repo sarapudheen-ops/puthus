@@ -28,5 +28,6 @@ class KwpTest {
     @Test fun routingLeaseIsExclusiveAndCancellationReleasesIt() = runBlocking { KwpScenarios.lease() }
     @Test fun codingBackupDiffWriteVerifyRollbackAndSingleUseConfirmation() = runBlocking { KwpScenarios.coding() }
     @Test fun outputAndRoutineStopAndReturnToDefaultSession() = runBlocking { KwpScenarios.actuator() }
+    @Test fun cancellationStillStopsAndAuditsAcrossRoutingContext() = runBlocking { KwpScenarios.actuatorCancellation() }
     @Test fun localFormulaByteOffsetAndEcho() = KwpScenarios.formulaOffset()
 }

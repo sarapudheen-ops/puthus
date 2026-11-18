@@ -94,7 +94,7 @@ data class CodingRecipe(
     fun problems(): List<String> = buildList {
         if (!ID.matches(id)) add("id: use lowercase letters, digits, '.', '_' or '-' (got \"$id\")")
         if (name.isBlank()) add("name: must not be empty")
-        addAll(module.problems().map { "module.$it" })
+        addAll(module.problems().map { "module: $it" })
         val local = readService == 0x21 && writeService == 0x3B
         if (!(readService == 0x22 && writeService == 0x2E) && !(local && module.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000)) add("readService/writeService: needs 22/2E or explicit KWP 21/3B")
         if (local && did !in 0..255) add("did: local identifier must be one byte")

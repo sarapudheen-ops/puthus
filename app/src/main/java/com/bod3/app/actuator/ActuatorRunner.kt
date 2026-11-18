@@ -119,7 +119,7 @@ class ActuatorRunner(
         vehicle: VehicleContext = VehicleContext(),
         overrideApplicability: Boolean = false,
         onPhase: (RunPhase) -> Unit = {},
-    ): RunResult = session.withDiagnosticOperation { runExclusive(recipe, confirmation, control, vehicle, overrideApplicability, onPhase) }
+    ): RunResult = runExclusive(recipe, confirmation, control, vehicle, overrideApplicability, onPhase)
 
     private suspend fun runExclusive(
         recipe: ActuatorRecipe, confirmation: ActuatorConfirmation, control: RunControl, vehicle: VehicleContext,
@@ -127,7 +127,19 @@ class ActuatorRunner(
     ): RunResult {
         val log = AuditRecorder(clock)
         log.step("Recipe ${recipe.id}: ${recipe.name} on ${recipe.module.display}")
-        val (result, cancelled) = execute(recipe, confirmation, control, vehicle, overrideApplicability, onPhase, log)
+        // withContext's prompt cancellation can throw AFTER the protected cleanup returned.
+        // Capture its outcome before leaving the routing context so cancellation cannot erase the audit.
+        var completed: Pair<RunResult, CancellationException?>? = null
+        var boundaryCancellation: CancellationException? = null
+        try {
+            session.withDiagnosticOperation {
+                completed = execute(recipe, confirmation, control, vehicle, overrideApplicability, onPhase, log) { completed = it }
+            }
+        } catch (e: CancellationException) {
+            boundaryCancellation = e
+        }
+        val (result, cancellation) = completed ?: (RunResult(RunOutcome.REFUSED, "Cancelled before starting", StopReason.CANCELLED) to boundaryCancellation)
+        val cancelled = cancellation ?: boundaryCancellation
         val id = newId()
         audit?.append(
             AuditRecord(
@@ -155,6 +167,7 @@ class ActuatorRunner(
         overrideApplicability: Boolean,
         onPhase: (RunPhase) -> Unit,
         log: AuditRecorder,
+        onPreparedResult: (Pair<RunResult, CancellationException?>) -> Unit,
     ): Pair<RunResult, CancellationException?> {
         fun refuse(message: String, report: PreconditionReport? = null): Pair<RunResult, CancellationException?> {
             log.step("Refused: $message", ok = false)
@@ -173,7 +186,7 @@ class ActuatorRunner(
         if (control.stopRequested) return refuse("Stopped before start")
 
         return session.withEcuOperation(recipe.module.target) {
-            runPrepared(recipe, control, onPhase, log, report)
+            runPrepared(recipe, control, onPhase, log, report).also(onPreparedResult)
         }
     }
 
