@@ -12,6 +12,9 @@ import com.bod3.app.catalog.CatalogNode
 import com.bod3.app.catalog.CatalogRepository
 import com.bod3.app.catalog.CatalogTree
 import com.bod3.app.android.AssetCatalog
+import com.bod3.app.android.AssetVehiclePacks
+import com.bod3.app.vehiclepack.PackVehicle
+import com.bod3.app.vehiclepack.VehiclePacksController
 import java.util.UUID
 import com.bod3.app.errors.ErrorExplainer
 import com.bod3.app.packs.DataExport
@@ -133,7 +136,7 @@ enum class Screen {
     DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
     VEHICLES, CATALOG_EDIT, CATALOG_DATA, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
     ACTUATORS, ACTUATOR_RUN, CODING, CODING_RUN, CODING_EDITOR,
-    APP_SETTINGS, DATA_PACKS, TOYOTA_SOURCE,
+    APP_SETTINGS, DATA_PACKS, TOYOTA_SOURCE, TOYOTA_PACKS,
 }
 
 sealed interface ConnectionState {
@@ -331,13 +334,22 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private val bundledCoding = AssetCodingPacks.load(application)
     private val bundledCatalog = AssetCatalog.load(application, bundledPacks.packs, bundledActuators.packs, bundledCoding.packs)
     private val catalog = CatalogRepository(bundledCatalog.pack, preferences, bundledCatalog.legacyLinks)
-    private val catalogAccess = CatalogAccess(catalog)
+    private val vehiclePackCatalog by lazy { AssetVehiclePacks.load(application) }
+    val vehiclePacks: VehiclePacksController by lazy {
+        VehiclePacksController(viewModelScope, { vehiclePackCatalog }, { catalog.state().selectedId },
+            ::selectDownloadedVehicle, ::prepareSystemChange, ::refreshDownloadedSystem)
+    }
+    private val catalogAccess = CatalogAccess(catalog, ::downloadedScope)
     private val actuatorLibrary = ActuatorLibrary(bundledActuators.packs, preferences, catalogAccess)
     private val codingLibrary = CodingLibrary(bundledCoding.packs, preferences, catalogAccess)
     private var catalogErrors = bundledCatalog.errors
     private var pidScopeId: String? = null
     private var pidScopeActive = false
     private var pidsReturn = Screen.DASHBOARD
+    private var toyotaPacksReturn = Screen.VEHICLES
+    private var featureReturn = Screen.DASHBOARD
+    private var liveReturn = Screen.DASHBOARD
+    private var liveSelectionScope: String? = null
 
     private var liveDefs: List<LiveValueDef> = emptyList()
     private var liveTarget: EcuTarget = EcuTarget.Broadcast
@@ -462,7 +474,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun openConnection(device: PairedAdapter): ConnectionResult {
         setStep(device, "Opening Bluetooth connection…")
         val bluetoothDevice = bluetooth.device(device.address) ?: throw IllegalArgumentException("Invalid Bluetooth address")
-        val profile = catalog.connection(connectionStore.activeProfile())
+        val profile = catalogAccess.connection(connectionStore.activeProfile())
         return connectionManager.connect(BluetoothSppTransport(bluetoothDevice), device.address, profile) { step ->
             setStep(device, step)
         }
@@ -518,6 +530,11 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openLiveData() {
+        if (isDownloadedSelection()) {
+            if (vehiclePacks.selectedSystem()?.enabled == true) openSelectedSystemLive() else openSelectedSystems()
+            return
+        }
+        liveReturn = Screen.DASHBOARD; liveSelectionScope = null
         if (scanJob?.isActive == true) return
         if (reader == null || session == null) return
         val state = _state.value
@@ -609,7 +626,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         pauseLiveData()
         if (liveRecorder.isRecording) stopRecording()
         // No need to reset headers here: the Session switches back to broadcast on the next broadcast request.
-        _state.update { it.copy(screen = Screen.DASHBOARD) }
+        _state.update { it.copy(screen = liveReturn) }
     }
 
     fun openLiveSelection() {
@@ -624,7 +641,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     fun setLiveSelection(keys: List<String>) {
         val config = _state.value.liveConfig
         if (liveRecorder.isRecording) stopRecording()
-        dataStore.saveLiveSelection(LiveSelection(keys, config.display.filterKeys { it in keys }))
+        dataStore.saveLiveSelection(LiveSelection(keys, config.display.filterKeys { it in keys }), liveSelectionScope)
         liveDefs = keys.mapNotNull { key -> config.available.firstOrNull { it.key == key } }
         _state.update { s ->
             val old = s.live.associateBy { it.def.key }
@@ -636,7 +653,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     fun setLiveDisplay(key: String, display: LiveDisplay) {
         val config = _state.value.liveConfig
         val newDisplay = config.display + (key to display)
-        dataStore.saveLiveSelection(LiveSelection(liveDefs.map { it.key }, newDisplay))
+        dataStore.saveLiveSelection(LiveSelection(liveDefs.map { it.key }, newDisplay), liveSelectionScope)
         _state.update { it.copy(liveConfig = it.liveConfig.copy(display = newDisplay)) }
     }
 
@@ -1322,6 +1339,78 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---- Data packs: vehicles, ECUs, custom PIDs ------------------------------------------------------
 
+    private fun isDownloadedSelection(): Boolean = catalog.state().let { it.selectedId in it.downloadedSelections }
+
+    /** Closed selected-system scope, including EMPTY while a pack/system is unresolved or unloaded. */
+    private fun downloadedScope(): CatalogData? {
+        if (!isDownloadedSelection()) return null
+        val system = vehiclePacks.selectedSystem()?.takeIf { it.enabled } ?: return CatalogData()
+        val ecu = system.data.ecus.singleOrNull() ?: return CatalogData()
+        val data = system.data.overlay(catalog.selected()?.data ?: CatalogData())
+        return data.copy(ecus = listOf(ecu), pids = data.pids.filter { it.target == ecu.target },
+            actuators = data.actuators.filter { it.module.target == ecu.target }, coding = data.coding.filter { it.module.target == ecu.target })
+    }
+
+    private fun selectDownloadedVehicle(vehicle: PackVehicle) {
+        requireCatalogEditable()
+        catalog.selectDownloadedPath(vehicle.path, connectionStore.activeProfile())
+    }
+
+    private fun prepareSystemChange() {
+        require(!actuators.state.value.running && !coding.state.value.busy && scanJob?.isActive != true &&
+            ecuJob?.isActive != true && dtcJob?.isActive != true && !_state.value.terminalBusy) { "Finish the active diagnostic operation before changing systems" }
+        pauseLiveData()
+        if (liveRecorder.isRecording) stopRecording()
+        actuators.select(null); coding.select(null)
+    }
+
+    private fun refreshDownloadedSystem() {
+        pidScopeActive = false
+        refreshData(); actuators.refresh(); coding.refresh()
+    }
+
+    fun openToyotaPacks() {
+        if (coding.state.value.busy || actuators.state.value.running || importApplying) return
+        pauseLiveData()
+        if (_state.value.screen != Screen.TOYOTA_PACKS) toyotaPacksReturn = _state.value.screen
+        _state.update { it.copy(screen = Screen.TOYOTA_PACKS) }
+        vehiclePacks.picker()
+    }
+
+    fun openSelectedSystems() {
+        if (!isDownloadedSelection() || coding.state.value.busy || actuators.state.value.running || importApplying) return
+        pauseLiveData()
+        if (_state.value.screen != Screen.TOYOTA_PACKS) toyotaPacksReturn = _state.value.screen
+        val ids = catalog.selected()?.path?.map { it.id }.orEmpty()
+        _state.update { it.copy(screen = Screen.TOYOTA_PACKS) }
+        vehiclePacks.openSelected(ids)
+    }
+
+    fun closeToyotaPacks() {
+        if (!vehiclePacks.back()) {
+            refreshData()
+            _state.update { it.copy(screen = toyotaPacksReturn) }
+        }
+    }
+
+    fun openSelectedSystemLive() {
+        val system = vehiclePacks.selectedSystem()?.takeIf { it.enabled } ?: return
+        val ecu = system.data.ecus.singleOrNull() ?: return
+        if (!canUseBus() || !_state.value.isConnected) return
+        val available = LiveCatalog.forSystem(ecu, catalogAccess.customPids())
+        if (available.isEmpty()) return
+        liveSelectionScope = "${catalog.state().selectedId}/${system.id}"
+        liveReturn = Screen.TOYOTA_PACKS
+        val saved = dataStore.liveSelection(liveSelectionScope)
+        val keys = saved?.keys?.filter { key -> available.any { it.key == key } }?.takeIf { it.isNotEmpty() } ?: available.take(4).map { it.key }
+        liveTarget = ecu.target; liveEcu = system.name
+        liveDefs = keys.mapNotNull { key -> available.firstOrNull { it.key == key } }
+        liveHistory.clear()
+        _state.update { it.copy(screen = Screen.LIVE, live = liveDefs.map { def -> LiveItem(def) }, liveEcu = system.name,
+            liveConfig = it.liveConfig.copy(available = available, display = saved?.display.orEmpty(), history = emptyMap())) }
+        startLiveLoop()
+    }
+
     private fun refreshData() {
         runCatching {
             val saved = catalog.state()
@@ -1329,11 +1418,12 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             val tree = CatalogTree(pack)
             val selected = tree.resolve(saved.selectedId)
             val scope = if (pidScopeActive) pidScopeId?.let(tree::resolve) else selected
-            val pids = pack.library.overlay(scope?.data ?: CatalogData()).pids
+            val pids = if (pidScopeActive) pack.library.overlay(scope?.data ?: CatalogData()).pids else catalogAccess.customPids()
             val local = if (pidScopeActive) pidScopeId?.let(tree::node)?.data ?: pack.library else selected?.node?.data ?: pack.library
             _state.update {
                 it.copy(catalog = it.catalog.copy(pack = pack, selectedId = saved.selectedId,
-                    browseId = it.catalog.browseId?.takeIf { id -> tree.node(id) != null }, favorites = saved.favorites, recents = saved.recents, errors = catalogErrors),
+                    browseId = it.catalog.browseId?.takeIf { id -> tree.node(id) != null }, favorites = saved.favorites, recents = saved.recents,
+                    downloadedSelection = isDownloadedSelection(), errors = catalogErrors),
                     data = it.data.copy(customPids = pids, userPidIds = local.pids.map { p -> p.id }.toSet(),
                         pidScopeTitle = scope?.title ?: "Unscoped legacy library", packErrors = bundledPacks.errors + catalogErrors))
             }
@@ -1835,7 +1925,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         val activeSession = session ?: return null
         val executor = recorder ?: return null
-        if (!current.isConnected || !activeSession.protocol.isCan) return null
+        if (!current.isConnected) return null
         val description = current.savedProfile?.description
         val pack = current.catalog.selected
         return ActuatorEnvironment(
@@ -1851,6 +1941,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openActuators() {
         if (coding.state.value.busy) return
+        featureReturn = if (_state.value.screen == Screen.TOYOTA_PACKS) Screen.TOYOTA_PACKS else if (_state.value.offline) Screen.DEVICES else Screen.DASHBOARD
         pauseLiveData()
         actuators.refresh()
         _state.update { it.copy(screen = Screen.ACTUATORS) }
@@ -1858,7 +1949,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeActuators() {
         actuators.close()
-        _state.update { it.copy(screen = if (it.offline) Screen.DEVICES else Screen.DASHBOARD) }
+        _state.update { it.copy(screen = featureReturn) }
     }
 
     fun openActuator(id: String) {
@@ -1884,6 +1975,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openCoding() {
         if (actuators.state.value.running || scanJob?.isActive == true) return
+        featureReturn = if (_state.value.screen == Screen.TOYOTA_PACKS) Screen.TOYOTA_PACKS else if (_state.value.offline) Screen.DEVICES else Screen.DASHBOARD
         pauseLiveData()
         coding.refresh()
         _state.update { it.copy(screen = Screen.CODING) }
@@ -1893,7 +1985,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     fun closeCoding() {
         if (coding.state.value.busy) return
         coding.select(null)
-        _state.update { it.copy(screen = if (it.offline) Screen.DEVICES else Screen.DASHBOARD) }
+        _state.update { it.copy(screen = featureReturn) }
     }
 
     fun openCodingRecipe(id: String) {

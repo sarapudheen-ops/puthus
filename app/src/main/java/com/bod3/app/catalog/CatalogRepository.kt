@@ -20,6 +20,8 @@ class CatalogRepository(
         val user: CatalogPack = CatalogPack("user-catalog", "My catalog"),
         val selectedId: String? = null, val favorites: Set<String> = emptySet(), val recents: List<String> = emptyList(),
         val migrated: Boolean = false, val legacyLinks: Map<String, String> = emptyMap(), val hidden: Set<String> = emptySet(),
+        /** Recorded only by the explicit pack picker, never by catalog imports or VIN profiles. */
+        val downloadedSelections: Set<String> = emptySet(),
     )
     private var cachedRaw: String? = null
     private var cached: State? = null
@@ -37,7 +39,8 @@ class CatalogRepository(
             val context = base.copy(nodes = base.nodes.filterNot { it.id in hidden })
             val user = CatalogCodec.decodeOrThrow(JsonWriter.write(root["catalog"]), context = context)
             val links = (root["legacyLinks"] as? Map<*, *>)?.entries?.associate { it.key.toString() to (it.value as? String ?: error("Invalid legacy link")) }.orEmpty()
-            return State(user, root["selectedId"] as? String, strings("favorites").toSet(), strings("recents"), root["migrated"] == true, links, hidden)
+            return State(user, root["selectedId"] as? String, strings("favorites").toSet(), strings("recents"), root["migrated"] == true, links, hidden,
+                downloadedSelections = strings("downloadedSelections").toSet())
                 .also { cachedRaw = raw; cached = it }
         } catch (e: Exception) {
             store.put(BROKEN, raw)
@@ -61,6 +64,31 @@ class CatalogRepository(
         require(selected.node.level != CatalogLevel.MAKE) { "Choose a model, generation or variant" }
         selected.connection(adapter)
         commit(old.copy(selectedId = id, recents = (listOf(id) + old.recents).distinct().take(20)))
+    }
+
+    /** Explicit pack-picker action. Only names/years are stored; downloaded definitions stay outside
+     * the 16 MiB user document. One commit installs the exact path AND records manual selection. */
+    @Synchronized
+    internal fun selectDownloadedPath(path: CatalogPack, adapter: ConnectionProfile = ConnectionProfile.DEFAULT) {
+        require(path.nodes.size == 4 && path.platforms.isEmpty() && path.library.count == 0 &&
+            path.nodes.map { it.level } == CatalogLevel.entries && path.nodes.all { it.data == CatalogData() }) {
+            "Downloaded vehicle path must contain exactly four name-only levels"
+        }
+        require(CatalogTree(path).problems().isEmpty()) { "Invalid downloaded hierarchy" }
+        val old = state()
+        val current = pack().nodes.associateBy { it.id }
+        for (n in path.nodes) current[n.id]?.let { existing ->
+            require(n.level == existing.level && n.parentId == existing.parentId) { "Source path collides with a different catalog level" }
+        }
+        val additions = path.nodes.filter { it.id !in current }
+        val id = path.nodes.last().id
+        val candidate = old.copy(user = old.user.copy(nodes = old.user.nodes + additions),
+            hidden = old.hidden - path.nodes.map { it.id }.toSet(), selectedId = id,
+            downloadedSelections = old.downloadedSelections + id,
+            recents = (listOf(id) + old.recents).distinct().take(20))
+        val selected = CatalogTree(pack(candidate)).resolve(id) ?: error("Downloaded vehicle path cannot be resolved")
+        selected.connection(adapter)
+        commit(candidate)
     }
 
     @Synchronized
@@ -197,7 +225,8 @@ class CatalogRepository(
         validate(state)
         val raw = JsonWriter.write(linkedMapOf("formatVersion" to 1, "catalog" to CatalogCodec.packMap(state.user),
             "selectedId" to state.selectedId, "favorites" to state.favorites.sorted(), "recents" to state.recents,
-            "migrated" to state.migrated, "legacyLinks" to state.legacyLinks, "hidden" to state.hidden.sorted()))
+            "migrated" to state.migrated, "legacyLinks" to state.legacyLinks, "hidden" to state.hidden.sorted(),
+            "downloadedSelections" to state.downloadedSelections.sorted()))
         require(raw.toByteArray(Charsets.UTF_8).size <= CatalogCodec.MAX_BYTES) { "Catalog storage exceeds 16 MiB; export/archive unused data first" }
         return raw
     }

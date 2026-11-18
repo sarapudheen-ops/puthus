@@ -43,7 +43,7 @@ class DataPacksActions(
     val onConfirmImport: () -> Unit,
     val onCancelImport: () -> Unit,
     val onDismissMessage: () -> Unit,
-    val onToyotaSource: () -> Unit,
+    val onToyotaPacks: () -> Unit,
     val writeData: suspend (DataExport) -> File,
     val writeMyActuators: suspend () -> File,
     val writeMyCoding: suspend () -> File,
@@ -72,10 +72,10 @@ fun DataPacksScreen(state: PacksState, actions: DataPacksActions) {
             if (state.importing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             state.message?.let { MessageCard(it, actions.onDismissMessage) }
 
-            SectionCard("Complete Toyota source library · offline") {
-                Text("Browse all 1,410 decoded files, 198,091 English records, the manual vehicle source menu, regional system/ECU links and shared frame/byte dictionaries. Opaque and damaged records are retained explicitly. Allow about 300 MiB free for first-open installation in private, non-backed-up storage.", style = MaterialTheme.typography.bodySmall)
-                Text("Separate from runnable catalog definitions. No vendor code or EXPRESS is executed, no source request is sent, and opening the library never selects a vehicle.", style = MaterialTheme.typography.bodySmall)
-                OutlinedButton(onClick = actions.onToyotaSource) { Text("Browse recovered Toyota data") }
+            SectionCard("Toyota vehicle packs · on demand") {
+                Text("Choose Make → Model → Generation → Variant manually, then open that vehicle's systems. Only the small source-pinned index is bundled; vehicle and system objects download separately and are cached privately.", style = MaterialTheme.typography.bodySmall)
+                Text("Conversion is incomplete. Each system shows converted versus unresolved counts and exact source IDs/reasons. Unresolved addresses, services, formulas and write mappings stay disabled — no generic fallback.", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = actions.onToyotaPacks) { Text("Choose Toyota vehicle pack") }
             }
 
             SectionCard("Import") {

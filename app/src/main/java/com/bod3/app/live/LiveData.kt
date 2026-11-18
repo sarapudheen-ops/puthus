@@ -45,6 +45,10 @@ object LiveCatalog {
         Pids.all.filter { supported.isEmpty() || it.pid in supported }.map { LiveValueDef.Standard(it) } +
             customPids.filter { it.isValid }.map { LiveValueDef.Custom(it) }
 
+    /** A selected converted system is a closed scope: no global PIDs or broadcast fallback. */
+    fun forSystem(ecu: com.bod3.app.datapack.EcuDefinition, pids: List<CustomPid>): List<LiveValueDef> =
+        pids.filter { it.isValid && it.target == ecu.target }.map { LiveValueDef.Custom(it) }
+
     /** Default selection: the classic dashboard PIDs the vehicle supports. */
     fun defaultKeys(supported: Set<Int>): List<String> =
         Pids.live.filter { supported.isEmpty() || it.pid in supported }.map { it.key }

@@ -51,7 +51,7 @@ class CatalogActions(
     val onOpenEcu: (EcuDefinition) -> Unit, val onImport: () -> Unit,
     val writeExport: suspend (String?, Boolean) -> File,
     val onLinkProfile: (String?) -> Unit, val onDismissMessage: () -> Unit,
-    val onToyotaSource: (String?) -> Unit,
+    val onToyotaPacks: () -> Unit, val onSystems: () -> Unit,
 )
 
 /** Hierarchical manual browsing, cross-level search, favorites and recents. Never driven by a VIN. */
@@ -86,13 +86,11 @@ fun VehiclesScreen(state: UiState, actions: CatalogActions) {
                     if (active != null) TextButton(onClick = { actions.onSelect(null) }, enabled = state.offline) { Text("Clear manual selection") }
                 }
             }
-            if (focused == null || path.firstOrNull()?.name in setOf("Toyota", "Lexus", "Toyota Thailand")) item {
-                SectionCard("Recovered Toyota diagnostic data") {
-                    Text("The complete recovered corpus is bundled separately: manual source menus, regional ECU relationships, typed tables, all eight text libraries and frame dictionaries. Loaded on demand, without changing your selected configuration.", style = MaterialTheme.typography.bodySmall)
-                    Text("Unresolved applicability, ECU addressing and formula mappings stay source-only; this is not automatic enhanced Toyota support.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = { actions.onToyotaSource(path.firstOrNull { it.level == CatalogLevel.MODEL }?.name) }) {
-                        Text(if (path.any { it.level == CatalogLevel.MODEL }) "Find this model in the source menu" else "Open complete Toyota data library")
-                    }
+            item {
+                SectionCard("Recovered Toyota · on-demand vehicle packs") {
+                    Text("Choose an exact reviewed source branch, then load only that vehicle's systems. Unresolved mappings stay disabled with source IDs and reasons. The full source corpus is not bundled in the APK.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = actions.onToyotaPacks, modifier = Modifier.fillMaxWidth()) { Text("Choose Toyota vehicle pack") }
+                    if (catalog.downloadedSelection) Button(onClick = actions.onSystems, modifier = Modifier.fillMaxWidth()) { Text("Open selected vehicle's systems") }
                 }
             }
             catalog.message?.let { message -> item { MessageCard(message, actions.onDismissMessage) } }

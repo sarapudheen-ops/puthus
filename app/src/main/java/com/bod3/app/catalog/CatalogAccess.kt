@@ -9,15 +9,27 @@ import com.bod3.app.datapack.EcuProtocol
 import com.bod3.app.datapack.ModuleNameEntry
 
 /** Views for existing diagnostics/controllers. Only manual selection supplies ECU/connection data. */
-class CatalogAccess(private val catalog: CatalogRepository) {
+class CatalogAccess(
+    private val catalog: CatalogRepository,
+    /** Non-null (including EMPTY) means an explicitly selected downloaded vehicle/system scope.
+     * Returning empty while a pack is unloaded prevents an unrelated legacy/template fallback. */
+    private val downloadedScope: () -> CatalogData? = { null },
+) {
     fun customPids(): List<CustomPid> = effective().pids
+
+    fun connection(adapter: com.bod3.app.obd.connection.ConnectionProfile): com.bod3.app.obd.connection.ConnectionProfile {
+        val downloaded = downloadedScope() ?: return catalog.connection(adapter)
+        val selected = catalog.selected() ?: return adapter
+        return downloaded.connection.apply(adapter).copy(id = "catalog-${selected.node.id}", name = selected.title)
+    }
 
     /** Profile links and the legacy library NEVER choose probe targets. Enhanced KWP is not UDS. */
     fun scanEcus(manual: List<EcuDefinition> = emptyList()): List<EcuDefinition> =
-        (manual + catalog.selected()?.data?.ecus.orEmpty()).filter { it.protocol != EcuProtocol.KWP }.distinctBy { it.key }
+        (downloadedScope()?.ecus ?: (manual + catalog.selected()?.data?.ecus.orEmpty()))
+            .filter { it.protocol != EcuProtocol.KWP }.distinctBy { it.key }
 
-    /** Global legacy PIDs and explicit templates are not a fallback vehicle or adapter configuration. */
-    fun effective(): CatalogData = catalog.pack().library.overlay(catalog.selected()?.data ?: CatalogData())
+    /** Downloaded selections never mix another system's PIDs or unscoped legacy write templates. */
+    fun effective(): CatalogData = downloadedScope() ?: catalog.pack().library.overlay(catalog.selected()?.data ?: CatalogData())
     fun local(): CatalogData = catalog.selected()?.node?.data ?: catalog.pack().library
     fun edit(transform: (CatalogData) -> CatalogData) {
         if (catalog.selected() == null) catalog.editLibrary(transform) else catalog.editSelected(transform)
@@ -28,7 +40,7 @@ class CatalogAccess(private val catalog: CatalogRepository) {
         val local = if (selected == null) user.library else user.nodes.firstOrNull { it.id == selected.node.id }?.data ?: CatalogData()
         val localIds = local.actuators.map { it.id }.toSet()
         return effective().actuators.map { recipe -> ActuatorEntry(recipe,
-            selected?.origins?.get("actuators:${recipe.id}") ?: "Unscoped legacy library", recipe.id in localIds) }
+            selected?.origins?.get("actuators:${recipe.id}") ?: if (downloadedScope() != null) "Recovered Toyota · selected system" else "Unscoped legacy library", recipe.id in localIds) }
             .sortedWith(compareBy({ it.recipe.module.name.lowercase() }, { it.recipe.name.lowercase() }))
     }
     fun coding(): List<CodingEntry> {
@@ -36,7 +48,7 @@ class CatalogAccess(private val catalog: CatalogRepository) {
         val local = if (selected == null) user.library else user.nodes.firstOrNull { it.id == selected.node.id }?.data ?: CatalogData()
         val localIds = local.coding.map { it.id }.toSet()
         return effective().coding.map { recipe -> CodingEntry(recipe,
-            selected?.origins?.get("coding:${recipe.id}") ?: "Unscoped legacy library", recipe.id in localIds) }
+            selected?.origins?.get("coding:${recipe.id}") ?: if (downloadedScope() != null) "Recovered Toyota · selected system" else "Unscoped legacy library", recipe.id in localIds) }
             .sortedWith(compareBy({ it.recipe.module.name.lowercase() }, { it.recipe.name.lowercase() }))
     }
 
@@ -55,7 +67,7 @@ class CatalogAccess(private val catalog: CatalogRepository) {
             CatalogIds.normalize(CatalogIds.makeName(selected.make)) == CatalogIds.normalize(make)
         // A stale manual selection must not lend Toyota reference meanings to a known unrelated VIN.
         // Looking up the observed make's PASSIVE text does not select its nodes, ECUs, recipes or settings.
-        val reference = if (matchesSelection) selected!!.data else tree.children(null).firstOrNull {
+        val reference = if (matchesSelection) downloadedScope() ?: selected!!.data else tree.children(null).firstOrNull {
             make != null && CatalogIds.normalize(CatalogIds.makeName(it.name)) == CatalogIds.normalize(make)
         }?.let { tree.resolve(it.id)?.data } ?: CatalogData()
         val library = catalog.pack().library

@@ -20,6 +20,8 @@ data class CatalogState(
     val errors: List<String> = emptyList(),
     /** A saved profile may remember a link, but activating it still requires a tap in the catalog. */
     val linkingProfile: Boolean = false,
+    /** This explicit manual selection is backed by an on-demand pack, not global templates. */
+    val downloadedSelection: Boolean = false,
 ) {
     val tree: CatalogTree get() = CatalogTree(pack)
     val selected: ResolvedCatalog? get() = tree.resolve(selectedId)

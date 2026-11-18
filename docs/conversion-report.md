@@ -1,0 +1,88 @@
+# Toyota conversion report
+
+**PARTIAL — NOT runnable enhanced Toyota coverage.**
+
+Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a`.
+
+| Measure | Count |
+|---|---:|
+| ecuFiles | 1307 |
+| manualLeaves | 24662 |
+| manualLeavesWithSystemJoin | 24642 |
+| normalizedVehicleChoices | 4 |
+| systems | 287030 |
+| unresolvedHierarchyChoices | 24658 |
+| unresolvedSourceRecords | 1054437 |
+| Executable definitions | 0 |
+
+## Exact per-item accounting
+
+- `unresolved-items.jsonl.gz`: every framed ECU row and declared live row, stable file/offset/slot/row ID, exact source bytes and all disabling reasons.
+- `vehicles.jsonl.gz`: every manual source leaf, full exact path, region/key, all system IDs and hierarchy reasons.
+- `systems.jsonl.gz`: every regional system record and converted/unresolved category counts. `null` means **unknown**, not zero or no source support.
+- The range bundle retains the same per-system pages. Selecting a vehicle does not fetch the full corpus.
+- Unclassified rows are not counted as working PIDs, DTCs, tests or coding. Source label/byte recovery is not an executable mapping.
+- Opaque whole-file formats and non-live functional row schemas are not yet enumerated as individual features. Full original source IDs remain in the separate research library; this report is not yet an exhaustive feature census.
+
+## Disabling reasons
+
+- `ecu_entry_untranslated`: Per-ECU SYSTEMENTER address/header, baud, init/session and selector are not fully translated.
+- `service_reply_untranslated`: Application service/identifier and reply-mask joins are not fully translated.
+- `formula_untranslated`: Signal byte/bit positions, signedness, scaling, unit and runtime applicability are not fully translated.
+- `record_schema_untranslated`: This source-row schema has not been translated into an executable definition.
+- `hierarchy_untranslated`: The exact source path is retained; normalization into model/generation/variant fields is not yet validated for this path.
+- `flash_unsupported`: Source system uses FLASH; flashing/download services are intentionally outside the app's write whitelist.
+- `missing_ecu_file`: Source ECU file could not be joined. No generic ECU or address is substituted.
+- `missing_function`: No regional FUNCDATA row joins this source function key.
+- `missing_system_key`: The ordinary manual MENU leaf has no matching SYSLIST key in its source region.
+- `nonordinary_menu_task`: This manual leaf uses a special task, not the proven ordinary VehicleSystemScan key path.
+
+## Reviewed manual choices — exact system accounting
+
+Only these literal source paths have been normalized so far. This is not coverage of all Toyota models or of AN40 diesel. The source month boundaries are retained in generation names; missing engine/fuel/transmission are not invented.
+
+| Manual vehicle choice | Source system ID / name | PIDs converted / unresolved candidates | DTCs | Tests | Coding | Reasons |
+|---|---|---:|---|---|---|---|
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d8f2` ECMECT (Engine and ECT) | 0 / 1015 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d917` ABS (Anti-lock Braking System)/VSC (Vehicle Stability Control)/TRC (Traction Control System) | 0 / 490 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d93c` SRS (Supplemental Inflatable Restraint System) | 0 / 20 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d961` HAL (HL AutoLeveling) | 0 / 121 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d986` IMMO (Immobiliser) | 0 / 68 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d9ab` IMMO (Immobiliser) | 0 / 32 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d732` ECMECT (Engine and ECT) | 0 / 1015 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d757` ABS (Anti-lock Braking System)/VSC (Vehicle Stability Control)/TRC (Traction Control System) | 0 / 307 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d77c` SRS (Supplemental Inflatable Restraint System) | 0 / 20 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d7a1` HAL (HL AutoLeveling) | 0 / 121 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d7c6` IMMO (Immobiliser) | 0 / 68 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d7eb` IMMO (Immobiliser) | 0 / 32 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00062d9e` ECMECT (Engine and ECT) | 0 / 1015 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00062dc3` ABS (Anti-lock Braking System)/VSC (Vehicle Stability Control)/TRC (Traction Control System) | 0 / 490 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00062de8` SRS (Supplemental Inflatable Restraint System) | 0 / 20 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00062e0d` IMMO (Immobiliser) | 0 / 68 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00062e32` IMMO (Immobiliser) | 0 / 32 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00023a75` ECMECT (Engine and ECT) | 0 / 1015 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00023a9a` ABS (Anti-lock Braking System)/VSC (Vehicle Stability Control)/TRC (Traction Control System) | 0 / 307 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00023abf` SRS (Supplemental Inflatable Restraint System) | 0 / 20 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00023ae4` IMMO (Immobiliser) | 0 / 68 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00023b09` IMMO (Immobiliser) | 0 / 32 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+
+No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.
+Source verification is distinct from completed conversion and from physical vehicle testing.
+
+## Evidence and current integration status
+
+This is the **full 1,307-ECU-source accounting**, published by
+[Actions run 44365323873](https://github.com/sarapudheen-ops/puthus/actions/runs/44365323873)
+for `d816c0211599ea1fc2365107eee7e2b28152d4ee`, not the earlier 47-BIN/12-ECU local sample.
+Download that run's `toyota-vehicle-packs` artifact for the exact ledgers named above.
+Large generated objects/ledgers remain outside Git and outside the APK.
+
+The selected-path loader, closed selected-system scope, manual confirmation, bounded range cache,
+and system/feature UI are being integrated in this PR. They do **not** supply missing diagnostic
+semantics. Until the joins listed above are translated and tested, every recovered real system
+stays disabled. Synthetic KWP/CAN tests establish engine behavior, not recovered Toyota coverage.
+
+The migration from full offline source assets to the small pinned index is documented in
+[on-demand delivery and reproduction](toyota-vehicle-packs.md). This report must be regenerated
+when actual executable conversion is implemented; zero/unknown counts must not be relabeled as
+completed coverage. No physical vehicle/adapter test has been performed.

@@ -1,4 +1,10 @@
-# Complete offline Toyota source library
+# Complete offline Toyota source library (historical research derivative)
+
+> **Superseded Android delivery path.** This document records the previous source-browser milestone.
+> The current APK no longer packages this database or exposes these library entry points. Use
+> [on-demand Toyota vehicle packs](toyota-vehicle-packs.md) for current build instructions and
+> [the conversion report](conversion-report.md) for actual executable coverage. The tools/fixtures
+> below remain available for offline research; they are not evidence of working enhanced diagnostics.
 
 ## What is integrated
 

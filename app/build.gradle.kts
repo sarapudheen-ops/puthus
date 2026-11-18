@@ -39,12 +39,8 @@ android {
         compose = true
     }
     sourceSets {
-        getByName("main").assets.srcDir(rootProject.file(".local/toyota-app-assets"))
+        getByName("main").assets.srcDir(rootProject.file(".local/vehicle-pack-assets"))
         getByName("test").resources.srcDir(rootProject.file("tools/thinkdiag/schema"))
-    }
-    androidResources {
-        // The database is already compressed. Do not inflate APK build/install work.
-        noCompress += "zip"
     }
     lint {
         // Produce HTML/XML/SARIF reports under app/build/reports for CI artifacts
@@ -57,19 +53,20 @@ android {
     }
 }
 
-// Generated data is deliberately not checked into Git. Every APK (debug or release)
-// must contain the complete pinned library; there is no missing-data fallback build.
-val verifyToyotaSourceLibrary by tasks.registering(Exec::class) {
-    val source = rootProject.file(".local/toyota-app-assets/toyota-source")
-    val stamp = layout.buildDirectory.file("intermediates/toyota-source/verified.txt")
-    inputs.dir(source)
-    inputs.files(rootProject.fileTree("tools/thinkdiag") { include("*.py", "schema/*.sql") })
-    outputs.file(stamp)
+// Actions performs heavy source conversion. An APK contains only the small, source-pinned
+// hash-tree index. Per-vehicle/system objects live in release storage, not assets or preferences.
+val verifyToyotaVehicleIndex by tasks.registering(Exec::class) {
+    val source = rootProject.file(".local/vehicle-pack-assets/toyota-vehicle-packs")
+    inputs.file(source.resolve("index.json"))
+    inputs.files(rootProject.fileTree("tools/thinkdiag") { include("vehicle_bundle.py", "verify_vehicle_bundle.py") })
     workingDir(rootProject.projectDir)
-    commandLine("python3", "tools/thinkdiag/verify_app_database.py", "--directory", source.absolutePath,
-        "--stamp", stamp.get().asFile.absolutePath)
+    commandLine("python3", "tools/thinkdiag/verify_vehicle_bundle.py", "--directory", source.absolutePath, "--index-only")
 }
-tasks.named("preBuild").configure { dependsOn(verifyToyotaSourceLibrary) }
+tasks.named("preBuild").configure { dependsOn(verifyToyotaVehicleIndex) }
+// Validate the real Actions conversion with the same Kotlin codecs used on the phone.
+tasks.withType<Test>().configureEach {
+    systemProperty("toyota.pack.directory", rootProject.file(".local/toyota-vehicle-packs").absolutePath)
+}
 
 dependencies {
     implementation(libs.androidx.core.ktx)

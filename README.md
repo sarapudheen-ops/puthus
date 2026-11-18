@@ -336,20 +336,23 @@ Data-pack v2 `dtcGroups` preserves manufacturer scope and source through import/
 Conflicts, placeholders and unsupported code forms are excluded, and extended codes are not promoted to
 base codes. No Toyota PIDs, ECU addresses, coding or actuator commands have been enabled from this data.
 
-**Complete recovered source library:** **Data packs → Browse recovered Toyota data** now also bundles
-all 1,410 decoded files, all 198,091 English records (including non-UTF-8 bytes), the manual source menu,
-regional system/ECU relationships and shared frame/byte dictionaries. Search, follow validated source
-links, inspect raw rows/opaque formats and share evidence pages offline. Catalog model pages can
-explicitly search the corresponding source paths. This is an indexed, lazily installed data pack
-(allow about 300 MiB free for installation; exact size is shown in the library), not new executable
-ECU/PID/coding/test definitions.
-Opening it never selects a vehicle or sends/evaluates recovered bytes or EXPRESS scripts.
+**On-demand vehicle packs (conversion in progress):** **Vehicle catalog / Data packs → Choose Toyota
+vehicle pack** opens the reviewed Make → Model → Generation → Variant picker and per-vehicle system/
+feature counts. Only the small hash-tree index is in the APK; vehicle/system objects are downloaded by
+bounded, checksum-verified HTTP ranges and cached privately. The previous full offline source database
+is no longer packaged. Downloads never choose configuration, and VIN/profile loading never selects it.
 
-See [complete offline library, build steps and operational boundaries](docs/toyota-app-library.md),
+The full-source conversion currently reports **zero executable recovered Toyota definitions**. All real
+systems remain disabled with source IDs and reasons; synthetic KWP/CAN engine tests and a working pack
+loader are not recovered vehicle coverage. Four literal reviewed Kijang Innova/TGN source branches do
+not establish AN40/diesel applicability. No addresses, formulas or write mappings are guessed.
+
+See [on-demand delivery, build steps and safeguards](docs/toyota-vehicle-packs.md),
+[exact conversion accounting and limitations](docs/conversion-report.md),
 [Toyota DTC semantics and schema](docs/toyota-data.md), and
 [reproduction tools and static format evidence](tools/thinkdiag/README.md). CI regenerates the passive
-reference byte-for-byte and checks the complete source library is in the APK; no physical adapter/car
-testing has been performed.
+reference byte-for-byte and checks that the APK contains only the small pack pin, not the large corpus
+or vendor code. No physical adapter/car testing has been performed.
 
 ## Architecture
 
@@ -416,7 +419,7 @@ tracked separately, so only the group that changed is re-sent.
 ## Building
 
 Requires JDK 17, Python 3.10+ and the Android SDK (set `ANDROID_HOME` or create `local.properties` with `sdk.dir=...`).
-Before the first build, **[prepare the complete Toyota offline data assets](docs/toyota-app-library.md#build-and-reproduce)** from the pinned release into `.local/toyota-app-assets/toyota-source`. Large generated data stays out of Git. Gradle rejects missing, stale, partial or corrupt data instead of silently producing an incomplete APK. Android CI performs preparation automatically.
+Before the first build, **[prepare the on-demand Toyota pack index](docs/toyota-vehicle-packs.md#build-and-reproduce)** from the pinned source. Conversion runs in Actions for normal builds; only `.local/vehicle-pack-assets/toyota-vehicle-packs/index.json` is staged as an APK asset. Large containers stay in external release storage. Gradle rejects a missing/invalid index; no full-corpus APK or guessed seed is substituted.
 
 ```sh
 ./gradlew assembleDebug   # APK -> app/build/outputs/apk/debug/
@@ -427,6 +430,7 @@ Before the first build, **[prepare the complete Toyota offline data assets](docs
 ## CI
 
 `.github/workflows/android.yml` runs `assembleDebug lintDebug testDebugUnitTest` on every push and pull
-request, prepares and verifies the complete offline Toyota source library, and uploads the debug APK
-plus build, lint and test reports as workflow artifacts. Push builds also install the actual APK and
-run source-library smoke tests on an Android 24 emulator (minimum supported API).
+request, converts/verifies the full-source vehicle bundle in Actions, packages only its small pin, and
+uploads the debug APK plus build, lint and test reports. Push builds publish immutable content-addressed
+data objects, verify real range delivery, then install the actual APK and run on-demand/offline-cache
+smoke tests on Android 24 (minimum supported API). These are data/engine tests, not physical car tests.
