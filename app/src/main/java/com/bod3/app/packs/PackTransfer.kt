@@ -1,5 +1,12 @@
 package com.bod3.app.packs
 
+import com.bod3.app.catalog.CatalogCodec
+import com.bod3.app.catalog.CatalogCsv
+import com.bod3.app.catalog.CatalogData
+import com.bod3.app.catalog.CatalogLevel
+import com.bod3.app.catalog.CatalogMigration
+import com.bod3.app.catalog.CatalogPack
+import com.bod3.app.catalog.CatalogRepository
 import com.bod3.app.actuator.ActuatorLibrary
 import com.bod3.app.actuator.ActuatorRecipeCodec
 import com.bod3.app.coding.CodingLibrary
@@ -13,6 +20,7 @@ import com.bod3.app.profile.ProfileTransferCodec
 
 /** The kinds of JSON file the app reads and writes. */
 enum class PackKind(val label: String, val format: String) {
+    CATALOG("Manual vehicle catalog (JSON / ECU CSV)", CatalogCodec.FORMAT),
     DATA("Data pack (PIDs, ECU lists, DTC texts)", DataPackCodec.FORMAT),
     ACTUATORS("Bidirectional test recipes", ActuatorRecipeCodec.FORMAT),
     CODING("Coding recipes", CodingRecipeCodec.FORMAT),
@@ -27,12 +35,13 @@ sealed interface Detection {
 
 object PackFiles {
     /** Larger files are refused before parsing. */
-    const val MAX_BYTES = 2 * 1024 * 1024
+    const val MAX_BYTES = CatalogCodec.MAX_BYTES
 
     fun detect(text: String): Detection {
         val trimmed = text.trimStart('\uFEFF').trim()
         if (trimmed.isEmpty()) return Detection.Unreadable("The file is empty.")
-        if (text.length > MAX_BYTES) return Detection.Unreadable("The file is larger than ${MAX_BYTES / 1024 / 1024} MB, so it is not a bod3 pack.")
+        if (text.toByteArray(Charsets.UTF_8).size > MAX_BYTES) return Detection.Unreadable("The file is larger than ${MAX_BYTES / 1024 / 1024} MB, so it is not a bod3 pack.")
+        if (CatalogCsv.looksLikeCsv(trimmed)) return Detection.Known(PackKind.CATALOG)
         val root = try {
             MiniJson.parse(trimmed)
         } catch (e: IllegalArgumentException) {
@@ -102,11 +111,13 @@ class PackTransfer(
     private val dataStore: DataPackStore,
     private val actuators: ActuatorLibrary,
     private val coding: CodingLibrary,
+    private val catalog: CatalogRepository? = null,
 ) {
 
     fun preview(text: String): ImportPreview = when (val detection = PackFiles.detect(text)) {
         is Detection.Unreadable -> ImportPreview(null, "Cannot import this file", errors = listOf(detection.message))
         is Detection.Known -> when (detection.kind) {
+            PackKind.CATALOG -> previewCatalog(text)
             PackKind.DATA -> previewData(text)
             PackKind.ACTUATORS -> previewActuators(text)
             PackKind.CODING -> previewCoding(text)
@@ -125,6 +136,28 @@ class PackTransfer(
 
     private fun header(errors: List<String>) =
         if (errors.size == 1) "1 problem – nothing was imported:" else "${errors.size} problems – nothing was imported:"
+
+    private fun previewCatalog(text: String): ImportPreview {
+        val csv = CatalogCsv.looksLikeCsv(text)
+        val result = if (csv) CatalogCsv.decode(text) else CatalogCodec.decode(text)
+        val decoded = result.pack
+        if (decoded == null) return ImportPreview(PackKind.CATALOG, "Catalog file", errors = result.errors)
+        val repo = catalog ?: return ImportPreview(PackKind.CATALOG, decoded.name, errors = listOf("Open the manual vehicle catalog to import this file"))
+        val pack = if (csv) CatalogCsv.reconcile(decoded, repo.pack()) else decoded
+        val errors = repo.preview(pack)
+        val data = pack.nodes.map { it.data } + pack.platforms.map { it.data } + pack.library
+        val existingIds = repo.pack().nodes.map { it.id }.toSet()
+        return ImportPreview(PackKind.CATALOG, pack.name,
+            summary = CatalogLevel.entries.map { level -> "${pack.nodes.count { it.level == level }} ${level.label.lowercase()} level(s)" } +
+                listOf("${data.sumOf { it.ecus.size }} ECU definitions, ${data.sumOf { it.pids.size }} PIDs, ${data.sumOf { it.dtcCount }} DTC texts",
+                    "${data.sumOf { it.actuators.size }} tests, ${data.sumOf { it.coding.size }} coding recipes, ${data.sumOf { it.security.size }} security definitions",
+                    "${pack.platforms.size} shared platform(s); ${pack.nodes.count { it.id in existingIds }} existing level(s) will be merged"),
+            warnings = listOfNotNull(
+                "Nothing is selected by this import. Choose your vehicle manually; VINs never select catalog configuration.",
+                "Matching IDs replace matching data items; unrelated local declarations are retained. All imported coding, actuator and security definitions stay unverified.",
+                if (csv) "CSV contains hierarchy and ECU definitions only. Use JSON for PIDs, DTC attribution, recipes, connection settings and reusable platforms." else null),
+            errors = errors, apply = if (errors.isNotEmpty()) null else ({ repo.import(pack); "Imported ${pack.nodes.size} catalog levels from \"${pack.name}\"" }))
+    }
 
     private fun previewData(text: String): ImportPreview {
         val result = DataPackCodec.decode(text)
@@ -151,16 +184,26 @@ class PackTransfer(
             pack.dtcGroups.forEach { group -> add("${group.dtcs.size} DTC description(s) for ${group.makes.joinToString(" / ")} only") }
         }
         if (summary.isEmpty()) return ImportPreview(PackKind.DATA, pack.name, errors = listOf("The pack contains no PIDs, vehicles, module names or DTC descriptions."))
+        val catalogErrors = catalog?.let { repo ->
+            val current = repo.pack()
+            val converted = CatalogMigration.convert(current, listOf(pack))
+            repo.preview(CatalogMigration.delta(current, converted.pack, pack.id, pack.name))
+        }.orEmpty()
         val warnings = buildList {
+            if (catalog != null) add("Legacy flat ECU lists become catalog levels. Unscoped PIDs/notes remain in the legacy library; no vehicle is selected automatically.")
             if (pack.id == DataPack.USER_PACK_ID) add("This is an export of someone's own additions; entries with the same id or make/model replace yours.")
             if (pack.pids.any { it.header == null }) add("PIDs without a header are sent to all ECUs (broadcast).")
             if (pack.dtcGroups.isNotEmpty()) add("Manufacturer reference text applies only to a known make in the loaded profile or a vehicle explicitly linked to it, not the global ECU-list choice. Confirm meanings for your ECU/model.")
         }
-        return ImportPreview(PackKind.DATA, pack.name + " (v${pack.version})", summary, warnings, apply = { importData(pack) })
+        return ImportPreview(PackKind.DATA, pack.name + " (v${pack.version})", summary, warnings, errors = catalogErrors, apply = if (catalogErrors.isEmpty()) ({ importData(pack) }) else null)
     }
 
     /** Merges [pack] into the user pack: same PID id, vehicle make/model, module request ID or DTC code is replaced. */
     fun importData(pack: DataPack): String {
+        catalog?.let { repo ->
+            repo.importLegacy(pack)
+            return "Imported ${pack.vehicles.size} legacy ECU lists, ${pack.pids.size} PIDs and ${pack.dtcDescriptionCount} DTC texts into the manual catalog"
+        }
         val user = dataStore.userPack()
         val incomingPids = pack.pids.map { it.id }.toSet()
         val incomingVehicles = pack.vehicles.map { it.key }.toSet()
@@ -189,16 +232,21 @@ class PackTransfer(
         if (pack == null || !result.isValid) {
             return ImportPreview(PackKind.ACTUATORS, "Bidirectional test recipes", errors = listOf(header(result.errors)) + result.errors.ifEmpty { listOf("Unknown problem") })
         }
+        val targetId = catalog?.state()?.selectedId
+        val scope = catalog?.selected()?.title ?: "Unscoped legacy library"
         val existing = actuators.entries().map { it.recipe.id }.toSet()
         val replaced = pack.recipes.count { it.id in existing }
         return ImportPreview(
             PackKind.ACTUATORS, pack.name,
             summary = listOf("${pack.recipes.size} test recipe(s)" + if (replaced > 0) ", $replaced replacing existing ones" else ""),
             warnings = listOfNotNull(
+                if (catalog != null) "Destination: $scope" else null,
+                "All imported recipes and their security-access settings are unverified, regardless of file flags.",
                 pack.recipes.count { !it.verified }.takeIf { it > 0 }?.let { "$it recipe(s) are marked unverified." },
                 "Running tests needs Expert mode.",
             ),
             apply = {
+                require(catalog == null || catalog.state().selectedId == targetId) { "Vehicle selection changed; preview the file again before importing" }
                 val r = actuators.import(pack)
                 "Imported ${r.added.size} new and ${r.replaced.size} replaced test recipe(s) from \"${pack.name}\""
             },
@@ -211,16 +259,21 @@ class PackTransfer(
         if (pack == null || !result.isValid) {
             return ImportPreview(PackKind.CODING, "Coding recipes", errors = listOf(header(result.errors)) + result.errors.ifEmpty { listOf("Unknown problem") })
         }
+        val targetId = catalog?.state()?.selectedId
+        val scope = catalog?.selected()?.title ?: "Unscoped legacy library"
         val existing = coding.entries().map { it.recipe.id }.toSet()
         val replaced = pack.recipes.count { it.id in existing }
         return ImportPreview(
             PackKind.CODING, pack.name,
             summary = listOf("${pack.recipes.size} coding recipe(s)" + if (replaced > 0) ", $replaced replacing existing ones" else ""),
             warnings = listOfNotNull(
+                if (catalog != null) "Destination: $scope" else null,
+                "All imported recipes and their security-access settings are unverified, regardless of file flags.",
                 pack.recipes.count { !it.verified }.takeIf { it > 0 }?.let { "$it recipe(s) are marked unverified." },
                 "Writing needs Expert mode; every write is backed up and verified.",
             ),
             apply = {
+                require(catalog == null || catalog.state().selectedId == targetId) { "Vehicle selection changed; preview the file again before importing" }
                 val r = coding.import(pack)
                 "Imported ${r.added.size} new and ${r.replaced.size} replaced coding recipe(s) from \"${pack.name}\""
             },
@@ -231,6 +284,14 @@ class PackTransfer(
 
     /** The user's data as a data pack, or null when there is nothing of that kind. */
     fun exportData(scope: DataExport): String? {
+        catalog?.let { repo ->
+            val full = repo.export()
+            val exported = if (scope != DataExport.PIDS) full else full.copy(
+                nodes = full.nodes.map { it.copy(data = CatalogData(pids = it.data.pids)) },
+                platforms = full.platforms.map { it.copy(data = CatalogData(pids = it.data.pids)) },
+                library = CatalogData(pids = full.library.pids))
+            return CatalogCodec.encode(exported)
+        }
         val user = dataStore.userPack()
         val pack = when (scope) {
             DataExport.PIDS -> DataPack("my-pids", "My custom PIDs", pids = user.pids).takeIf { it.pids.isNotEmpty() }
@@ -271,10 +332,18 @@ class PackTransfer(
         PackKind.ACTUATORS -> exportBundledActuators(pack.id)
         PackKind.CODING -> exportBundledCoding(pack.id)
         PackKind.PROFILE -> null
+        PackKind.CATALOG -> catalog?.base?.let(CatalogCodec::encode)
     }
 
     /** Counts of the user's own items, for the screen. */
     fun userCounts(): UserCounts {
+        catalog?.let { repo ->
+            val pack = repo.pack()
+            val data = pack.nodes.map { it.data } + pack.platforms.map { it.data } + pack.library
+            return UserCounts(pids = data.sumOf { it.pids.size }, vehicles = pack.nodes.size,
+                moduleNames = data.sumOf { it.moduleNames.size }, dtcs = data.sumOf { it.dtcCount },
+                actuatorRecipes = data.sumOf { it.actuators.size }, codingRecipes = data.sumOf { it.coding.size })
+        }
         val user = dataStore.userPack()
         return UserCounts(
             pids = user.pids.size, vehicles = user.vehicles.size, moduleNames = user.moduleNames.size, dtcs = user.dtcDescriptionCount,

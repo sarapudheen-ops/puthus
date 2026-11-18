@@ -56,9 +56,17 @@ fun rememberJsonImport(maxBytes: Int = MAX_RECIPE_BYTES, onText: (String) -> Uni
             try {
                 val text = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { input ->
-                        val bytes = input.readBytes()
-                        require(bytes.size <= maxBytes) { "The file is larger than ${maxBytes / 1024 / 1024} MB" }
-                        String(bytes, Charsets.UTF_8)
+                        val bytes = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            require(bytes.size() + count <= maxBytes) { "The file is larger than ${maxBytes / 1024 / 1024} MB" }
+                            bytes.write(buffer, 0, count)
+                        }
+                        Charsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                            .decode(java.nio.ByteBuffer.wrap(bytes.toByteArray())).toString()
                     } ?: throw IllegalStateException("The file could not be opened")
                 }
                 onText(text)
@@ -69,7 +77,7 @@ fun rememberJsonImport(maxBytes: Int = MAX_RECIPE_BYTES, onText: (String) -> Uni
             }
         }
     }
-    return { launcher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
+    return { launcher.launch(arrayOf("application/json", "text/csv", "text/comma-separated-values", "text/plain", "application/octet-stream", "application/vnd.ms-excel")) }
 }
 
 /** Shares a file produced by [write] through the share sheet; failures become a toast. */

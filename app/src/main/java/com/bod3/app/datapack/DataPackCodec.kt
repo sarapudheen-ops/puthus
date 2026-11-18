@@ -72,7 +72,7 @@ object DataPackCodec {
 
     fun encodeEcu(e: EcuDefinition): Map<String, Any?> = linkedMapOf(
         "address" to e.address, "name" to e.name, "requestId" to e.requestId, "responseId" to e.responseId,
-        "protocol" to e.protocol.name, "notes" to e.notes,
+        "protocol" to e.protocol.name, "addressing" to if (e.is29Bit) "29" else "11", "notes" to e.notes,
     ).filterValues { it != null }
 
     /** Parses and validates [json]. Never throws for bad input; problems are listed in the result. */
@@ -201,8 +201,18 @@ object DataPackCodec {
             val response = string(m, "responseId", p)
             val protocolName = string(m, "protocol", p, required = false)
             val protocol = protocolName?.let { n -> EcuProtocol.entries.firstOrNull { it.name.equals(n, ignoreCase = true) } ?: run {
-                errors += "$p.protocol: must be UDS or OBD"; null
+                errors += "$p.protocol: must be UDS, OBD or KWP"; null
             } } ?: EcuProtocol.UDS
+            val addressing = m["addressing"]
+            if (addressing != null) {
+                val bits = when (addressing) {
+                    is String -> when (addressing.lowercase()) { "11", "11-bit" -> 11; "29", "29-bit" -> 29; else -> null }
+                    is Number -> addressing.toInt().takeIf { addressing.toDouble() == it.toDouble() && it in listOf(11, 29) }
+                    else -> null
+                }
+                if (bits == null) errors += "$p.addressing: must be 11 or 29"
+                else if (request?.length != (if (bits == 11) 3 else 8) || response?.length != (if (bits == 11) 3 else 8)) errors += "$p.addressing: ID lengths do not match $bits-bit addressing"
+            }
             if (errors.size > before || name == null || request == null || response == null) return null
             return EcuDefinition(
                 address = string(m, "address", p, required = false)?.ifEmpty { null },

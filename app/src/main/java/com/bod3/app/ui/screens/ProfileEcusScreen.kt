@@ -56,14 +56,15 @@ fun ProfileEcusScreen(
     onDelete: (String) -> Unit,
     onCopyFromPack: () -> Unit,
     onSelectVehicle: (String?) -> Unit,
+    onOpenCatalog: () -> Unit,
 ) {
     val profile = state.savedProfile
     val extras = state.profileExtras
     var editing by remember { mutableStateOf<EcuDefinition?>(null) }
     var editingKey by remember { mutableStateOf<String?>(null) }
     var deleting by rememberSaveable { mutableStateOf<String?>(null) }
-    var vehicleMenu by remember { mutableStateOf(false) }
-    val packVehicle = (extras.vehicleKey?.let { key -> state.data.vehicles.firstOrNull { it.vehicle.key == key } } ?: state.data.selectedVehicle)
+    val tree = state.catalog.tree
+    val packVehicle = tree.resolve(extras.catalogNodeId ?: state.catalog.selectedId)
 
     Scaffold(
         topBar = {
@@ -89,30 +90,14 @@ fun ProfileEcusScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                SectionCard("Data-pack vehicle") {
-                    Text(
-                        "Its ECU list names this car's modules and is probed by scans. Address names from data packs are used for the rest.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            (packVehicle?.vehicle?.title ?: "None") + if (extras.vehicleKey == null && packVehicle != null) " (selected vehicle)" else "",
-                            modifier = Modifier.weight(1f),
-                        )
-                        Column {
-                            TextButton(onClick = { vehicleMenu = true }) { Text("Change") }
-                            DropdownMenu(expanded = vehicleMenu, onDismissRequest = { vehicleMenu = false }) {
-                                DropdownMenuItem(text = { Text("Use the selected vehicle") }, onClick = { vehicleMenu = false; onSelectVehicle(null) })
-                                state.data.vehicles.forEach { entry ->
-                                    DropdownMenuItem(text = { Text(entry.vehicle.title) }, onClick = { vehicleMenu = false; onSelectVehicle(entry.vehicle.key) })
-                                }
-                            }
-                        }
-                    }
-                    if (packVehicle != null && packVehicle.vehicle.ecus.isNotEmpty()) {
-                        OutlinedButton(onClick = onCopyFromPack) { Text("Copy its ${packVehicle.vehicle.ecus.size} ECUs into the manual list") }
-                    }
+                SectionCard("Saved catalog link (manual)") {
+                    Text("A link is metadata, not a VIN-driven selection. Loading this profile never applies its connection settings or ECU probe list. Select a catalog vehicle explicitly before connecting.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(packVehicle?.title ?: if (extras.catalogNodeId != null) "Linked catalog level is missing; the saved link is retained" else "No catalog link or manual selection")
+                    TextButton(onClick = onOpenCatalog) { Text("Browse / choose a catalog link…") }
+                    if (state.catalog.selectedId != null) TextButton(onClick = { onSelectVehicle(state.catalog.selectedId) }) { Text("Link the current manual selection") }
+                    if (extras.catalogNodeId != null || extras.vehicleKey != null) TextButton(onClick = { onSelectVehicle(null) }) { Text("Remove saved link") }
+                    if (packVehicle != null && packVehicle.data.ecus.isNotEmpty()) OutlinedButton(onClick = onCopyFromPack) { Text("Copy its ${packVehicle.data.ecus.size} ECUs into this profile's manual list") }
                 }
             }
             item {

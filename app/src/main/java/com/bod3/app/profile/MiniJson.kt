@@ -27,12 +27,13 @@ object MiniJson {
             while (!atEnd() && text[position] in " \t\r\n") position++
         }
 
-        fun readValue(): Any? {
+        fun readValue(depth: Int = 0): Any? {
+            if (depth > 128) throw ParseException("JSON nesting exceeds 128 levels at $position")
             skipWhitespace()
             if (atEnd()) throw ParseException("Unexpected end of input")
             return when (val c = text[position]) {
-                '{' -> readObject()
-                '[' -> readArray()
+                '{' -> readObject(depth)
+                '[' -> readArray(depth)
                 '"' -> readString()
                 't' -> readLiteral("true", true)
                 'f' -> readLiteral("false", false)
@@ -41,7 +42,7 @@ object MiniJson {
             }
         }
 
-        private fun readObject(): Map<String, Any?> {
+        private fun readObject(depth: Int): Map<String, Any?> {
             val result = LinkedHashMap<String, Any?>()
             position++ // {
             skipWhitespace()
@@ -55,7 +56,8 @@ object MiniJson {
                 val key = readString()
                 skipWhitespace()
                 expect(':')
-                result[key] = readValue()
+                if (key in result) throw ParseException("Duplicate key '$key' at $position")
+                result[key] = readValue(depth + 1)
                 skipWhitespace()
                 when (next()) {
                     ',' -> continue
@@ -65,7 +67,7 @@ object MiniJson {
             }
         }
 
-        private fun readArray(): List<Any?> {
+        private fun readArray(depth: Int): List<Any?> {
             val result = mutableListOf<Any?>()
             position++ // [
             skipWhitespace()
@@ -74,7 +76,7 @@ object MiniJson {
                 return result
             }
             while (true) {
-                result += readValue()
+                result += readValue(depth + 1)
                 skipWhitespace()
                 when (next()) {
                     ',' -> continue
@@ -112,7 +114,10 @@ object MiniJson {
                             else -> throw ParseException("Bad escape '\\$e'")
                         }
                     }
-                    else -> builder.append(c)
+                    else -> {
+                        if (c < ' ') throw ParseException("Unescaped control character at ${position - 1}")
+                        builder.append(c)
+                    }
                 }
             }
         }
@@ -121,7 +126,9 @@ object MiniJson {
             val start = position
             if (peek() == '-') position++
             while (!atEnd() && (text[position].isDigit() || text[position] in ".eE+-")) position++
-            return text.substring(start, position).toDoubleOrNull() ?: throw ParseException("Bad number at $start")
+            val number = text.substring(start, position)
+            if (!Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?").matches(number)) throw ParseException("Bad number at $start")
+            return number.toDoubleOrNull()?.takeIf { it.isFinite() } ?: throw ParseException("Bad or non-finite number at $start")
         }
 
         private fun readLiteral(word: String, value: Any?): Any? {

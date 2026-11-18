@@ -73,30 +73,30 @@ fun DataPacksScreen(state: PacksState, actions: DataPacksActions) {
 
             SectionCard("Import") {
                 Text(
-                    "Add PIDs, vehicle ECU lists, DTC texts, test recipes, coding recipes or a saved vehicle profile from a .json file. " +
-                        "The file type is recognised automatically and checked completely; you see what it contains before anything is saved. " +
-                        "Items with the same id replace your own; bundled packs are never changed.",
+                    "Import a manual catalog (.json or .csv), legacy PIDs/ECU lists/DTC packs, test/coding recipes or a saved profile. " +
+                        "The entire file is checked first; preview counts and errors before confirming. One invalid item rejects the whole file. " +
+                        "Disconnect before confirming catalog imports. Imports never select a vehicle; write/security items remain unverified.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(onClick = pickFile, enabled = !state.importing) { Text("Choose file…") }
             }
 
-            SectionCard("Export my data") {
+            SectionCard("Export catalog data") {
                 val c = state.counts
                 InfoRow("Custom PIDs", c.pids.toString())
-                InfoRow("Vehicle ECU lists", c.vehicles.toString())
+                InfoRow("Catalog levels", c.vehicles.toString())
                 InfoRow("Module names", c.moduleNames.toString())
                 InfoRow("DTC descriptions", c.dtcs.toString())
                 InfoRow("Test recipes", c.actuatorRecipes.toString())
                 InfoRow("Coding recipes", c.codingRecipes.toString())
                 HorizontalDivider()
-                ShareButton("My custom PIDs", c.pids > 0) { actions.writeData(DataExport.PIDS) }
-                ShareButton("My vehicles and ECU lists", c.vehicles > 0) { actions.writeData(DataExport.VEHICLES) }
-                ShareButton("All my data (one data pack)", c.pids + c.vehicles + c.moduleNames + c.dtcs > 0) { actions.writeData(DataExport.ALL) }
+                ShareButton("Catalog PID definitions (with hierarchy)", c.pids > 0) { actions.writeData(DataExport.PIDS) }
+                ShareButton("Manual vehicle catalog (JSON)", c.vehicles > 0) { actions.writeData(DataExport.VEHICLES) }
+                ShareButton("Complete catalog (all definitions)", c.pids + c.vehicles + c.moduleNames + c.dtcs > 0) { actions.writeData(DataExport.ALL) }
                 ShareButton("My test recipes", c.actuatorRecipes > 0) { actions.writeMyActuators() }
                 ShareButton("My coding recipes", c.codingRecipes > 0) { actions.writeMyCoding() }
                 Text(
-                    "Saved vehicle profiles are exported from Saved vehicles.",
+                    "Export a single make, model, generation or variant from Vehicle catalog. JSON keeps all data; ECU CSV contains hierarchy and ECU declarations only. Saved VIN profiles are exported from Saved vehicles.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

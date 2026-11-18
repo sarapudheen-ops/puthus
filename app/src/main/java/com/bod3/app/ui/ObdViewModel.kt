@@ -1,5 +1,20 @@
 package com.bod3.app.ui
 
+import com.bod3.app.catalog.CatalogAccess
+import com.bod3.app.catalog.CatalogCodec
+import com.bod3.app.catalog.CatalogCsv
+import com.bod3.app.catalog.CatalogData
+import com.bod3.app.catalog.CatalogEditing
+import com.bod3.app.catalog.CatalogSection
+import com.bod3.app.catalog.CatalogIds
+import com.bod3.app.catalog.CatalogLevel
+import com.bod3.app.catalog.CatalogNode
+import com.bod3.app.catalog.CatalogRepository
+import com.bod3.app.catalog.CatalogTree
+import com.bod3.app.android.AssetCatalog
+import com.bod3.app.profile.JsonWriter
+import com.bod3.app.profile.MiniJson
+import java.util.UUID
 import com.bod3.app.errors.ErrorExplainer
 import com.bod3.app.packs.DataExport
 import com.bod3.app.packs.PackKind
@@ -25,13 +40,10 @@ import com.bod3.app.android.ReportSharer
 import com.bod3.app.datapack.CustomPid
 import com.bod3.app.datapack.DataPackStore
 import com.bod3.app.datapack.DtcReferenceContext
-import com.bod3.app.datapack.DataRepository
 import com.bod3.app.datapack.EcuDefinition
 import com.bod3.app.datapack.EcuProtocol
 import com.bod3.app.datapack.LiveDisplay
 import com.bod3.app.datapack.LiveSelection
-import com.bod3.app.datapack.VehicleDefinition
-import com.bod3.app.datapack.VehicleSource
 import com.bod3.app.diagnostics.EcuWorkbench
 import com.bod3.app.live.CsvExporter
 import com.bod3.app.live.LiveCatalog
@@ -121,7 +133,7 @@ import kotlinx.coroutines.withContext
 
 enum class Screen {
     DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
-    VEHICLES, VEHICLE_EDIT, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
+    VEHICLES, CATALOG_EDIT, CATALOG_DATA, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
     ACTUATORS, ACTUATOR_RUN, CODING, CODING_RUN, CODING_EDITOR,
     APP_SETTINGS, DATA_PACKS,
 }
@@ -240,6 +252,7 @@ data class UiState(
     val editingProfile: ConnectionProfile? = null,
     val settingsReturn: Screen = Screen.DEVICES,
     val data: DataState = DataState(),
+    val catalog: CatalogState = CatalogState(),
     val liveConfig: LiveConfig = LiveConfig(),
     val freezeFrames: Readout<List<FreezeFrame>> = Readout.NotRead,
     val readiness: Readout<List<Readiness>> = Readout.NotRead,
@@ -307,9 +320,20 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private var profileJob: Job? = null
     private var ecuJob: Job? = null
 
-    private val dataStore = DataPackStore(SharedPrefsKeyValueStore(application))
+    private val preferences = SharedPrefsKeyValueStore(application)
+    private val dataStore = DataPackStore(preferences)
     private val bundledPacks = AssetDataPacks.load(application)
-    private val repository = DataRepository(bundledPacks.packs, dataStore)
+    private val bundledActuators = AssetActuatorPacks.load(application)
+    private val bundledCoding = AssetCodingPacks.load(application)
+    private val bundledCatalog = AssetCatalog.load(application, bundledPacks.packs, bundledActuators.packs, bundledCoding.packs)
+    private val catalog = CatalogRepository(bundledCatalog.pack, preferences, bundledCatalog.legacyLinks)
+    private val catalogAccess = CatalogAccess(catalog)
+    private val actuatorLibrary = ActuatorLibrary(bundledActuators.packs, preferences, catalogAccess)
+    private val codingLibrary = CodingLibrary(bundledCoding.packs, preferences, catalogAccess)
+    private var catalogErrors = bundledCatalog.errors
+    private var pidScopeId: String? = null
+    private var pidScopeActive = false
+    private var pidsReturn = Screen.DASHBOARD
 
     private var liveDefs: List<LiveValueDef> = emptyList()
     private var liveTarget: EcuTarget = EcuTarget.Broadcast
@@ -318,12 +342,10 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private val liveRecorder = LiveRecorder()
     private var lastRecording: com.bod3.app.live.Recording? = null
 
-    private val extrasStore = ProfileExtrasStore(SharedPrefsKeyValueStore(application))
+    private val extrasStore = ProfileExtrasStore(preferences, catalog::migrateProfile)
 
     // ---- Bidirectional tests (M4) ----
     private val auditStore = AuditStore(SharedPrefsKeyValueStore(application))
-    private val bundledActuators = AssetActuatorPacks.load(application)
-    private val actuatorLibrary = ActuatorLibrary(bundledActuators.packs, SharedPrefsKeyValueStore(application))
 
     /** Actuator test screens; every run needs Expert mode, a confirmation and passing preconditions. */
     val actuators = ActuatorController(
@@ -337,8 +359,6 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     // ---- Coding (M5) ----
-    private val bundledCoding = AssetCodingPacks.load(application)
-    private val codingLibrary = CodingLibrary(bundledCoding.packs, SharedPrefsKeyValueStore(application))
 
     /** Coding screens; writes need Expert mode, a backup, a confirmed diff and passing safety checks. */
     val coding = CodingController(
@@ -359,11 +379,12 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     /** Theme, units, keep-screen-on and onboarding state. */
     val appSettings: StateFlow<AppSettings> = _appSettings.asStateFlow()
 
-    private val packTransfer = PackTransfer(bundledPacks.packs, dataStore, actuatorLibrary, codingLibrary)
+    private val packTransfer = PackTransfer(bundledPacks.packs, dataStore, actuatorLibrary, codingLibrary, catalog)
     private val _packs = MutableStateFlow(PacksState())
     val packs: StateFlow<PacksState> = _packs.asStateFlow()
     private var appSettingsReturn: Screen = Screen.DEVICES
     private var packsReturn: Screen = Screen.DEVICES
+    private var importPreviewGeneration = 0
 
     private val profiles: VehicleProfileService by lazy {
         VehicleProfileService(
@@ -376,6 +397,15 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     init {
+        runCatching {
+            require(catalogErrors.isEmpty()) { catalogErrors.joinToString("\n") }
+            // Refuse migration if a legacy preference is unreadable. Original keys are never cleared.
+            preferences.get(DataPackStore.KEY_USER_PACK)?.let { com.bod3.app.datapack.DataPackCodec.decodeOrThrow(it) }
+            preferences.get(ActuatorLibrary.KEY_USER)?.let { com.bod3.app.actuator.ActuatorRecipeCodec.decodeOrThrow(it) }
+            preferences.get(CodingLibrary.KEY_USER)?.let { com.bod3.app.coding.CodingRecipeCodec.decodeOrThrow(it) }
+            catalog.migrateLegacy(dataStore.userPack(), dataStore.selectedVehicleKey,
+                ActuatorLibrary(bundledActuators.packs, preferences).userPack(), CodingLibrary(bundledCoding.packs, preferences).userPack())
+        }.onFailure { catalogErrors = catalogErrors + "Catalog migration: ${it.message}"; appendLog("Catalog migration: ${it.message}") }
         refreshBluetooth()
         refreshSettings()
         refreshData()
@@ -424,7 +454,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun openConnection(device: PairedAdapter): ConnectionResult {
         setStep(device, "Opening Bluetooth connection…")
         val bluetoothDevice = bluetooth.device(device.address) ?: throw IllegalArgumentException("Invalid Bluetooth address")
-        val profile = connectionStore.activeProfile()
+        val profile = catalog.connection(connectionStore.activeProfile())
         return connectionManager.connect(BluetoothSppTransport(bluetoothDevice), device.address, profile) { step ->
             setStep(device, step)
         }
@@ -492,7 +522,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         liveTarget = primaryEcu?.let { EcuTarget.physicalFor(it, protocolInfo.protocol.headerFormat) } ?: EcuTarget.Broadcast
         liveEcu = primaryEcu
 
-        val available = LiveCatalog.available(supported, repository.customPids())
+        val available = LiveCatalog.available(supported, catalogAccess.customPids())
         val saved = dataStore.liveSelection()
         val keys = saved?.keys?.filter { key -> available.any { it.key == key } }?.takeIf { it.isNotEmpty() }
             ?: LiveCatalog.defaultKeys(supported)
@@ -627,7 +657,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val state = _state.value
         val title = listOfNotNull(
             "bod3 live data",
-            state.data.selectedVehicle?.vehicle?.title,
+            state.catalog.selected?.title,
             (state.vin as? Readout.Value)?.value,
             (state.protocol as? Readout.Value)?.value?.protocol?.displayName,
             state.liveEcu?.let { "ECU $it" },
@@ -1104,7 +1134,11 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Saves (or with blank [text] removes) the user's own description of a fault code. */
     fun setDtcDescription(code: String, text: String) {
-        runCatching { dataStore.setDtcDescription(code, text) }.onFailure { appendLog("Description: ${it.message}") }
+        runCatching {
+            val key = code.trim().uppercase(Locale.ROOT)
+            require(com.bod3.app.datapack.DataPack.DTC_KEY.matches(key)) { "Not a valid DTC key" }
+            catalog.editUserLibrary { it.copy(dtcs = if (text.isBlank()) it.dtcs - key else it.dtcs + (key to text.trim())) }
+        }.onFailure { appendLog("Description: ${it.message}") }
         refreshData()
     }
 
@@ -1281,51 +1315,45 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Data packs: vehicles, ECUs, custom PIDs ------------------------------------------------------
 
     private fun refreshData() {
-        val vehicles = runCatching { repository.vehicles() }.getOrElse { appendLog("Vehicles: ${it.message}"); emptyList() }
-        val selectedKey = dataStore.selectedVehicleKey
-        val userPack = dataStore.userPack()
-        _state.update {
-            it.copy(
-                data = it.data.copy(
-                    vehicles = vehicles,
-                    selectedVehicle = vehicles.firstOrNull { v -> v.vehicle.key == selectedKey },
-                    customPids = repository.customPids(),
-                    userPidIds = userPack.pids.map { p -> p.id }.toSet(),
-                    packErrors = bundledPacks.errors,
-                ),
-            )
+        runCatching {
+            val saved = catalog.state()
+            val pack = catalog.pack()
+            val tree = CatalogTree(pack)
+            val selected = tree.resolve(saved.selectedId)
+            val scope = if (pidScopeActive) pidScopeId?.let(tree::resolve) else selected
+            val pids = pack.library.overlay(scope?.data ?: CatalogData()).pids
+            val local = if (pidScopeActive) pidScopeId?.let(tree::node)?.data ?: pack.library else selected?.node?.data ?: pack.library
+            _state.update {
+                it.copy(catalog = it.catalog.copy(pack = pack, selectedId = saved.selectedId,
+                    browseId = it.catalog.browseId?.takeIf { id -> tree.node(id) != null }, favorites = saved.favorites, recents = saved.recents, errors = catalogErrors),
+                    data = it.data.copy(customPids = pids, userPidIds = local.pids.map { p -> p.id }.toSet(),
+                        pidScopeTitle = scope?.title ?: "Unscoped legacy library", packErrors = bundledPacks.errors + catalogErrors))
+            }
+        }.onFailure { e ->
+            appendLog("Catalog: ${e.message}")
+            _state.update { it.copy(catalog = it.catalog.copy(errors = (catalogErrors + e.message.orEmpty()).distinct())) }
         }
         refreshNaming()
     }
 
-    /**
-     * Rebuilds the module namer and the scan's listed ECUs from the loaded profile's extras, its
-     * data-pack vehicle (or the globally selected one) and the packs' address names.
-     */
+    /** VINs load observations only. A saved catalog link may name offline observations, never configure a link. */
     private fun refreshNaming() {
         val current = _state.value
-        val vin = current.savedProfile?.vin
-        val extras = vin?.let { runCatching { extrasStore.get(it) }.getOrNull() } ?: ProfileExtras()
-        val linkedVehicle = extras.vehicleKey?.let { key -> current.data.vehicles.firstOrNull { it.vehicle.key == key } }?.vehicle
-        val vehicle = linkedVehicle ?: current.data.selectedVehicle?.vehicle
-        val namer = ModuleNamer(
-            userNames = extras.moduleNames,
-            manualEcus = extras.manualEcus,
-            vehicleEcus = vehicle?.ecus.orEmpty(),
-            vehicleTitle = vehicle?.title,
-            packNames = runCatching { repository.moduleNames() }.getOrElse { emptyList() },
-            make = current.savedProfile?.description?.make,
-        )
-        val listed = (extras.manualEcus + vehicle?.ecus.orEmpty()).map { it.moduleAddress() }.distinctBy { it.requestHeader }
-        // Do not identify an unknown vehicle from the global ECU-list choice (it may be from another car).
-        val referenceMake = DtcReferenceContext.make(current.savedProfile?.description?.make, linkedVehicle?.make)
-        val descriptions = repository.dtcDescriptions(referenceMake)
-        _state.update {
-            it.copy(
-                profileExtras = extras, moduleNamer = namer, listedModules = listed,
-                data = it.data.copy(descriptions = descriptions, dtcReferenceMake = referenceMake),
-            )
-        }
+        val extras = current.savedProfile?.vin?.let { vin -> runCatching { extrasStore.get(vin) }.onFailure { appendLog("Profile extras: ${it.message}") }.getOrNull() } ?: ProfileExtras()
+        val tree = current.catalog.tree
+        val selected = tree.resolve(current.catalog.selectedId)
+        val linked = tree.resolve(extras.catalogNodeId)
+        val naming = selected ?: linked.takeIf { current.offline }
+        val namer = ModuleNamer(userNames = extras.moduleNames, manualEcus = extras.manualEcus,
+            vehicleEcus = naming?.data?.ecus.orEmpty(), vehicleTitle = naming?.title,
+            packNames = runCatching { catalogAccess.moduleNames() }.getOrElse { emptyList() },
+            make = selected?.make ?: current.savedProfile?.description?.make?.let(CatalogIds::makeName))
+        // Old per-VIN links never supply probe targets or connection settings. Manual saved ECUs are retained.
+        val listed = (extras.manualEcus + selected?.data?.ecus.orEmpty()).map { it.moduleAddress() }.distinctBy { it.requestHeader }
+        val referenceMake = selected?.make ?: DtcReferenceContext.make(current.savedProfile?.description?.make, linked?.make)
+        val descriptions = runCatching { catalogAccess.descriptions(referenceMake) }.getOrElse { com.bod3.app.datapack.DtcDescriptions(emptyMap(), emptyList()) }
+        _state.update { it.copy(profileExtras = extras, moduleNamer = namer, listedModules = listed,
+            data = it.data.copy(descriptions = descriptions, dtcReferenceMake = referenceMake)) }
     }
 
     fun openVehicles() {
@@ -1333,74 +1361,107 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         refreshData()
         _state.update {
             val back = if (it.screen == Screen.DEVICES || it.screen == Screen.DASHBOARD) it.screen else it.vehiclesReturn
-            it.copy(screen = Screen.VEHICLES, vehiclesReturn = back)
+            it.copy(screen = Screen.VEHICLES, vehiclesReturn = back, catalog = it.catalog.copy(linkingProfile = false))
         }
     }
 
     fun closeVehicles() {
-        _state.update { it.copy(screen = if (it.vehiclesReturn == Screen.DASHBOARD && it.connection is ConnectionState.Idle) Screen.DEVICES else it.vehiclesReturn) }
+        _state.update { it.copy(screen = if (it.catalog.linkingProfile) Screen.PROFILE_ECUS else if (it.vehiclesReturn == Screen.DASHBOARD && it.connection is ConnectionState.Idle) Screen.DEVICES else it.vehiclesReturn,
+            catalog = it.catalog.copy(linkingProfile = false)) }
     }
 
-    fun selectVehicle(key: String?) {
-        dataStore.selectedVehicleKey = key
+    private fun catalogMessage(message: String?) = _state.update { it.copy(catalog = it.catalog.copy(message = message)) }
+    fun dismissCatalogMessage() = catalogMessage(null)
+    private fun requireCatalogEditable() {
+        require(_state.value.offline) { "Disconnect before editing vehicle catalog configuration" }
+        require(catalogErrors.isEmpty()) { "Resolve catalog migration problems before changing preserved data" }
+        require(!coding.state.value.busy && !actuators.state.value.running) { "Finish the active operation first" }
+    }
+
+    fun browseCatalog(id: String?) {
+        if (id != null && _state.value.catalog.tree.node(id) == null) return
+        _state.update { it.copy(catalog = it.catalog.copy(browseId = id, message = null)) }
+    }
+
+    /** Manual action only; never called from a VIN/profile listener. */
+    fun selectVehicle(id: String?) {
+        runCatching {
+            requireCatalogEditable()
+            catalog.select(id, connectionStore.activeProfile())
+            coding.select(null); actuators.select(null)
+            refreshData(); coding.refresh(); actuators.refresh()
+            catalogMessage(catalog.selected()?.let { "Selected ${it.title}. Its ECU list and inherited connection overrides will be used on the next connection." } ?: "No vehicle selected. No catalog ECU list or connection overrides will be used.")
+        }.onFailure { catalogMessage(it.message) }
+    }
+
+    fun favoriteCatalog(id: String) {
+        runCatching { catalog.favorite(id); refreshData() }.onFailure { catalogMessage(it.message) }
+    }
+
+    fun newCatalogNode(parentId: String?) {
+        runCatching {
+            requireCatalogEditable()
+            val parent = parentId?.let { catalog.tree().node(it) ?: error("Parent no longer exists") }
+            val level = if (parent == null) CatalogLevel.MAKE else parent.level.child ?: error("Variants cannot have child levels")
+            val node = CatalogNode("custom-${UUID.randomUUID()}", parentId, level, "")
+            _state.update { it.copy(screen = Screen.CATALOG_EDIT, catalog = it.catalog.copy(editingNode = node, editingIsNew = true)) }
+        }.onFailure { catalogMessage(it.message) }
+    }
+
+    fun editCatalogNode(id: String) {
+        runCatching {
+            requireCatalogEditable()
+            val node = catalog.tree().node(id) ?: error("Level no longer exists")
+            _state.update { it.copy(screen = Screen.CATALOG_EDIT, catalog = it.catalog.copy(editingNode = node, editingIsNew = false)) }
+        }.onFailure { catalogMessage(it.message) }
+    }
+
+    fun saveCatalogNode(node: CatalogNode): String? = runCatching {
+        requireCatalogEditable()
+        val cleaned = node.copy(name = if (node.level == CatalogLevel.MAKE) CatalogIds.makeName(node.name) else node.name.trim())
+        catalog.saveNode(cleaned)
+        _state.update { it.copy(screen = Screen.VEHICLES, catalog = it.catalog.copy(browseId = node.id, editingNode = null)) }
         refreshData()
+    }.exceptionOrNull()?.message
+
+    fun cancelCatalogEdit() { _state.update { it.copy(screen = Screen.VEHICLES, catalog = it.catalog.copy(editingNode = null, editingData = null)) } }
+
+    fun deleteCatalogNode(id: String) {
+        runCatching {
+            requireCatalogEditable()
+            val parent = catalog.tree().node(id)?.parentId
+            catalog.deleteNode(id)
+            _state.update { it.copy(catalog = it.catalog.copy(browseId = parent)) }
+            refreshData(); actuators.refresh(); coding.refresh()
+        }.onFailure { catalogMessage(it.message) }
     }
 
-    /** Opens the editor for an existing vehicle, or for a new one when [key] is null. */
-    fun editVehicle(key: String?) {
-        val existing = key?.let { repository.vehicle(it)?.vehicle }
-        val vehicle = existing ?: VehicleDefinition(make = "", model = "", ecus = listOf(EcuDefinition(address = "01", name = "Engine", requestId = "7E0", responseId = "7E8")))
-        _state.update { it.copy(screen = Screen.VEHICLE_EDIT, data = it.data.copy(editingVehicle = vehicle, editingVehicleKey = existing?.key, vehicleError = null)) }
+    fun duplicateCatalogNode(id: String, name: String) {
+        runCatching { requireCatalogEditable(); val newId = catalog.duplicate(id, name); refreshData(); browseCatalog(newId) }.onFailure { catalogMessage(it.message) }
     }
 
-    fun saveVehicle(vehicle: VehicleDefinition) {
-        val originalKey = _state.value.data.editingVehicleKey
-        val cleaned = vehicle.copy(
-            make = vehicle.make.trim(),
-            model = vehicle.model.trim(),
-            years = vehicle.years?.trim()?.ifEmpty { null },
-            ecus = vehicle.ecus.map { e ->
-                e.copy(
-                    address = e.address?.trim()?.uppercase()?.ifEmpty { null },
-                    name = e.name.trim(),
-                    requestId = e.requestId.trim().uppercase(),
-                    responseId = e.responseId.trim().uppercase(),
-                )
-            },
-        )
-        val error = runCatching {
-            if (originalKey == null && repository.vehicle(cleaned.key) != null) {
-                throw IllegalArgumentException("${cleaned.title} already exists. Edit that vehicle instead.")
-            }
-            dataStore.saveVehicle(cleaned)
-            // Renamed a user vehicle: remove the old entry (bundled vehicles cannot be removed).
-            if (originalKey != null && originalKey != cleaned.key && repository.bundledVehicle(originalKey) == null) {
-                dataStore.deleteVehicle(originalKey)
-            }
-        }.exceptionOrNull()
-        if (error != null) {
-            _state.update { it.copy(data = it.data.copy(vehicleError = error.message)) }
-            return
-        }
-        appendLog("Saved vehicle ${cleaned.title} (${cleaned.ecus.size} ECUs)")
-        if (originalKey == null || dataStore.selectedVehicleKey == originalKey) dataStore.selectedVehicleKey = cleaned.key
-        _state.update { it.copy(screen = Screen.VEHICLES, data = it.data.copy(editingVehicle = null, editingVehicleKey = null, vehicleError = null)) }
-        refreshData()
+    fun editCatalogData(id: String?, section: CatalogSection) {
+        runCatching {
+            requireCatalogEditable()
+            require(id == null || catalog.tree().node(id) != null) { "Catalog level no longer exists" }
+            _state.update { it.copy(screen = Screen.CATALOG_DATA, catalog = it.catalog.copy(editingData = CatalogDataTarget(id, section))) }
+        }.onFailure { catalogMessage(it.message) }
     }
 
-    fun cancelVehicleEdit() {
-        _state.update { it.copy(screen = Screen.VEHICLES, data = it.data.copy(editingVehicle = null, editingVehicleKey = null, vehicleError = null)) }
-    }
+    /** A section editor changes only the keys it shows; other local declarations are retained. */
+    fun saveCatalogData(json: String): String? = runCatching {
+        requireCatalogEditable()
+        val target = _state.value.catalog.editingData ?: error("No level is being edited")
+        val transform: (CatalogData) -> CatalogData = { previous -> CatalogEditing.applySection(previous, target.section, json) }
+        if (target.nodeId == null) catalog.editLibrary(transform) else catalog.editData(target.nodeId, transform)
+        _state.update { it.copy(screen = Screen.VEHICLES, catalog = it.catalog.copy(editingData = null)) }
+        refreshData(); actuators.refresh(); coding.refresh()
+    }.exceptionOrNull()?.message
 
-    /** Deletes a user vehicle, or for a bundled vehicle removes the user's changes. */
-    fun deleteVehicle(key: String) {
-        val entry = repository.vehicle(key) ?: return
-        if (entry.source == VehicleSource.BUNDLED) return
-        dataStore.deleteVehicle(key)
-        if (entry.source == VehicleSource.USER && dataStore.selectedVehicleKey == key) dataStore.selectedVehicleKey = null
-        appendLog(if (entry.source == VehicleSource.USER) "Deleted vehicle ${entry.vehicle.title}" else "Restored bundled ECU list of ${entry.vehicle.title}")
-        _state.update { it.copy(screen = Screen.VEHICLES, data = it.data.copy(editingVehicle = null, editingVehicleKey = null)) }
-        refreshData()
+    suspend fun writeCatalogExport(id: String?, csv: Boolean): File {
+        val pack = catalog.export(id)
+        val text = if (csv) CatalogCsv.encode(pack) else CatalogCodec.encode(pack)
+        return shareJson("bod3-catalog-${id ?: "all"}-${System.currentTimeMillis()}.${if (csv) "csv" else "json"}", text, "Nothing to export")
     }
 
     /** Opens an ECU of the selected vehicle and reads its identification and fault codes. */
@@ -1485,49 +1546,62 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openCustomPids() {
         pauseLiveData()
+        pidsReturn = if (_state.value.offline) Screen.DEVICES else Screen.DASHBOARD
+        pidScopeId = _state.value.catalog.selectedId; pidScopeActive = true
+        refreshData()
+        _state.update { it.copy(screen = Screen.CUSTOM_PIDS) }
+    }
+
+    fun openCatalogPids(id: String?) {
+        pauseLiveData()
+        pidsReturn = Screen.VEHICLES; pidScopeId = id; pidScopeActive = true
         refreshData()
         _state.update { it.copy(screen = Screen.CUSTOM_PIDS) }
     }
 
     fun closeCustomPids() {
-        _state.update { it.copy(screen = if (it.connection is ConnectionState.Idle) Screen.DEVICES else Screen.DASHBOARD) }
+        pidScopeActive = false
+        _state.update { it.copy(screen = pidsReturn) }
+        refreshData()
     }
 
     fun editPid(id: String?) {
-        val existing = id?.let { key -> repository.customPids().firstOrNull { it.id == key } }
-        val pid = existing ?: CustomPid(id = "", name = "", request = "01", formula = "A", unit = "")
+        val existing = id?.let { key -> _state.value.data.customPids.firstOrNull { it.id == key } }
+        val pid = existing ?: CustomPid(id = "", name = "", request = "", formula = "A", unit = "")
         _state.update { it.copy(screen = Screen.PID_EDIT, data = it.data.copy(editingPid = pid, editingPidId = existing?.id, pidError = null, pidTest = null)) }
+    }
+
+    fun duplicatePid(id: String) {
+        val existing = _state.value.data.customPids.firstOrNull { it.id == id } ?: return
+        val copy = existing.copy(id = "${existing.id}-copy-${UUID.randomUUID().toString().take(8)}", name = "${existing.name} copy")
+        _state.update { it.copy(screen = Screen.PID_EDIT, data = it.data.copy(editingPid = copy, editingPidId = null, pidError = null, pidTest = null)) }
+    }
+
+    private fun editPidScope(change: (CatalogData) -> CatalogData) {
+        require(catalogErrors.isEmpty()) { "Resolve catalog migration problems first" }
+        val id = pidScopeId
+        if (id == null) catalog.editLibrary(change) else catalog.editData(id, change)
     }
 
     fun savePid(pid: CustomPid) {
         val originalId = _state.value.data.editingPidId
-        val error = runCatching {
-            if (pid.id != originalId && repository.customPids().any { it.id == pid.id } && !repository.isUserPid(pid.id)) {
-                // Saving under a bundled id deliberately overrides that bundled PID.
-                appendLog("Custom PID ${pid.id} overrides the bundled definition")
-            }
-            dataStore.savePid(pid)
-            if (originalId != null && originalId != pid.id && repository.isUserPid(originalId)) dataStore.deletePid(originalId)
-        }.exceptionOrNull()
-        if (error != null) {
-            _state.update { it.copy(data = it.data.copy(pidError = error.message)) }
-            return
-        }
-        appendLog("Saved custom PID ${pid.name} (${pid.request}: ${pid.formula})")
+        val error = runCatching { editPidScope { it.copy(pids = it.pids.filterNot { p -> p.id == pid.id || p.id == originalId } + pid) } }.exceptionOrNull()
+        if (error != null) { _state.update { it.copy(data = it.data.copy(pidError = error.message)) }; return }
+        appendLog("Saved custom PID ${pid.name} at ${_state.value.data.pidScopeTitle}")
         _state.update { it.copy(screen = Screen.CUSTOM_PIDS, data = it.data.copy(editingPid = null, editingPidId = null, pidError = null, pidTest = null)) }
         refreshData()
     }
 
     fun deletePid(id: String) {
-        if (!repository.isUserPid(id)) return
-        dataStore.deletePid(id)
+        if (id !in _state.value.data.userPidIds) return
+        runCatching { editPidScope { it.copy(pids = it.pids.filterNot { p -> p.id == id }) } }.onFailure {
+            _state.update { state -> state.copy(data = state.data.copy(pidError = it.message)) }; return
+        }
         _state.update { it.copy(screen = Screen.CUSTOM_PIDS, data = it.data.copy(editingPid = null, editingPidId = null)) }
         refreshData()
     }
 
-    fun cancelPidEdit() {
-        _state.update { it.copy(screen = Screen.CUSTOM_PIDS, data = it.data.copy(editingPid = null, editingPidId = null, pidError = null, pidTest = null)) }
-    }
+    fun cancelPidEdit() { _state.update { it.copy(screen = Screen.CUSTOM_PIDS, data = it.data.copy(editingPid = null, editingPidId = null, pidError = null, pidTest = null)) } }
 
     /** Sends the PID's request once and shows the decoded value (only when connected and valid). */
     fun testPid(pid: CustomPid) {
@@ -1598,6 +1672,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Data packs: import / export --------------------------------------------------------------
 
     fun openDataPacks() {
+        if (coding.state.value.busy || actuators.state.value.running) return
         pauseLiveData()
         _state.update {
             if (it.screen != Screen.DATA_PACKS) packsReturn = it.screen
@@ -1608,6 +1683,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeDataPacks() {
+        if (_packs.value.importing) return
+        importPreviewGeneration++
         _packs.update { it.copy(preview = null, message = null) }
         _state.update { it.copy(screen = packsReturn) }
     }
@@ -1625,10 +1702,16 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Checks a chosen file completely and shows what it would import. Profiles go to Saved vehicles. */
+    fun previewRecipeImport(text: String) { openDataPacks(); previewImport(text) }
+
     fun previewImport(text: String) {
+        val generation = ++importPreviewGeneration
         viewModelScope.launch {
             _packs.update { it.copy(importing = true, message = null) }
-            val preview = withContext(Dispatchers.Default) { packTransfer.preview(text) }
+            val preview = withContext(Dispatchers.Default) {
+                runCatching { packTransfer.preview(text) }.getOrElse { error -> com.bod3.app.packs.ImportPreview(null, "Cannot import this file", errors = listOf(error.message ?: "Invalid file")) }
+            }
+            if (generation != importPreviewGeneration) return@launch
             if (preview.kind == PackKind.PROFILE) {
                 _packs.update { it.copy(importing = false, preview = null) }
                 openGarage()
@@ -1644,11 +1727,13 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun confirmImport() {
+        if (_packs.value.importing) return
         val preview = _packs.value.preview ?: return
         if (!preview.canImport) return
         viewModelScope.launch {
             _packs.update { it.copy(importing = true) }
             val message = try {
+                requireCatalogEditable()
                 withContext(Dispatchers.IO) { packTransfer.apply(preview) }
             } catch (e: CancellationException) {
                 throw e
@@ -1665,7 +1750,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancelImport() {
-        _packs.update { it.copy(preview = null) }
+        importPreviewGeneration++
+        _packs.update { it.copy(preview = null, importing = false) }
     }
 
     fun dismissPacksMessage() {
@@ -1681,10 +1767,6 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun writeDataExport(scope: DataExport): File =
         shareJson("bod3-${scope.fileName}-${System.currentTimeMillis()}.json", packTransfer.exportData(scope), "Nothing to export yet: you have no ${scope.label.lowercase(Locale.ROOT)}.")
 
-    suspend fun writeVehicleExport(key: String): File {
-        val vehicle = repository.vehicles().firstOrNull { it.vehicle.key == key }?.vehicle ?: throw IllegalStateException("Vehicle not found")
-        return shareJson("bod3-ecus-${System.currentTimeMillis()}.json", packTransfer.exportVehicle(vehicle), "Nothing to export")
-    }
 
     suspend fun writeMyActuatorsExport(): File =
         shareJson("bod3-actuators-mine-${System.currentTimeMillis()}.json", packTransfer.exportActuators(), "You have no own test recipes yet.")
@@ -1716,7 +1798,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val executor = recorder ?: return null
         if (!current.isConnected || !activeSession.protocol.isCan) return null
         val description = current.savedProfile?.description
-        val pack = current.data.selectedVehicle?.vehicle
+        val pack = current.catalog.selected
         return ActuatorEnvironment(
             session = activeSession,
             probe = SessionStateProbe(activeSession, executor),
@@ -2002,20 +2084,29 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         updateExtras { it.withoutEcu(key) }?.let { appendLog("Manual ECUs: $it") }
     }
 
-    /** Copies the data-pack vehicle's ECUs into the manual list (existing request IDs are kept). */
+    /** Explicit copy preserves all old manual ECUs, with no VIN-driven catalog activation. */
     fun copyPackEcusToProfile() {
         val current = _state.value
-        val key = current.profileExtras.vehicleKey ?: current.data.selectedVehicle?.vehicle?.key
-        val vehicle = current.data.vehicles.firstOrNull { it.vehicle.key == key }?.vehicle ?: return
+        val id = current.profileExtras.catalogNodeId ?: current.catalog.selectedId ?: return
+        val ecus = current.catalog.tree.resolve(id)?.data?.ecus ?: return
         updateExtras { extras ->
             val existing = extras.manualEcus.map { it.key }.toSet()
-            extras.copy(manualEcus = extras.manualEcus + vehicle.ecus.filterNot { it.key in existing })
+            extras.copy(manualEcus = extras.manualEcus + ecus.filterNot { it.key in existing })
         }?.let { appendLog("Manual ECUs: $it") }
     }
 
-    /** Chooses the data-pack vehicle used to name this VIN's modules (null = the globally selected vehicle). */
-    fun setProfileVehicle(key: String?) {
-        updateExtras { it.copy(vehicleKey = key) }?.let { appendLog("Profile vehicle: $it") }
+    fun openCatalogForProfile() {
+        pauseLiveData(); refreshData()
+        _state.update { it.copy(screen = Screen.VEHICLES, catalog = it.catalog.copy(linkingProfile = true,
+            browseId = it.profileExtras.catalogNodeId?.takeIf { id -> it.catalog.tree.node(id) != null })) }
+    }
+
+    /** Save a link as metadata only; selecting/applying it is a separate manual catalog action. */
+    fun setProfileVehicle(id: String?) {
+        if (id != null && _state.value.catalog.tree.node(id) == null) return
+        val error = updateExtras { it.copy(vehicleKey = null, catalogNodeId = id) }
+        if (error != null) { appendLog("Profile catalog link: $error"); catalogMessage(error); return }
+        if (_state.value.catalog.linkingProfile) _state.update { it.copy(screen = Screen.PROFILE_ECUS, catalog = it.catalog.copy(linkingProfile = false)) }
     }
 
     /** Sets (or with a blank name, removes) the user's name for a module of the loaded profile. */

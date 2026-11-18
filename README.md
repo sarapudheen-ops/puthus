@@ -58,7 +58,7 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
   Each attempt sends the protocol's selection commands, its read-only probe and `ATDP`; the raw reply,
   `ATDP` text and duration are logged and shown under "Protocol detection". The working protocol is
   remembered per adapter. If nothing answers, the adapter stays connected so you can turn the ignition
-  on and tap *Detect vehicle*.
+  on and tap *Detect protocol / read VIN*.
 - **Connection profiles** (gear icon on the adapter list and the dashboard): force a protocol (with or
   without fallbacks), request and search timeouts, adapter reply timeout (`ATST` or vLinker `VTTOST`), a
   CAN bit rate for user CAN B/C and STN CAN (10-1000 kbit/s), extra AT/ST/VT init commands, adaptive timing (`ATAT0/1/2`), a broadcast receive filter
@@ -123,7 +123,7 @@ that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCS
   `A`, `B`, `C`… (`+ - * / %`, bit operators, `0x` hex, `min max abs round floor signed8/16/32 bit`), a unit,
   gauge range, decimals and optionally an ECU request/response ID. The editor validates the request
   against the read-only policy and shows formula errors with their position. *Test read* sends the request
-  once. Stored in the user data pack.
+  once. Saved at the manually chosen catalog level (legacy unscoped PIDs are retained).
 - **Data packs (JSON, `"format": "bod3-datapack"`):** custom PIDs, vehicles with ECU lists, and DTC
   descriptions. Three packs are bundled in `assets/datapacks`: `generic-obd.json` (about 200 SAE J2012 code
   descriptions, sample PIDs, generic 11/29-bit OBD ECUs), `vw-group-mqb.json` (Tiguan AD1, Golf 7,
@@ -142,10 +142,13 @@ that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCS
   refuses a clear without it. The terminal cannot get one. For OBD, the app reads the RPM first and refuses
   while the engine is running. A UDS clear is sent once (no automatic retry); a refusal shows its NRC
   ("conditions not correct – engine off?"), and the codes are read again afterwards.
-- **Vehicle & ECUs (make/model selection, like Car Scanner):** pick a bundled or your own vehicle. Its ECU
-  list shows address, name, request/response IDs (11-bit `7E0`, 29-bit `18DA10F1`) and protocol (UDS or
-  OBD). The list is editable: add, remove and change ECUs, or add a whole vehicle. Edits to a bundled
-  vehicle are saved as a copy that can be reset.
+- **Manual vehicle catalog:** Make → Model → Generation (name/years) → Variant (engine/fuel/transmission),
+  with inherited ECUs, PIDs, fault text, tests, coding and connection settings at every level.
+  Browse/search, favorites/recents, in-app additions/edits/duplication and whole-file JSON/ECU-CSV
+  preview/import/export. Only an explicit choice selects a vehicle; VIN/profile reads never do, and
+  there is no generic fallback vehicle. Existing packs and saved-profile links migrate non-destructively.
+  The seed is names/years only; existing MQB definitions remain shared under their platform.
+  See **[Vehicle catalog guide and formats](docs/vehicle-catalog.md)** for inheritance, migration and limitations.
 - **Per-ECU UDS:** identification (25 `F1xx` DIDs: part number, software and hardware versions, VIN,
   serial, system name, coding…, stopping after one timeout if the module is absent), fault codes (19 02),
   extended data (19 06) and snapshot (19 04) for a selected code, and a confirmed clear (14).
@@ -160,7 +163,7 @@ that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCS
   names, shared through the share sheet. Import validates the whole file first and lists every problem
   with its JSON path (nothing is changed on error); an existing VIN is only replaced after confirmation.
 - **Manual ECU list per vehicle** (*Modules → ECUs*): add, edit and remove ECUs (name, address code,
-  request/response ID, UDS/OBD, notes) or copy the data-pack vehicle's list. Every scan probes listed ECUs
+  request/response ID, UDS/OBD/KWP, notes) or explicitly copy a linked catalog level's list. Every scan probes listed ECUs
   directly with their exact reply ID (`3E 00`, `22 F190`, `01 00`), so modules outside `700–7FF` or with
   unusual reply IDs are found; a 29-bit listed ECU adds the 29-bit pass on its own. *Quick scan* probes only
   the listed ECUs.
@@ -288,20 +291,20 @@ write, a value that changed since the backup, confirmation reuse/expiry, and the
 
 ## Features (M6): data packs and polish
 
-- **One import for every file** (Data packs screen, *Choose file…*): data packs (PIDs, vehicle ECU
-  lists, module names, DTC texts), bidirectional test recipes, coding recipes and saved vehicle
-  profiles. The type is detected from the `"format"` field (`bod3-datapack`, `bod3-actuators`,
-  `bod3-coding`, `bod3-vehicle-profile`), with a fallback for older files without it.
+- **One import for every file** (Data packs screen, *Choose file…*): manual catalogs (JSON / ECU CSV),
+  legacy data packs (PIDs, ECU lists, module names, DTC texts), bidirectional tests, coding recipes and
+  saved profiles. JSON type is detected from `"format"` (`bod3-vehicle-catalog`, `bod3-datapack`,
+  `bod3-actuators`, `bod3-coding`, `bod3-vehicle-profile`); CSV has a validated required header.
 - **Validated before anything is saved.** The whole file is checked first; a preview lists what it
   contains (and how many items replace existing ones), warnings (e.g. unverified recipes) and every
   problem with its location – e.g. `Not valid JSON at line 3, column 9: … (often a missing comma,
   quote or bracket just before this point)` or `pids[0] (bad): request 2E… is not a read service`.
-  A file with any problem imports nothing. Files over 2 MB are refused.
+  A file with any problem imports nothing. Files over 16 MiB are refused before parsing.
 - **Merging:** imported items with the same id (PID id, vehicle make+model, module address, DTC code,
   recipe id) replace the user's own; bundled packs are never changed.
-- **Export through the share sheet:** my custom PIDs, my vehicles and ECU lists, all my data as one
-  data pack, my test recipes, my coding recipes, and any bundled pack. Profiles are exported from
-  Saved vehicles.
+- **Export through the share sheet:** any catalog level with the ancestors/platforms required for
+  inheritance (JSON), hierarchy/ECU declarations (CSV), complete catalog/PID-only JSON, recipes and
+  original bundled packs. JSON is the lossless format. VIN profiles are exported from Saved vehicles.
 - **Templates** (`assets/samples`): annotated data pack, actuator and coding files showing every
   field, shareable from the app as starting points. Unit tests validate them.
 - **App settings:** theme (system / light / dark), keep screen on, and display units – temperature

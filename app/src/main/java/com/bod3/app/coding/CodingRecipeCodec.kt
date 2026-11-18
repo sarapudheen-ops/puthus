@@ -211,16 +211,20 @@ data class CodingEntry(val recipe: CodingRecipe, val packName: String, val isUse
 data class CodingImportResult(val added: List<String>, val replaced: List<String>)
 
 /** Bundled coding packs plus the user's own recipes; user recipes replace bundled ones with the same id. */
-class CodingLibrary(private val bundled: List<CodingPack>, private val store: KeyValueStore) {
+class CodingLibrary(private val bundled: List<CodingPack>, private val store: KeyValueStore,
+    private val catalog: com.bod3.app.catalog.CatalogAccess? = null,
+) {
 
     val bundledPacks: List<CodingPack> get() = bundled
 
     fun userPack(): CodingPack {
+        catalog?.let { return empty().copy(recipes = it.local().coding) }
         val json = store.get(KEY_USER) ?: return empty()
         return CodingRecipeCodec.decode(json).pack ?: empty().also { store.put(KEY_USER_BROKEN, json) }
     }
 
     fun entries(): List<CodingEntry> {
+        catalog?.let { return it.coding() }
         val user = userPack().recipes
         val userIds = user.map { it.id }.toSet()
         val fromBundles = bundled.flatMap { pack -> pack.recipes.filterNot { it.id in userIds }.map { CodingEntry(it, pack.name, false) } }
@@ -234,10 +238,17 @@ class CodingLibrary(private val bundled: List<CodingPack>, private val store: Ke
     fun import(pack: CodingPack): CodingImportResult {
         val problems = pack.problems()
         require(problems.isEmpty()) { problems.joinToString("\n") }
+        val safe = pack.recipes.map { it.copy(verified = false) }
+        catalog?.let { access ->
+            val existing = entries().map { it.recipe.id }.toSet()
+            val ids = safe.map { it.id }.toSet()
+            access.edit { it.copy(coding = it.coding.filterNot { r -> r.id in ids } + safe) }
+            return CodingImportResult(safe.map { it.id }.filterNot { it in existing }, safe.map { it.id }.filter { it in existing })
+        }
         val current = userPack().recipes
         val existing = (current.map { it.id } + bundled.flatMap { b -> b.recipes.map { it.id } }).toSet()
         val incoming = pack.recipes.map { it.id }.toSet()
-        save(current.filterNot { it.id in incoming } + pack.recipes)
+        save(current.filterNot { it.id in incoming } + safe)
         return CodingImportResult(pack.recipes.map { it.id }.filterNot { it in existing }, pack.recipes.map { it.id }.filter { it in existing })
     }
 
@@ -245,10 +256,18 @@ class CodingLibrary(private val bundled: List<CodingPack>, private val store: Ke
     fun save(recipe: CodingRecipe, replacingId: String? = null) {
         val problems = recipe.problems()
         require(problems.isEmpty()) { problems.joinToString("\n") }
-        save(userPack().recipes.filterNot { it.id == recipe.id || it.id == replacingId } + recipe)
+        val safe = recipe.copy(verified = false)
+        catalog?.let { access ->
+            access.edit { it.copy(coding = it.coding.filterNot { r -> r.id == safe.id || r.id == replacingId } + safe) }
+            return
+        }
+        save(userPack().recipes.filterNot { it.id == recipe.id || it.id == replacingId } + safe)
     }
 
-    fun deleteUserRecipe(id: String) = save(userPack().recipes.filterNot { it.id == id })
+    fun deleteUserRecipe(id: String) {
+        catalog?.let { access -> access.edit { it.copy(coding = it.coding.filterNot { r -> r.id == id }) }; return }
+        save(userPack().recipes.filterNot { it.id == id })
+    }
 
     fun export(recipes: List<CodingRecipe> = userPack().recipes, name: String = MY_RECIPES): String =
         CodingRecipeCodec.encode(CodingPack(CodingPack.USER_PACK_ID, name, recipes = recipes))

@@ -30,6 +30,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Verify names-only catalog seed
+        run: python3 tools/generate_catalog_seed.py --check
+
       - name: Build debug APK, run lint and unit tests
         run: |
           set -o pipefail

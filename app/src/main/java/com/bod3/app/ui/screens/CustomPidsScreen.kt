@@ -57,6 +57,7 @@ fun CustomPidsScreen(state: UiState, onBack: () -> Unit, onEdit: (String?) -> Un
         },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp)) {
+            item { Text("Scope: ${state.data.pidScopeTitle}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(bottom = 8.dp)) }
             item {
                 Text(
                     "A custom PID is a read request (service 01, 09 or UDS 22), a formula over the reply data bytes A, B, C… and a unit. Add them to live data with the pencil on the live data screen.",
@@ -75,7 +76,7 @@ fun CustomPidsScreen(state: UiState, onBack: () -> Unit, onEdit: (String?) -> Un
                             fontFamily = FontFamily.Monospace,
                         )
                     }
-                    Text(if (pid.id in state.data.userPidIds) "Yours" else "Bundled", style = MaterialTheme.typography.labelSmall)
+                    Text(if (pid.id in state.data.userPidIds) "Local" else "Inherited / library", style = MaterialTheme.typography.labelSmall)
                 }
                 HorizontalDivider()
             }
@@ -97,6 +98,7 @@ fun PidEditorScreen(
     onTest: (CustomPid) -> Unit,
     onDelete: () -> Unit,
     onCancel: () -> Unit,
+    onDuplicate: (() -> Unit)? = null,
 ) {
     var id by rememberSaveable(pid.id) { mutableStateOf(pid.id) }
     var name by rememberSaveable(pid.id) { mutableStateOf(pid.name) }
@@ -149,7 +151,7 @@ fun PidEditorScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (!isNew && !isUserPid) {
-                Text("Bundled PID: saving stores your copy, which replaces it.", style = MaterialTheme.typography.bodySmall)
+                Text("Inherited / library PID: saving adds an override at the displayed scope; the original stays intact.", style = MaterialTheme.typography.bodySmall)
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             OutlinedTextField(id, { id = it }, label = { Text("ID (letters, digits, - _)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -174,7 +176,8 @@ fun PidEditorScreen(
             problems.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onTest(current) }, enabled = connected && problems.isEmpty()) { Text("Test read") }
-                if (isUserPid) OutlinedButton(onClick = onDelete) { Text("Delete") }
+                if (isUserPid) OutlinedButton(onClick = onDelete) { Text("Remove override") }
+                onDuplicate?.let { duplicate -> OutlinedButton(onClick = duplicate) { Text("Duplicate") } }
             }
             testResult?.let { Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
         }

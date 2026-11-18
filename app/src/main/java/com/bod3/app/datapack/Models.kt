@@ -83,6 +83,9 @@ enum class EcuProtocol(val label: String) {
 
     /** Only OBD services (engine/transmission on many older cars). */
     OBD("OBD"),
+
+    /** KWP enhanced services are not interchangeable with UDS; use documented read definitions. */
+    KWP("KWP"),
 }
 
 /** A control unit of a vehicle: name and CAN addressing. */
@@ -108,6 +111,7 @@ data class EcuDefinition(
         if (name.isBlank()) add("name: must not be empty")
         fun check(field: String, id: String) {
             if (!(id.isHex() && (id.length == 3 || id.length == 8))) add("$field: must be a 3-digit (11-bit) or 8-digit (29-bit) hex CAN ID")
+            else if ((id.toLongOrNull(16) ?: Long.MAX_VALUE) > if (id.length == 3) 0x7FFL else 0x1FFFFFFFL) add("$field: outside the ${if (id.length == 3) 11 else 29}-bit CAN ID range")
         }
         check("requestId", requestId)
         check("responseId", responseId)
