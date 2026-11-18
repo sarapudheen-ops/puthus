@@ -1,0 +1,45 @@
+name: Inspect Toyota release data
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['arena/**']
+    paths:
+      - 'tools/thinkdiag/**'
+      - '.github/workflows/thinkdiag-data.yml'
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  inspect:
+    name: Inspect Toyota archive (no vendor code execution)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download original release asset outside git
+        run: |
+          mkdir -p .local/thinkdiag
+          gh release download assets-v1 --pattern TOYOTA.zip --dir .local/thinkdiag
+      - name: Inspect the archive without executing its contents
+        run: python3 tools/thinkdiag/inspect_pack.py .local/thinkdiag/TOYOTA.zip --output .local/thinkdiag/report
+      - name: Publish inspection as a check
+        run: |
+          cat .local/thinkdiag/report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota data inspection report' \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Toyota release asset inspection' \
+            -F 'output[summary]=@.local/thinkdiag/report/summary.md'
+      - name: Upload the inspection report (not the raw vendor archive)
+        uses: actions/upload-artifact@v7
+        with:
+          name: toyota-data-inspection
+          path: .local/thinkdiag/report/
+          retention-days: 7
