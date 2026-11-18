@@ -8,6 +8,68 @@ from dataclasses import dataclass
 import struct
 
 MAX_RECORDS = 200_000
+ECU_FILE = r"(?:EU|JP|NA)/Ecu_Data_[0-9a-fA-F]+\.BIN"
+
+
+@dataclass(frozen=True)
+class TypedTable:
+    identity: int
+    count: int
+    body: bytes
+    padding: bytes
+
+    @property
+    def stride(self) -> int | None:
+        return len(self.body) // self.count if self.count and len(self.body) % self.count == 0 else None
+
+
+def typed_table(data: bytes, expected_id: int | None = None) -> TypedTable:
+    """LE16 tag, LE32 row count, LE32 payload size, payload, <=3 padding bytes.
+
+    Native evidence: GetToyotaTblData (0x103F8), GetEcuTblData (0x105C0).
+    The caller still needs the table-specific row schema and provenance.
+    """
+    identity, count, size = uint(data, 0, 2), uint(data, 2, 4), uint(data, 6, 4)
+    if expected_id is not None and identity != expected_id:
+        raise ValueError("Typed-table tag disagrees with directory/file")
+    if size > len(data) - 10 or len(data) - 10 - size > 3:
+        raise ValueError("Typed-table size exceeds span / unexplained trailing data")
+    if count > MAX_RECORDS * 10 or (count == 0) != (size == 0):
+        raise ValueError("Invalid typed-table count/size")
+    return TypedTable(identity, count, data[10:10 + size], data[10 + size:])
+
+
+def menu_nodes(data: bytes) -> dict[int, dict]:
+    """MENU packed nodes: 38-byte header and 23-byte edge records.
+
+    Structural fields only; task IDs/flags/saved parameters are not executed.
+    Traversal consumers must track visited nodes (back-links may be present).
+    """
+    nodes = {}
+    pos = 0
+    while pos < len(data):
+        if len(data) - pos <= 3 and not any(data[pos:]):
+            break
+        size = uint(data, pos, 4)
+        if size < 38 or pos + size > len(data) or len(nodes) >= MAX_RECORDS:
+            raise ValueError(f"Invalid menu node size at {pos:#x}")
+        count = uint(data, pos + 36, 2)
+        if size != 38 + count * 23:
+            raise ValueError(f"Unknown menu node/edge layout at {pos:#x}")
+        edges = []
+        for i in range(count):
+            edge = pos + 38 + i * 23
+            edges.append({"offset": edge, "flags": uint(data, edge, 2), "tag": data[edge + 2],
+                          "parametersHex": data[edge + 3:edge + 19].hex(), "target": uint(data, edge + 19, 4)})
+        nodes[pos] = {"offset": pos, "bytes": size,
+                      "headerWords": [uint(data, pos + i, 4) for i in range(4, 36, 4)], "edges": edges}
+        pos += size
+    if not nodes:
+        raise ValueError("Empty menu")
+    for node in nodes.values():
+        if any(edge["target"] not in (0, 0xFFFFFFFF) and edge["target"] not in nodes for edge in node["edges"]):
+            raise ValueError("Menu edge points outside node boundaries")
+    return nodes
 
 
 def uint(data: bytes, offset: int, width: int) -> int:

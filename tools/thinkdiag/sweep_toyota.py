@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections import Counter, defaultdict
+from collections import Counter, deque
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -19,16 +19,22 @@ import zipfile
 
 from analyze_toyota import TOYOTA_SHA256, checked_infos, native_info
 from static_readers import reader_report
-from toyota_structure import function_index, section_directory, system_fields, system_lists, uint
+from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_directory,
+                              system_fields, system_lists, typed_table, uint)
 
 FOCUSED_READERS = {
     "libTOYOTA_FILE.so": ["GetAllToyotaTblData", "GetToyotaTblData", "GetInfoFromAddrPart",
         "GetSystemEnterInfoData", "GetSysFuncInfoData", "GetRDtcDataFromRDTCPart",
-        "GetDsSubMenuInfoData", "GetDsSubMenuItemList", "GetSFDataFromSFList", "GetCustomizeFuncData"],
+        "GetDsSubMenuInfoData", "GetDsSubMenuItemList", "GetSFDataFromSFList", "GetCustomizeFuncData",
+        "GetEcuTblData", "GetDsDataFromDSPart", "GetActDataFromACTPart", "GetCDtcDataFromCDTCPart",
+        "GetSFDataFromSFPart", "GetRoBDataFromRoBPart"],
     "libTOYOTA_FDATA.so": ["AnalyzeDsCmdDataP3", "GetDSCmdDataInfoP3", "GetDSCmdDataInfoP4",
         "GetExistDataIdList", "GetDsValue", "GetActCmdDataInfoP3", "GetActCmdDataInfoP4",
         "SetCmdToSndFrameFunc_1", "SetCmdToSndFrameFunc_2", "SetCmdToSndFrameFunc_3"],
-    "libDIAG.so": ["InitMenuTree", "MenuTreeDispose", "GetCurrentMenuData", "GetMenuSubItemSaveData"],
+    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex"],
+    "libTOYOTA_CALC.so": ["ResultCalcFromCalcID", "Calc_C"],
+    "libDIAG.so": ["InitMenuTree", "MenuTreeDispose_Ex", "GetMenuSubItemTextID_Ex",
+        "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID"],
 }
 SEARCHES = {
     "innova": r"\binnova\b|\ban40\b|\ban140\b|\bag10\b",
@@ -141,17 +147,23 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     (output / "archive-inventory.json").write_text(json_text(all_files))
     (output / "native-exports.json").write_text(json_text(native_census))
     findings["archiveEntriesIncludingNestedFiles"] = len(all_files)
+    findings["archiveTypes"] = dict(Counter(f["type"] for f in all_files))
     findings["nativeLibraries"] = len(native_census)
+    recovery = json.loads((report_dir / "english-text.json").read_text())
+    findings["englishRecovery"] = {"indexedRecords": sum(i.get("records", 0) for i in recovery),
+        "utf8Records": sum(i.get("utf8Records", 0) for i in recovery),
+        "nonUtf8RecordsRetainedInRawMembers": sum(i.get("records", 0) - i.get("utf8Records", 0) for i in recovery)}
     for native in native_census:
         publishable_report(report_dir, "exports-" + native["library"], native["library"] + " full export census", json_text(native))
 
     section_counts, header_shapes, unparsed = Counter(), Counter(), []
+    section_strides, section_row_totals, typed_errors = Counter(), Counter(), []
     section_files = []
     samples = []
     section_records = output / "ecu-sections.jsonl"
     with section_records.open("w", encoding="utf-8") as rows:
         for name, path in sorted(paths.items()):
-            if not re.fullmatch(r"(?:EU|JP|NA)/Ecu_Data_\d+\.BIN", name):
+            if not re.fullmatch(ECU_FILE, name):
                 continue
             data = path.read_bytes()
             try:
@@ -165,6 +177,14 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                     if len(block) >= 10:
                         item["opaqueHeader"] = {"u16At0": uint(block, 0, 2), "u32At2": uint(block, 2, 4), "u32At6": uint(block, 6, 4)}
                         header_shapes[(section.identity, uint(block, 0, 2) == section.identity)] += 1
+                    try:
+                        table = typed_table(block, section.identity)
+                        item["table"] = {"rows": table.count, "payloadBytes": len(table.body),
+                                         "stride": table.stride, "paddingBytes": len(table.padding)}
+                        section_strides[(section.identity, table.stride or 0)] += 1
+                        section_row_totals[section.identity] += table.count
+                    except ValueError as error:
+                        typed_errors.append({"file": name, "section": section.identity, "error": str(error)})
                     section_counts[section.identity] += 1
                     rows.write(json.dumps(item, sort_keys=True) + "\n")
                 if name.endswith("Ecu_Data_0001.BIN"):
@@ -172,13 +192,59 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                                     "bytes": len(data), "base64": base64.b64encode(data).decode("ascii")})
             except ValueError as error:
                 unparsed.append({"file": name, "error": str(error)})
-    findings["families"]["ecuTables"] = {"parsedDirectories": len(section_files), "unparsed": unparsed,
-        "sectionsById": dict(sorted(section_counts.items())),
+    findings["families"]["ecuTables"] = {"candidates": sum(bool(re.fullmatch(ECU_FILE, name)) for name in paths),
+        "parsedDirectories": len(section_files), "unparsed": unparsed,
+        "sectionsById": dict(sorted(section_counts.items())), "rowsBySection": dict(sorted(section_row_totals.items())),
+        "typedTableErrors": typed_errors, "strides": [{"section": k[0], "stride": k[1], "tables": v} for k, v in sorted(section_strides.items())],
         "headerTagComparisons": [{"section": key[0], "matchesDirectoryTag": key[1], "count": value} for key, value in sorted(header_shapes.items())]}
     # These three small source excerpts let an offline reviewer reproduce the
     # structural work without committing vendor data or executable libraries.
     (output / "structural-excerpts.json").write_text(json_text(samples))
     publishable_report(report_dir, "structural-excerpts", "SHA-pinned ECU structural excerpts", json_text(samples))
+
+    parsed_other = set()
+    shared_tables = []
+    for name, path in sorted(paths.items()):
+        match = re.fullmatch(r"(?:EU|JP|NA)/(?:Toyota|Viewer)_bin_([0-9a-fA-F]+)\.BIN", name)
+        if not match:
+            continue
+        try:
+            table = typed_table(path.read_bytes(), int(match[1], 16))
+            shared_tables.append({"file": name, "tag": table.identity, "rows": table.count,
+                                  "payloadBytes": len(table.body), "stride": table.stride,
+                                  "paddingBytes": len(table.padding), "prefixHex": table.body[:64].hex(" ")})
+            parsed_other.add(name)
+        except ValueError as error:
+            shared_tables.append({"file": name, "unparsed": str(error)})
+    findings["families"]["sharedTypedTables"] = shared_tables
+    (output / "shared-tables.json").write_text(json_text(shared_tables))
+
+    if "MENU.BIN" in paths:
+        try:
+            nodes = menu_nodes(paths["MENU.BIN"].read_bytes())
+            title_matches = sum(f"{n['headerWords'][1]:08X}" in text for n in nodes.values())
+            with (output / "menu-nodes.jsonl").open("w", encoding="utf-8") as dest:
+                for node in nodes.values():
+                    dest.write(json.dumps(node, sort_keys=True) + "\n")
+            evidence, visited, queue = [], set(), deque([(0, [])])
+            while queue:
+                offset, trail = queue.popleft()
+                if offset in visited:
+                    continue
+                visited.add(offset)
+                node = nodes[offset]
+                title = text.get(f"{node['headerWords'][1]:08X}", f"@{offset:x}")
+                trail = trail + [title]
+                if re.search(SEARCHES["innova"], title, re.I):
+                    evidence.append({"node": offset, "path": trail, "headerWords": node["headerWords"],
+                                     "edges": node["edges"]})
+                if len(trail) < 32:
+                    queue.extend((edge["target"], trail) for edge in node["edges"] if edge["target"] in nodes)
+            findings["families"]["MENU.BIN"] = {"nodes": len(nodes), "edges": sum(len(n["edges"]) for n in nodes.values()),
+                "titleIdsResolved": title_matches, "reachableNodesWithinDepth32": len(visited), "innovaPaths": evidence}
+            parsed_other.add("MENU.BIN")
+        except ValueError as error:
+            findings["families"]["MENU.BIN"] = {"unparsed": str(error)}
 
     function_tables = {}
     for name, path in sorted(paths.items()):
@@ -199,16 +265,31 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             data = path.read_bytes()
             index, blocks = system_lists(data)
             stats, lookups, examples, field0s = Counter(), Counter(), [], set()
+            protocols, missing_functions, missing_files = Counter(), Counter(), Counter()
+            lower_paths = {p.casefold() for p in paths}
             functions = function_tables.get(f"FUNCDATA_{match[1]}.BIN", {})
             with (output / (name + ".records.jsonl")).open("w", encoding="utf-8") as dest:
                 for offset, records in sorted(blocks.items()):
                     for row_number, record in enumerate(records):
                         fields = system_fields(record)
                         field0s.add(fields["u32"]["0"])
-                        labels = {key: text[f"{value:08X}"] for key, value in fields["u32"].items() if f"{value:08X}" in text}
+                        # Field 0 is a numeric function key, not a text key.
+                        # Accidental matches in the same integer namespace are
+                        # not evidence (small integers also name UI prompts).
+                        labels = {key: text[f"{value:08X}"] for key, value in fields["u32"].items()
+                                  if key in ("4", "8", "16", "23", "28") and f"{value:08X}" in text}
                         lookups.update(labels.keys())
                         stats["records"] += 1
-                        stats["word0ExistsInFunctionIndex"] += fields["u32"]["0"] in functions
+                        function_found = fields["u32"]["0"] in functions
+                        stats["word0ExistsInFunctionIndex"] += function_found
+                        if not function_found:
+                            missing_functions[fields["u32"]["0"]] += 1
+                        filename = labels.get("23", "")
+                        file_found = f"{match[1]}/{filename}".casefold() in lower_paths
+                        stats["resolvedEcuFileExists"] += file_found
+                        if not file_found:
+                            missing_files[filename] += 1
+                        protocols[labels.get("28", "<missing>")] += 1
                         item = {"file": name, "offset": offset + 2 + 37 * row_number, "rawHex": record.hex(" "),
                                 "fields": fields, "textMatchesByFieldOffset": labels}
                         dest.write(json.dumps(item, ensure_ascii=True, sort_keys=True) + "\n")
@@ -216,7 +297,8 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                             examples.append(item)
             findings["families"][name] = {"vehicleIndexRows": len(index), "uniqueBlocks": len(blocks),
                 "uniqueWord0Values": len(field0s), "counts": dict(stats), "textMatchesByWordOffset": dict(lookups),
-                "examples": examples, "indexExamples": index[:5]}
+                "transportLabels": dict(protocols), "missingFunctionIds": dict(missing_functions),
+                "missingEcuFiles": dict(missing_files), "examples": examples, "indexExamples": index[:5]}
             (output / (name + ".index.json")).write_text(json_text(index))
         except ValueError as error:
             findings["families"][name] = {"unparsed": str(error)}
@@ -236,7 +318,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # samples. Absence of a parser is reported as an open format, never absence
     # of diagnostics in the vendor folder.
     findings["notStructurallyInterpreted"] = [{"file": name, "bytes": p.stat().st_size} for name, p in sorted(paths.items())
-        if name not in section_files and name not in function_tables and not re.fullmatch(r"SYSLIST_(EU|JP|NA)\.BIN", name)]
+        if name not in section_files and name not in function_tables and name not in parsed_other
+        and not re.fullmatch(r"SYSLIST_(EU|JP|NA)\.BIN", name)]
+    findings["structuralCoverage"] = {"parsedDecodedFiles": len(section_files) + len(function_tables) + len(parsed_other)
+        + sum(1 for key, value in findings["families"].items() if key.startswith("SYSLIST_") and "unparsed" not in value),
+        "uninterpretedDecodedFiles": len(findings["notStructurallyInterpreted"])}
     (output / "text-keyword-evidence.json").write_text(json_text(hits))
     (output / "sweep-summary.json").write_text(json_text(findings))
     publishable_report(report_dir, "summary", "Toyota full diagnostic-data sweep", json_text(findings))

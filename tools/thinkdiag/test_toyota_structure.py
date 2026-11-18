@@ -1,11 +1,50 @@
 import struct
 import unittest
 
-from toyota_structure import (function_index, section_directory, sentinel_index,
-                              system_fields, system_lists, uint)
+from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_directory, sentinel_index,
+                              system_fields, system_lists, typed_table, uint)
 
 
 class ToyotaStructureTest(unittest.TestCase):
+    def test_ecu_filenames_include_hexadecimal_letters_not_just_decimal_digits(self):
+        import re
+        for name in ["EU/Ecu_Data_0001.BIN", "JP/Ecu_Data_006a.BIN", "NA/Ecu_Data_02FF.BIN"]:
+            self.assertIsNotNone(re.fullmatch(ECU_FILE, name), name)
+        for name in ["EU/Ecu_Data_zzz.BIN", "OTHER/Ecu_Data_0001.BIN", "EU/Toyota_bin_04.BIN"]:
+            self.assertIsNone(re.fullmatch(ECU_FILE, name), name)
+
+    def test_typed_tables_keep_padding_and_validate_all_extents(self):
+        data = struct.pack("<HII", 4, 2, 8) + b"abcdefgh" + b"\0\0"
+        table = typed_table(data, 4)
+        self.assertEqual((4, 2, b"abcdefgh", b"\0\0", 4),
+                         (table.identity, table.count, table.body, table.padding, table.stride))
+        for data, tag in [(data, 5), (data[:16], 4), (data + b"\0\0", 4),
+                          (struct.pack("<HII", 4, 0, 1) + b"a", 4),
+                          (struct.pack("<HII", 4, 1, 0), 4)]:
+            with self.subTest(data=data, tag=tag), self.assertRaises(ValueError):
+                typed_table(data, tag)
+        self.assertIsNone(typed_table(struct.pack("<HII", 4, 2, 3) + b"abc").stride)
+        self.assertEqual(b"", typed_table(struct.pack("<HII", 4, 0, 0)).body)
+
+    def test_menu_boundaries_targets_and_saved_parameters(self):
+        root = bytearray(61)
+        struct.pack_into("<I", root, 0, 61)
+        struct.pack_into("<H", root, 36, 1)
+        struct.pack_into("<H", root, 38, 15)
+        root[40] = 1
+        root[41:57] = bytes(range(16))
+        struct.pack_into("<I", root, 57, 61)
+        leaf = struct.pack("<I", 38) + bytes(34)
+        nodes = menu_nodes(bytes(root) + leaf + b"\0\0\0")
+        self.assertEqual({0, 61}, set(nodes))
+        self.assertEqual(61, nodes[0]["edges"][0]["target"])
+        self.assertEqual(bytes(range(16)).hex(), nodes[0]["edges"][0]["parametersHex"])
+        for data in [b"", bytes(root) + leaf[:-1], bytes(root) + leaf + b"\0" * 4,
+                     bytes(root[:57]) + struct.pack("<I", 62) + leaf,
+                     struct.pack("<I", 60) + bytes(root[4:]) + leaf]:
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                menu_nodes(data)
+
     def test_section_directory_and_exact_spans(self):
         payload = struct.pack("<I", 2) + struct.pack("<BI", 0, 14) + struct.pack("<BI", 9, 17) + b"abc12345"
         sections = section_directory(payload)
