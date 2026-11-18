@@ -19,7 +19,10 @@ import re
 from analyze_toyota import TOYOTA_SHA256
 
 CODE = re.compile(r"[PCBU][0-3][0-9A-F]{3}(?:[0-9A-F]{2})?")
+# The raw record contains byte 00. Some check/log renderers display it as \\^@;
+# that is not the file format. Do not split rendered examples or infer codes.
 SEPARATOR = "\0"
+PLACEHOLDERS = {"NORMAL", "NOFAULT", "NOFAULTS", "NODTC", "NODTCS", "NODESCRIPTION", "UNKNOWN", "RESERVED", "NOTAPPLICABLE"}
 
 
 def convert(records: dict[str, str]):
@@ -35,7 +38,8 @@ def convert(records: dict[str, str]):
             skipped["unsupported_code_or_blink_code"] += 1
             continue
         compact = re.sub(r"[^A-Z0-9]", "", description.upper())
-        if compact == raw or len(re.sub(r"[^A-Za-z]", "", description)) < 4 or not description:
+        if (compact == raw or compact in PLACEHOLDERS or "MANUFACTURER CONTROL" in description.upper()
+                or len(re.sub(r"[^A-Za-z]", "", description)) < 4):
             skipped["placeholder_or_empty"] += 1
             continue
         if any(ord(c) < 32 for c in description):
@@ -63,12 +67,16 @@ def convert(records: dict[str, str]):
             "Conflicts, placeholders and blink codes were excluded. Reference text only: confirm against the repair manual for your ECU/model. "
             "No PIDs, ECU addresses, actuator tests or coding recipes are enabled by this pack."
         ),
-        "dtcGroups": [{"id": "toyota-lexus-english-dtcs", "makes": ["Toyota", "Lexus", "Toyota Thailand"], "dtcs": accepted}],
+        "dtcGroups": [{"id": "toyota-lexus-english-dtcs", "makes": ["Toyota", "Lexus", "Toyota Thailand"],
+                       "source": "ThinkDiag Toyota/Lexus V10.62 - TCODE_EN.GAG", "dtcs": accepted}],
     }
     stats = {"sourceRecords": len(records), "acceptedCodes": len(accepted), "conflictingCodesExcluded": len(conflicts),
+             "acceptedRecords": sum(map(len, sources.values())),
+             "conflictingRecordsExcluded": sum(len(ids) for variants in conflicts.values() for ids in variants.values()),
              "skippedRecords": dict(skipped), "baseCodes": sum("-" not in k for k in accepted),
              "extendedCodes": sum("-" in k for k in accepted)}
-    return pack, {"statistics": stats, "sources": sources, "conflicts": conflicts}
+    return pack, {"sourceArchiveSha256": TOYOTA_SHA256, "sourceLibrary": "TOYOTA_EN.GGP/TCODE_EN.GAG",
+                  "statistics": stats, "sources": sources, "conflicts": conflicts}
 
 
 def write_conversion(source: Path, output: Path, report_dir: Path):
@@ -80,6 +88,7 @@ def write_conversion(source: Path, output: Path, report_dir: Path):
     if len(encoded) > 2 * 1024 * 1024:
         raise ValueError("Converted pack exceeds the app's JSON import limit")
     (output / "toyota-lexus-dtcs.json").write_bytes(encoded)
+    audit["sourceTextJsonSha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
     (output / "toyota-dtc-audit.json").write_text(json.dumps(audit, indent=2) + "\n")
     manifest = []
     dtcs = pack["dtcGroups"][0]["dtcs"]

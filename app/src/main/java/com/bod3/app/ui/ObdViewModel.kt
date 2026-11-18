@@ -24,6 +24,7 @@ import com.bod3.app.audit.AuditStore
 import com.bod3.app.android.ReportSharer
 import com.bod3.app.datapack.CustomPid
 import com.bod3.app.datapack.DataPackStore
+import com.bod3.app.datapack.DtcReferenceContext
 import com.bod3.app.datapack.DataRepository
 import com.bod3.app.datapack.EcuDefinition
 import com.bod3.app.datapack.EcuProtocol
@@ -664,6 +665,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 ecuDetail = null,
             )
         }
+        refreshNaming()
         refreshBluetooth()
     }
 
@@ -855,7 +857,10 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun applyNegotiation(negotiation: NegotiationResult) {
         val currentRecorder = recorder ?: return
         val protocolInfo = negotiation.protocol
-        _state.update { it.copy(attempts = negotiation.attempts, dtcs = emptyMap()) }
+        // A new detection must not retain the previous VIN's manufacturer reference while VIN/vPIC loads.
+        profileJob?.cancel()
+        _state.update { it.copy(attempts = negotiation.attempts, dtcs = emptyMap(), profile = ProfileState.None) }
+        refreshNaming()
         if (protocolInfo == null) {
             val tried = negotiation.attempts.joinToString(", ") { it.selectCommand }.ifEmpty { "none" }
             session = null
@@ -1105,6 +1110,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadProfile(vin: String, protocolName: String) {
         profileJob?.cancel()
         _state.update { it.copy(profile = ProfileState.Loading) }
+        refreshNaming()
         profileJob = viewModelScope.launch {
             try {
                 val result = profiles.onConnected(vin, protocolName)
@@ -1122,6 +1128,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 appendLog("Profile load failed: ${e.message}")
                 _state.update { it.copy(profile = ProfileState.Failed(e.message ?: e.javaClass.simpleName)) }
+                refreshNaming()
             }
         }
     }
@@ -1280,7 +1287,6 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                     selectedVehicle = vehicles.firstOrNull { v -> v.vehicle.key == selectedKey },
                     customPids = repository.customPids(),
                     userPidIds = userPack.pids.map { p -> p.id }.toSet(),
-                    descriptions = repository.dtcDescriptions(),
                     packErrors = bundledPacks.errors,
                 ),
             )
@@ -1296,7 +1302,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         val vin = current.savedProfile?.vin
         val extras = vin?.let { runCatching { extrasStore.get(it) }.getOrNull() } ?: ProfileExtras()
-        val vehicle = (extras.vehicleKey?.let { key -> current.data.vehicles.firstOrNull { it.vehicle.key == key } } ?: current.data.selectedVehicle)?.vehicle
+        val linkedVehicle = extras.vehicleKey?.let { key -> current.data.vehicles.firstOrNull { it.vehicle.key == key } }?.vehicle
+        val vehicle = linkedVehicle ?: current.data.selectedVehicle?.vehicle
         val namer = ModuleNamer(
             userNames = extras.moduleNames,
             manualEcus = extras.manualEcus,
@@ -1306,7 +1313,15 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             make = current.savedProfile?.description?.make,
         )
         val listed = (extras.manualEcus + vehicle?.ecus.orEmpty()).map { it.moduleAddress() }.distinctBy { it.requestHeader }
-        _state.update { it.copy(profileExtras = extras, moduleNamer = namer, listedModules = listed) }
+        // Do not identify an unknown vehicle from the global ECU-list choice (it may be from another car).
+        val referenceMake = DtcReferenceContext.make(current.savedProfile?.description?.make, linkedVehicle?.make)
+        val descriptions = repository.dtcDescriptions(referenceMake)
+        _state.update {
+            it.copy(
+                profileExtras = extras, moduleNamer = namer, listedModules = listed,
+                data = it.data.copy(descriptions = descriptions, dtcReferenceMake = referenceMake),
+            )
+        }
     }
 
     fun openVehicles() {

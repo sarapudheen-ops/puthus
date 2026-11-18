@@ -130,8 +130,17 @@ class DataRepository(private val bundled: List<DataPack>, private val store: Dat
 
     fun isUserPid(id: String): Boolean = store.userPack().pids.any { it.id == id }
 
-    fun dtcDescriptions(): DtcDescriptions = DtcDescriptions(
-        user = store.userPack().dtcs,
-        packs = bundled.filter { it.dtcs.isNotEmpty() }.map { it.name to it.dtcs },
-    )
+    /** Manufacturer references never apply to an unknown or different make. User edits still win. */
+    fun dtcDescriptions(make: String? = null): DtcDescriptions {
+        val user = store.userPack()
+        val userGroupIds = user.dtcGroups.map { it.id }.toSet()
+        val scopedUser = user.dtcGroups.filter { it.appliesTo(make) }.map { "Imported: ${it.source ?: it.id}" to it.dtcs }
+        val scopedBundled = bundled.flatMap { pack ->
+            pack.dtcGroups.filter { it.id !in userGroupIds && it.appliesTo(make) }.map { (it.source ?: pack.name) to it.dtcs }
+        }
+        return DtcDescriptions(
+            user = user.dtcs,
+            packs = scopedUser + scopedBundled + bundled.filter { it.dtcs.isNotEmpty() }.map { it.name to it.dtcs },
+        )
+    }
 }

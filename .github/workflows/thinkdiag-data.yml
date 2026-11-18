@@ -69,12 +69,13 @@ jobs:
               -f "output[title]=Converted passive DTC data: $name" \
               -F "output[summary]=@$data"
           done
-      - name: Upload extracted text JSON and converted pack
+      - name: Upload recovered data (no vendor libraries or executables)
         uses: actions/upload-artifact@v7
         with:
-          name: toyota-extracted-data
+          name: toyota-recovered-data
           path: |
-            .local/thinkdiag/english/*.json
+            .local/thinkdiag/decoded/
+            .local/thinkdiag/english/
             .local/thinkdiag/converted/
           retention-days: 14
       - name: Publish inspection as a check

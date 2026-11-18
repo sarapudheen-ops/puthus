@@ -70,6 +70,12 @@ fun DtcScreen(
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Text(
+                state.data.dtcReferenceMake?.let { "$it reference text where available. Confirm the meaning for your ECU/model." }
+                    ?: "Generic reference text only. Manufacturer descriptions require a known make in the loaded vehicle profile or a vehicle explicitly linked to it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             DtcKind.entries.forEach { kind ->
                 SectionCard("${kind.label} (service %02X)".format(kind.service)) {
                     when (val readout = state.dtcs[kind] ?: Readout.NotRead) {

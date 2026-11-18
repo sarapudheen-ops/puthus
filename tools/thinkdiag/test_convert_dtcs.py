@@ -37,6 +37,35 @@ class ConvertDtcsTest(unittest.TestCase):
         pack, _ = convert({"1": " U0100\0Lost Communication\nWith ECM ", "2": "U010000\0U0100 $00"})
         self.assertEqual({"U0100": "Lost Communication With ECM"}, pack["dtcGroups"][0]["dtcs"])
 
+    def test_log_renderings_extra_fields_and_placeholder_categories_are_not_data(self):
+        pack, audit = convert({
+            "1": "B0000\0Normal", "2": "P3216\0X Manufacturer Control P32 Fuel and Air metering",
+            "3": "P0301\\^@Cylinder 1 Misfire Detected",  # Visible log rendering, not a NUL.
+            "4": "P0301\0Cylinder 1 Misfire Detected\0Unexpected third field",
+            "5": "P0301\0Reserved", "6": "P0301\0No description", "7": "P0301\0?",
+        })
+        self.assertEqual({}, pack["dtcGroups"][0]["dtcs"])
+        self.assertEqual(2, audit["statistics"]["skippedRecords"]["not_a_code_description_pair"])
+        self.assertEqual(5, audit["statistics"]["skippedRecords"]["placeholder_or_empty"])
+
+    def test_empty_conversion_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source.json").write_text(json.dumps({"1": "Not a DTC pair"}))
+            with self.assertRaisesRegex(ValueError, "No explicit DTC pairs"):
+                write_conversion(root / "source.json", root / "out", root / "report")
+
+    def test_record_accounting_includes_duplicates_conflicts_and_rejections(self):
+        _, audit = convert({
+            "1": "P1234\0Module A fault", "2": "P1234\0Module B fault",
+            "3": "P0301\0Cylinder 1 Misfire Detected", "4": "P0301\0Cylinder 1 Misfire Detected",
+            "5": "Not a pair", "6": "62\0Blink code",
+        })
+        stats = audit["statistics"]
+        self.assertEqual(stats["sourceRecords"], stats["acceptedRecords"] + stats["conflictingRecordsExcluded"] + sum(stats["skippedRecords"].values()))
+        self.assertEqual(2, stats["acceptedRecords"])
+        self.assertEqual(2, stats["conflictingRecordsExcluded"])
+
     def test_writes_reproducible_pack_and_audit_outside_app(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

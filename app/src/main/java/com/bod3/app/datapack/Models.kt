@@ -162,9 +162,35 @@ data class ModuleNameEntry(
     }
 }
 
+/** Manufacturer-scoped fault text. It never applies when the vehicle's make is unknown. */
+data class DtcGroup(
+    /** Stable import/replace key, not a vehicle command. */
+    val id: String,
+    val makes: List<String>,
+    val dtcs: Map<String, String>,
+    /** Human-readable origin, retained when this group is imported/exported. */
+    val source: String? = null,
+) {
+    fun appliesTo(make: String?): Boolean =
+        !make.isNullOrBlank() && makes.any { it.equals(make.trim(), ignoreCase = true) }
+
+    fun problems(): List<String> = buildList {
+        if (id.isBlank()) add("id: must not be empty")
+        if (makes.isEmpty() || makes.any { it.isBlank() }) add("makes: list at least one non-empty manufacturer")
+        if (makes.map { it.lowercase(java.util.Locale.ROOT) }.distinct().size != makes.size) add("makes: duplicate manufacturer")
+        if (dtcs.isEmpty()) add("dtcs: must contain at least one description")
+        if (source != null && source.isBlank()) add("source: must not be empty when provided")
+        dtcs.forEach { (code, text) ->
+            if (!DataPack.DTC_KEY.matches(code)) add("dtcs.$code: not a DTC like P0420 or P0420-13")
+            if (text.isBlank()) add("dtcs.$code: description must not be empty")
+        }
+    }
+}
+
 /**
  * A data pack: custom PIDs, vehicle ECU lists, module names and DTC descriptions. Bundled packs ship in the app's
- * assets; the user's own additions live in the user pack.
+ * assets; the user's own additions live in the user pack. Manufacturer-specific texts belong in [dtcGroups],
+ * never [dtcs], so a Toyota code cannot change a VW (or unknown vehicle) description.
  */
 data class DataPack(
     val id: String,
@@ -178,7 +204,11 @@ data class DataPack(
     val dtcs: Map<String, String> = emptyMap(),
     /** Generic names for diagnostic addresses, per make. */
     val moduleNames: List<ModuleNameEntry> = emptyList(),
+    /** v2: passive DTC reference groups, selected only for an explicitly known make. */
+    val dtcGroups: List<DtcGroup> = emptyList(),
 ) {
+    val dtcDescriptionCount: Int get() = dtcs.size + dtcGroups.sumOf { it.dtcs.size }
+
     fun problems(): List<String> = buildList {
         if (id.isBlank()) add("id: must not be empty")
         if (name.isBlank()) add("name: must not be empty")
@@ -187,6 +217,8 @@ data class DataPack(
         vehicles.forEachIndexed { i, v -> v.problems().forEach { add("vehicles[$i] (${v.title}).$it") } }
         moduleNames.forEachIndexed { i, m -> m.problems().forEach { add("moduleNames[$i] (${m.name}).$it") } }
         dtcs.keys.filterNot { DTC_KEY.matches(it) }.forEach { add("dtcs: \"$it\" is not a DTC like P0420 or P0420-13") }
+        dtcGroups.forEachIndexed { i, group -> group.problems().forEach { add("dtcGroups[$i].$it") } }
+        dtcGroups.groupBy { it.id }.filter { it.value.size > 1 }.keys.forEach { add("dtcGroups: id \"$it\" is used twice") }
     }
 
     companion object {

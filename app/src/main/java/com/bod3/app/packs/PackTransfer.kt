@@ -43,7 +43,7 @@ object PackFiles {
         return when (val format = root["format"]) {
             null -> when {
                 root["module"] != null && root["method"] != null -> Detection.Known(PackKind.CODING)
-                listOf("pids", "vehicles", "dtcs", "moduleNames").any { root[it] != null } -> Detection.Known(PackKind.DATA)
+                listOf("pids", "vehicles", "dtcs", "dtcGroups", "moduleNames").any { root[it] != null } -> Detection.Known(PackKind.DATA)
                 else -> Detection.Unreadable(
                     "The file has no \"format\" field, so its type is unknown. Add \"format\": one of ${formats()}.",
                 )
@@ -148,11 +148,13 @@ class PackTransfer(
             }
             if (pack.moduleNames.isNotEmpty()) add("${pack.moduleNames.size} module name(s)")
             if (pack.dtcs.isNotEmpty()) add("${pack.dtcs.size} DTC description(s)")
+            pack.dtcGroups.forEach { group -> add("${group.dtcs.size} DTC description(s) for ${group.makes.joinToString(" / ")} only") }
         }
         if (summary.isEmpty()) return ImportPreview(PackKind.DATA, pack.name, errors = listOf("The pack contains no PIDs, vehicles, module names or DTC descriptions."))
         val warnings = buildList {
             if (pack.id == DataPack.USER_PACK_ID) add("This is an export of someone's own additions; entries with the same id or make/model replace yours.")
             if (pack.pids.any { it.header == null }) add("PIDs without a header are sent to all ECUs (broadcast).")
+            if (pack.dtcGroups.isNotEmpty()) add("Manufacturer reference text applies only to a known make in the loaded profile or a vehicle explicitly linked to it, not the global ECU-list choice. Confirm meanings for your ECU/model.")
         }
         return ImportPreview(PackKind.DATA, pack.name + " (v${pack.version})", summary, warnings, apply = { importData(pack) })
     }
@@ -169,13 +171,14 @@ class PackTransfer(
             vehicles = user.vehicles.filterNot { it.key in incomingVehicles } + pack.vehicles,
             moduleNames = user.moduleNames.filterNot { moduleKey(it) in incomingModules } + pack.moduleNames,
             dtcs = user.dtcs + pack.dtcs,
+            dtcGroups = user.dtcGroups.filterNot { old -> pack.dtcGroups.any { it.id == old.id } } + pack.dtcGroups,
         )
         dataStore.saveUserPack(merged)
         val parts = listOfNotNull(
             pack.pids.size.takeIf { it > 0 }?.let { "$it PID(s)" },
             pack.vehicles.size.takeIf { it > 0 }?.let { "$it vehicle ECU list(s)" },
             pack.moduleNames.size.takeIf { it > 0 }?.let { "$it module name(s)" },
-            pack.dtcs.size.takeIf { it > 0 }?.let { "$it DTC description(s)" },
+            pack.dtcDescriptionCount.takeIf { it > 0 }?.let { "$it DTC description(s)" },
         )
         return "Imported ${parts.joinToString(", ")} from \"${pack.name}\""
     }
@@ -234,7 +237,7 @@ class PackTransfer(
             DataExport.VEHICLES -> DataPack("my-ecus", "My vehicles and ECU lists", vehicles = user.vehicles, moduleNames = user.moduleNames)
                 .takeIf { it.vehicles.isNotEmpty() || it.moduleNames.isNotEmpty() }
             DataExport.ALL -> user.copy(id = "my-data", name = "My bod3 data")
-                .takeIf { it.pids.isNotEmpty() || it.vehicles.isNotEmpty() || it.dtcs.isNotEmpty() || it.moduleNames.isNotEmpty() }
+                .takeIf { it.pids.isNotEmpty() || it.vehicles.isNotEmpty() || it.dtcDescriptionCount > 0 || it.moduleNames.isNotEmpty() }
         }
         return pack?.let(DataPackCodec::encode)
     }
@@ -274,7 +277,7 @@ class PackTransfer(
     fun userCounts(): UserCounts {
         val user = dataStore.userPack()
         return UserCounts(
-            pids = user.pids.size, vehicles = user.vehicles.size, moduleNames = user.moduleNames.size, dtcs = user.dtcs.size,
+            pids = user.pids.size, vehicles = user.vehicles.size, moduleNames = user.moduleNames.size, dtcs = user.dtcDescriptionCount,
             actuatorRecipes = actuators.userPack().recipes.size, codingRecipes = coding.userPack().recipes.size,
         )
     }
@@ -283,7 +286,7 @@ class PackTransfer(
         p.pids.size.takeIf { it > 0 }?.let { "$it PIDs" },
         p.vehicles.size.takeIf { it > 0 }?.let { "$it vehicles" },
         p.moduleNames.size.takeIf { it > 0 }?.let { "$it module names" },
-        p.dtcs.size.takeIf { it > 0 }?.let { "$it DTC texts" },
+        p.dtcDescriptionCount.takeIf { it > 0 }?.let { "$it DTC texts" },
     ).joinToString(" · ").ifEmpty { "empty" }
 }
 

@@ -57,6 +57,8 @@ data class DataState(
     val pidError: String? = null,
     val pidTest: String? = null,
     val descriptions: DtcDescriptions = DtcDescriptions(emptyMap(), emptyList()),
+    /** Known make of the loaded/linked profile; null means generic references only. */
+    val dtcReferenceMake: String? = null,
     /** Problems found in bundled or saved data packs. */
     val packErrors: List<String> = emptyList(),
 )

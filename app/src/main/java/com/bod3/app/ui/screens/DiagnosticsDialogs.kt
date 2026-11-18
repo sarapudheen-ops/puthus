@@ -118,7 +118,7 @@ fun DtcRow(code: String, descriptions: DtcDescriptions, detail: String? = null, 
             val extra = listOfNotNull(
                 descriptions.failureType(code)?.let { "Failure type: $it" },
                 detail,
-                if (description.isUserDefined) "Your description" else null,
+                if (description.isUserDefined) "Your description" else "Source: ${description.source}",
             )
             if (extra.isNotEmpty()) {
                 Text(extra.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
