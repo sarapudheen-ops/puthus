@@ -31,12 +31,14 @@ FOCUSED_READERS = {
     "libTOYOTA_FDATA.so": ["AnalyzeDsCmdDataP3", "GetDSCmdDataInfoP3", "GetDSCmdDataInfoP4",
         "GetExistDataIdList", "GetDsValue", "GetActCmdDataInfoP3", "GetActCmdDataInfoP4",
         "SetCmdToSndFrameFunc_1", "SetCmdToSndFrameFunc_2", "SetCmdToSndFrameFunc_3",
-        "GetShowDsItem", "GetShowDsItem_P4", "GetShowDsItem_P5", "GetCmdDataIndex"],
-    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex"],
+        "GetShowDsItem", "GetShowDsItem_P4", "GetShowDsItem_P5", "GetCmdDataIndex", "GetSystemEnterIndex",
+        "GetEcuDataP4", "CalDataFromSignalLSB", "GetDIDReceiveData"],
+    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex", "InitSetEnterFrame", "SendCmdAndGetReceive", "InitKWPISOMode", "InitCanBusMode"],
     "libTOYOTA_CALC.so": ["ResultCalcFromCalcID", "Calc_C"],
     "libDIAG.so": ["InitMenuTree", "MenuTreeDispose_Ex", "GetMenuSubItemTextID_Ex",
         "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID",
-        "GetMenuID_Ex", "GetCurrentMenuSaveData", "MenuPro_Ex"],
+        "GetMenuID_Ex", "GetCurrentMenuSaveData", "MenuPro_Ex", "GetVehicleInfoManual", "DoDownTask", "GTokenMoveToSToken", "ManualSelectSystem", "DiagnoseSystem"],
+    "libTOYOTA_INFO.so": ["InitVehicleInfo"],
     "libTOYOTA_SCAN.so": ["GetSysListNo", "TransferVehicleInfo", "InitTopSystemList"],
 }
 SEARCHES = {
@@ -401,6 +403,21 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     findings["structuralCoverage"] = {"parsedDecodedFiles": len(section_files) + len(function_tables) + len(parsed_other)
         + sum(1 for key, value in findings["families"].items() if key.startswith("SYSLIST_") and "unparsed" not in value),
         "uninterpretedDecodedFiles": len(findings["notStructurallyInterpreted"])}
+    # Complete small, SHA-pinned conversion inputs for reviewing the native readers offline.
+    # Keep raw binary and formula text in the ignored evidence/artifact, never in an APK or Git.
+    conversion_inputs = []
+    for name, source in sorted(paths.items()):
+        if name == "SYSTEMENTER.BIN" or re.fullmatch(r"EU/Toyota_bin_(?:11|12)\.BIN", name):
+            raw = source.read_bytes()
+            conversion_inputs.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                                      "base64": base64.b64encode(raw).decode("ascii")})
+        if name == "FUNCDATA_EU.BIN":
+            raw = source.read_bytes()[:42225]
+            conversion_inputs.append({"file": "FUNCDATA_EU.BIN.prefix", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                                      "base64": base64.b64encode(raw).decode("ascii")})
+    emit_report("conversion-inputs", "SHA-pinned conversion input excerpts (not executable)", json_text(conversion_inputs))
+    emit_report("conversion-expressions", "Complete recovered EXPRESS text for bounded translation (not execution)",
+                json_text(libraries.get("EXPRESS.GAG.json", {})))
     (output / "text-keyword-evidence.json").write_text(json_text(hits))
     (output / "sweep-summary.json").write_text(json_text(findings))
     emit_report("summary", "Toyota full diagnostic-data sweep", json_text(findings))
