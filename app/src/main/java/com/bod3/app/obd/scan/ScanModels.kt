@@ -32,6 +32,7 @@ enum class DetectionMethod(val label: String) {
     OBD_REQUEST("OBD request (01 00)"),
     TESTER_PRESENT("TesterPresent (3E 00)"),
     VIN_READ("VIN read (22 F190)"),
+    MANUAL_LIST("Manual / data-pack ECU list"),
 }
 
 data class DiscoveredModule(
@@ -58,6 +59,13 @@ data class ScanOptions(
     val dids: List<Int> = KnownDids.default.map { it.id },
     /** Abort when this many probes in a row fail with an adapter error or timeout. */
     val maxConsecutiveFailures: Int = 8,
+    /**
+     * Addresses to probe directly with their exact reply ID (the vehicle's manual ECU list and the
+     * selected data-pack vehicle's ECUs), after the range scan of their bus.
+     */
+    val listedModules: List<ModuleAddress> = emptyList(),
+    /** Probe the OBD/UDS address ranges. Off = quick scan of [listedModules] only. */
+    val rangeScan: Boolean = true,
 )
 
 enum class ScanPhase(val label: String) {
@@ -65,6 +73,7 @@ enum class ScanPhase(val label: String) {
     OBD_BROADCAST("OBD broadcast"),
     OBD_ADDRESSES("OBD addresses"),
     UDS_ADDRESSES("UDS addresses"),
+    LISTED_ADDRESSES("Listed ECUs"),
     READING_MODULES("Reading modules"),
     DONE("Done"),
 }
@@ -90,6 +99,8 @@ data class ModuleReport(
     val obdEcuName: String? = null,
     /** OBD service 09 PID 04, for OBD modules. */
     val calibrationId: String? = null,
+    /** Where [name] came from when it was resolved by [com.bod3.app.profile.ModuleNamer]; not stored. */
+    val nameSource: com.bod3.app.profile.NameSource? = null,
 ) {
     val address: ModuleAddress get() = module.address
 

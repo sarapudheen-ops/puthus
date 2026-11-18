@@ -70,6 +70,7 @@ class DashboardActions(
     val onClearLog: () -> Unit,
     val attemptsText: () -> String,
     val writeReport: suspend () -> File,
+    val onOpenGarage: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -160,6 +161,7 @@ private fun DiagnosticButtons(state: UiState, connected: Boolean, busy: Boolean,
             Text(state.data.selectedVehicle?.let { "ECUs · ${it.vehicle.model}" } ?: "Vehicle & ECUs")
         }
         OutlinedButton(onClick = actions.onOpenCustomPids) { Text("Custom PIDs") }
+        OutlinedButton(onClick = actions.onOpenGarage, enabled = !state.scan.running) { Text("Saved vehicles") }
         if (state.settings.expertMode) {
             OutlinedButton(onClick = actions.onOpenTerminal, enabled = connected && !state.scan.running) { Text("Expert terminal") }
         }

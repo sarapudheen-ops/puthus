@@ -62,6 +62,7 @@ fun DevicePickerScreen(
     onDismissError: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenVehicles: () -> Unit = {},
+    onOpenGarage: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -79,6 +80,7 @@ fun DevicePickerScreen(
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh paired devices")
                     }
+                    TextButton(onClick = onOpenGarage) { Text("Saved") }
                     TextButton(onClick = onOpenVehicles) { Text("Vehicles") }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Connection settings")

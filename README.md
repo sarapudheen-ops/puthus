@@ -149,6 +149,28 @@ that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCS
   serial, system name, coding…, stopping after one timeout if the module is absent), fault codes (19 02),
   extended data (19 06) and snapshot (19 04) for a selected code, and a confirmed clear (14).
 
+## Features (M3): module scan and vehicle profiles
+
+- **Saved vehicles** (button on the adapter list and the dashboard): every VIN profile with its last scan.
+  Open a profile to browse its modules, identification, fault codes and raw log without the car; delete it
+  with confirmation.
+- **Profile export / import:** one JSON file per vehicle (`bod3-vehicle-profile`, format 1) with the
+  profile header, every module (identifiers, DTCs, coding), the raw log, the manual ECU list and module
+  names, shared through the share sheet. Import validates the whole file first and lists every problem
+  with its JSON path (nothing is changed on error); an existing VIN is only replaced after confirmation.
+- **Manual ECU list per vehicle** (*Modules → ECUs*): add, edit and remove ECUs (name, address code,
+  request/response ID, UDS/OBD, notes) or copy the data-pack vehicle's list. Every scan probes listed ECUs
+  directly with their exact reply ID (`3E 00`, `22 F190`, `01 00`), so modules outside `700–7FF` or with
+  unusual reply IDs are found; a 29-bit listed ECU adds the 29-bit pass on its own. *Quick scan* probes only
+  the listed ECUs.
+- **Module naming**, in priority order: your name for the module on this vehicle (*Module → Rename*), the
+  manual ECU list, the data-pack vehicle chosen for this VIN (or the globally selected one), the module's own
+  name (`F197`), data-pack address names for the vehicle's make (`moduleNames`, e.g. the bundled VW-group
+  addresses for VW/Audi/Skoda/SEAT/Cupra), the OBD ECU name (`09 0A`) and standard OBD addresses. The module
+  list shows where each name came from.
+- Data packs gain an optional `moduleNames` list (`requestId`, `responseId`, `address`, `name`, `makes`),
+  validated like the rest of the pack.
+
 ## Architecture
 
 ```

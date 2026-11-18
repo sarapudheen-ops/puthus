@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.bod3.app.obd.scan.ModuleReport
 import com.bod3.app.ui.UiState
 import java.text.DateFormat
+import kotlinx.coroutines.launch
 import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,7 +44,11 @@ fun ModuleListScreen(
     onRescan: () -> Unit,
     rawLogText: () -> String,
     onClearLog: () -> Unit,
+    onOpenEcus: () -> Unit = {},
+    writeExport: (suspend () -> java.io.File)? = null,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val profile = state.savedProfile
     val modules = state.modules
     val showingUnsaved = !state.scan.saved && state.scan.reports.isNotEmpty()
@@ -60,7 +65,21 @@ fun ModuleListScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
                 actions = {
-                    TextButton(onClick = onRescan, enabled = state.canScan) { Text("Rescan") }
+                    if (profile != null) TextButton(onClick = onOpenEcus) { Text("ECUs") }
+                    if (profile != null && writeExport != null) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                try {
+                                    com.bod3.app.android.ReportSharer.share(context, writeExport(), "application/json", "bod3 vehicle profile ${profile.vin}", "Share vehicle profile")
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    android.widget.Toast.makeText(context, "Export failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }) { Text("Export") }
+                    }
+                    if (!state.offline) TextButton(onClick = onRescan, enabled = state.canScan) { Text("Rescan") }
                 },
             )
         },
@@ -90,13 +109,18 @@ fun ModuleListScreen(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    if (profile != null) {
+                        val extras = state.profileExtras
+                        InfoRow("Manual ECUs", extras.manualEcus.size.toString())
+                        if (extras.moduleNames.isNotEmpty()) InfoRow("Your module names", extras.moduleNames.size.toString())
+                    }
                     InfoRow("Modules", modules.size.toString())
                     InfoRow("Fault codes", modules.sumOf { it.dtcs.faultCount ?: 0 }.toString())
                     RawLogActions(rawLogText, "raw log", enabled = state.rawLog.isNotEmpty(), onClear = onClearLog)
                 }
             }
             if (modules.isEmpty()) {
-                item { Text("No modules yet. Run a module scan from the vehicle screen.") }
+                item { Text(if (state.offline) "No modules saved for this vehicle." else "No modules yet. Run a module scan from the vehicle screen.") }
             }
             items(modules, key = { it.address.key }) { module ->
                 ModuleCard(module, onClick = { onOpenModule(module.address.key) })
@@ -116,6 +140,9 @@ private fun ModuleCard(module: ModuleReport, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(module.displayName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    module.nameSource?.let { source ->
+                        Text("Name: ${source.label}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Text(
                         "${module.address.display} · ${module.address.bus.label}",
                         fontFamily = FontFamily.Monospace,

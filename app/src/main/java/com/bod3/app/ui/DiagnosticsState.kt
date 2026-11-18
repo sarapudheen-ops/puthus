@@ -70,3 +70,15 @@ data class LiveConfig(
 ) {
     fun displayOf(key: String): LiveDisplay = display[key] ?: LiveDisplay.VALUE
 }
+
+/** Saved vehicle profiles (the garage) and the state of a profile import. */
+data class GarageState(
+    val profiles: List<com.bod3.app.profile.VehicleProfile> = emptyList(),
+    val loading: Boolean = false,
+    /** One-line result of the last action (export, import, delete). */
+    val message: String? = null,
+    /** Problems found in an import file, each with its JSON path. */
+    val importErrors: List<String> = emptyList(),
+    /** A valid import whose VIN already has a profile, waiting for the user to confirm overwriting. */
+    val pendingOverwrite: com.bod3.app.profile.ProfileBundle? = null,
+)

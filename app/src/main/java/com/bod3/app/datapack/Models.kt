@@ -136,7 +136,34 @@ data class VehicleDefinition(
 }
 
 /**
- * A data pack: custom PIDs, vehicle ECU lists and DTC descriptions. Bundled packs ship in the app's
+ * A name for a diagnostic address that applies to every vehicle of the listed [makes] (empty = any
+ * make), e.g. VW group address `09 Central electronics` on request ID `70E`. Used to name modules
+ * found by a scan when the selected vehicle's ECU list does not cover them.
+ */
+data class ModuleNameEntry(
+    val requestId: String,
+    val name: String,
+    /** Expected response ID; null matches any. */
+    val responseId: String? = null,
+    /** Manufacturer address/short code shown before the name, e.g. `09`. */
+    val address: String? = null,
+    val makes: List<String> = emptyList(),
+) {
+    val display: String get() = listOfNotNull(address, name).joinToString(" · ")
+
+    fun appliesTo(make: String?): Boolean =
+        makes.isEmpty() || (make != null && makes.any { it.equals(make.trim(), ignoreCase = true) })
+
+    fun problems(): List<String> = buildList {
+        if (name.isBlank()) add("name: must not be empty")
+        if (!(requestId.isHex() && (requestId.length == 3 || requestId.length == 8))) add("requestId: must be a 3- or 8-digit hex CAN ID")
+        responseId?.let { if (!(it.isHex() && it.length == requestId.length)) add("responseId: must be a hex CAN ID of the same length as requestId") }
+        if (makes.any { it.isBlank() }) add("makes: entries must not be empty")
+    }
+}
+
+/**
+ * A data pack: custom PIDs, vehicle ECU lists, module names and DTC descriptions. Bundled packs ship in the app's
  * assets; the user's own additions live in the user pack.
  */
 data class DataPack(
@@ -149,6 +176,8 @@ data class DataPack(
     val vehicles: List<VehicleDefinition> = emptyList(),
     /** Code (`P0420`, or UDS `P0420-13`) to description. */
     val dtcs: Map<String, String> = emptyMap(),
+    /** Generic names for diagnostic addresses, per make. */
+    val moduleNames: List<ModuleNameEntry> = emptyList(),
 ) {
     fun problems(): List<String> = buildList {
         if (id.isBlank()) add("id: must not be empty")
@@ -156,6 +185,7 @@ data class DataPack(
         pids.forEachIndexed { i, pid -> pid.problems().forEach { add("pids[$i] (${pid.name.ifBlank { pid.id }}).$it") } }
         pids.groupBy { it.id }.filter { it.value.size > 1 }.keys.forEach { add("pids: id \"$it\" is used twice") }
         vehicles.forEachIndexed { i, v -> v.problems().forEach { add("vehicles[$i] (${v.title}).$it") } }
+        moduleNames.forEachIndexed { i, m -> m.problems().forEach { add("moduleNames[$i] (${m.name}).$it") } }
         dtcs.keys.filterNot { DTC_KEY.matches(it) }.forEach { add("dtcs: \"$it\" is not a DTC like P0420 or P0420-13") }
     }
 

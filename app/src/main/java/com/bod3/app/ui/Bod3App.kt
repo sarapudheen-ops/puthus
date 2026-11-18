@@ -10,6 +10,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bod3.app.ui.screens.ConnectionSettingsScreen
 import com.bod3.app.ui.screens.CustomPidsScreen
 import com.bod3.app.ui.screens.EcuDetailScreen
+import com.bod3.app.ui.screens.GarageScreen
+import com.bod3.app.ui.screens.ProfileEcusScreen
 import com.bod3.app.ui.screens.LiveActions
 import com.bod3.app.ui.screens.LiveSelectScreen
 import com.bod3.app.ui.screens.PidEditorScreen
@@ -46,6 +48,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             onDismissError = viewModel::dismissError,
             onOpenSettings = viewModel::openSettings,
             onOpenVehicles = viewModel::openVehicles,
+            onOpenGarage = viewModel::openGarage,
         )
 
         Screen.DASHBOARD -> {
@@ -69,6 +72,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onClearLog = viewModel::clearLog,
                     attemptsText = viewModel::attemptsText,
                     writeReport = viewModel::writeReport,
+                    onOpenGarage = viewModel::openGarage,
                 ),
             )
         }
@@ -235,6 +239,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onCancel = viewModel::cancelScan,
                 onOtherBusChange = viewModel::setScanOtherBus,
                 onOpenModules = viewModel::openModules,
+                onListedChange = viewModel::setScanListed,
+                onQuickChange = viewModel::setQuickScan,
                 rawLogText = { viewModel.rawLogText() },
                 onClearLog = viewModel::clearRawLog,
             )
@@ -249,6 +255,35 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onRescan = viewModel::openScan,
                 rawLogText = { viewModel.rawLogText() },
                 onClearLog = viewModel::clearRawLog,
+                onOpenEcus = viewModel::openProfileEcus,
+                writeExport = state.savedProfile?.vin?.let { vin -> suspend { viewModel.writeProfileExport(vin) } },
+            )
+        }
+
+        Screen.GARAGE -> {
+            BackHandler(onBack = viewModel::closeGarage)
+            GarageScreen(
+                state = state,
+                onBack = viewModel::closeGarage,
+                onOpen = viewModel::openSavedProfile,
+                onDelete = viewModel::deleteSavedProfile,
+                onImportText = viewModel::importProfile,
+                writeExport = { vin, includeLog -> viewModel.writeProfileExport(vin, includeLog) },
+                onConfirmOverwrite = viewModel::confirmImportOverwrite,
+                onCancelOverwrite = viewModel::cancelImportOverwrite,
+                onDismissMessage = viewModel::dismissGarageMessage,
+            )
+        }
+
+        Screen.PROFILE_ECUS -> {
+            BackHandler(onBack = viewModel::closeProfileEcus)
+            ProfileEcusScreen(
+                state = state,
+                onBack = viewModel::closeProfileEcus,
+                onSave = viewModel::saveManualEcu,
+                onDelete = viewModel::deleteManualEcu,
+                onCopyFromPack = viewModel::copyPackEcusToProfile,
+                onSelectVehicle = viewModel::setProfileVehicle,
             )
         }
 
@@ -265,6 +300,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     moduleLogText = { viewModel.rawLogText(module) },
                     fullLogText = { viewModel.rawLogText() },
                     onClearLog = viewModel::clearRawLog,
+                    onRename = if (state.savedProfile != null) ({ name: String -> viewModel.renameModule(module.address.requestHeader, name) }) else null,
                 )
             }
         }

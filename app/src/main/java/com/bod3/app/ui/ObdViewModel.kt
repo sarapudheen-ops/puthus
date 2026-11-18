@@ -65,7 +65,12 @@ import com.bod3.app.obd.session.Session
 import com.bod3.app.obd.terminal.RawTerminal
 import com.bod3.app.obd.terminal.TerminalLine
 import com.bod3.app.obd.transport.BluetoothSppTransport
+import com.bod3.app.profile.ModuleNamer
+import com.bod3.app.profile.ProfileExtras
+import com.bod3.app.profile.ProfileExtrasStore
+import com.bod3.app.profile.ProfileTransferCodec
 import com.bod3.app.profile.RawLogFormatter
+import com.bod3.app.profile.moduleAddress
 import com.bod3.app.profile.VehicleProfile
 import com.bod3.app.profile.VehicleProfileService
 import com.bod3.app.profile.VinRules
@@ -98,7 +103,7 @@ import kotlinx.coroutines.withContext
 
 enum class Screen {
     DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
-    VEHICLES, VEHICLE_EDIT, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT,
+    VEHICLES, VEHICLE_EDIT, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
 }
 
 sealed interface ConnectionState {
@@ -142,6 +147,10 @@ sealed interface Readout<out T> {
 data class ScanUiState(
     val running: Boolean = false,
     val includeOtherBus: Boolean = true,
+    /** Also probe the vehicle's manual ECU list and the data-pack vehicle's ECUs directly. */
+    val includeListed: Boolean = true,
+    /** Probe only the listed ECUs (no address-range sweep). */
+    val quickScan: Boolean = false,
     val progress: ScanProgress? = null,
     val found: List<DiscoveredModule> = emptyList(),
     val reports: List<ModuleReport> = emptyList(),
@@ -207,6 +216,14 @@ data class UiState(
     val ecuDetail: EcuDetailState? = null,
     /** Where the vehicle screen returns to (device list or dashboard). */
     val vehiclesReturn: Screen = Screen.DASHBOARD,
+    val garage: GarageState = GarageState(),
+    val garageReturn: Screen = Screen.DEVICES,
+    /** Manual ECUs, module names and data-pack vehicle of the loaded profile. */
+    val profileExtras: com.bod3.app.profile.ProfileExtras = com.bod3.app.profile.ProfileExtras(),
+    /** Names modules from user names, manual ECUs and data packs; null until data is loaded. */
+    val moduleNamer: com.bod3.app.profile.ModuleNamer? = null,
+    /** ECUs probed directly by a scan: manual list plus data-pack vehicle ECUs. */
+    val listedModules: List<com.bod3.app.obd.scan.ModuleAddress> = emptyList(),
 ) {
     val isConnected: Boolean get() = connection is ConnectionState.Connected && protocol is Readout.Value
 
@@ -214,7 +231,11 @@ data class UiState(
 
     /** Modules to list: an unsaved scan result if there is one, otherwise the saved profile's modules. */
     val modules: List<ModuleReport>
-        get() = scan.reports.takeIf { !scan.saved && it.isNotEmpty() } ?: savedProfile?.modules.orEmpty()
+        get() = (scan.reports.takeIf { !scan.saved && it.isNotEmpty() } ?: savedProfile?.modules.orEmpty())
+            .let { reports -> moduleNamer?.apply(reports) ?: reports }
+
+    /** No adapter link: saved profiles are being browsed offline. */
+    val offline: Boolean get() = connection is ConnectionState.Idle || connection is ConnectionState.Failed
 
     val selectedModule: ModuleReport? get() = modules.firstOrNull { it.address.key == selectedModuleKey }
 
@@ -266,10 +287,13 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private val liveRecorder = LiveRecorder()
     private var lastRecording: com.bod3.app.live.Recording? = null
 
+    private val extrasStore = ProfileExtrasStore(SharedPrefsKeyValueStore(application))
+
     private val profiles: VehicleProfileService by lazy {
         VehicleProfileService(
             repository = RoomProfileRepository(Bod3Database.get(application).profileDao()),
             describer = VpicClient(currentYear = { Calendar.getInstance().get(Calendar.YEAR) }),
+            extras = extrasStore,
         )
     }
 
@@ -1008,6 +1032,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                         rawLog = if (it.scan.reports.isEmpty()) log else it.rawLog,
                     )
                 }
+                refreshNaming()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1028,12 +1053,24 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { if (it.scan.running) it else it.copy(scan = it.scan.copy(includeOtherBus = include)) }
     }
 
+    fun setScanListed(include: Boolean) {
+        _state.update { if (it.scan.running) it else it.copy(scan = it.scan.copy(includeListed = include)) }
+    }
+
+    fun setQuickScan(quick: Boolean) {
+        _state.update { if (it.scan.running) it else it.copy(scan = it.scan.copy(quickScan = quick)) }
+    }
+
     fun startScan() {
         val currentSession = session ?: return
         val currentRecorder = recorder ?: return
         if (scanJob?.isActive == true || !_state.value.canScan) return
         liveJob?.cancel()
         val includeOtherBus = _state.value.scan.includeOtherBus
+        val includeListed = _state.value.scan.includeListed
+        val quickScan = _state.value.scan.quickScan
+        val listed = if (includeListed || quickScan) _state.value.listedModules else emptyList()
+        val options = ScanOptions(includeOtherBus = includeOtherBus, listedModules = listed, rangeScan = !(quickScan && listed.isNotEmpty()))
         val protocolName = currentSession.protocol.displayName
 
         scanJob = viewModelScope.launch {
@@ -1041,10 +1078,16 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     screen = Screen.SCAN,
                     liveRunning = false,
-                    scan = ScanUiState(running = true, includeOtherBus = includeOtherBus, startedAtMs = System.currentTimeMillis()),
+                    scan = ScanUiState(
+                        running = true, includeOtherBus = includeOtherBus, includeListed = includeListed, quickScan = quickScan,
+                        startedAtMs = System.currentTimeMillis(),
+                    ),
                 )
             }
-            appendLog("Module scan started")
+            appendLog(
+                "Module scan started" + (if (!options.rangeScan) " (quick: listed ECUs only)" else "") +
+                    (if (listed.isNotEmpty()) ", ${listed.size} listed ECUs" else ""),
+            )
             currentRecorder.startRecording()
             val listener = object : ScanListener {
                 override fun onProgress(progress: ScanProgress) {
@@ -1061,7 +1104,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             try {
-                val reports = ScanCoordinator(currentSession, currentRecorder).run(ScanOptions(includeOtherBus = includeOtherBus), listener)
+                val reports = ScanCoordinator(currentSession, currentRecorder).run(options, listener)
                 val log = currentRecorder.stopRecording()
                 appendLog("Module scan finished: ${reports.size} modules, ${log.size} requests")
                 saveScanResult(reports, log, protocolName)
@@ -1126,6 +1169,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                     scan = it.scan.copy(running = false, reports = reports, finishedAtMs = finished, saved = true),
                 )
             }
+            refreshNaming()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1157,6 +1201,28 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 ),
             )
         }
+        refreshNaming()
+    }
+
+    /**
+     * Rebuilds the module namer and the scan's listed ECUs from the loaded profile's extras, its
+     * data-pack vehicle (or the globally selected one) and the packs' address names.
+     */
+    private fun refreshNaming() {
+        val current = _state.value
+        val vin = current.savedProfile?.vin
+        val extras = vin?.let { runCatching { extrasStore.get(it) }.getOrNull() } ?: ProfileExtras()
+        val vehicle = (extras.vehicleKey?.let { key -> current.data.vehicles.firstOrNull { it.vehicle.key == key } } ?: current.data.selectedVehicle)?.vehicle
+        val namer = ModuleNamer(
+            userNames = extras.moduleNames,
+            manualEcus = extras.manualEcus,
+            vehicleEcus = vehicle?.ecus.orEmpty(),
+            vehicleTitle = vehicle?.title,
+            packNames = runCatching { repository.moduleNames() }.getOrElse { emptyList() },
+            make = current.savedProfile?.description?.make,
+        )
+        val listed = (extras.manualEcus + vehicle?.ecus.orEmpty()).map { it.moduleAddress() }.distinctBy { it.requestHeader }
+        _state.update { it.copy(profileExtras = extras, moduleNamer = namer, listedModules = listed) }
     }
 
     fun openVehicles() {
@@ -1402,7 +1468,202 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun backToDashboard() {
-        _state.update { it.copy(screen = Screen.DASHBOARD) }
+        _state.update { it.copy(screen = if (it.offline) Screen.GARAGE else Screen.DASHBOARD) }
+    }
+
+    // ---- Garage: saved vehicle profiles, export / import, manual ECUs, module names -------------------
+
+    fun openGarage() {
+        pauseLiveData()
+        _state.update {
+            val back = if (it.screen == Screen.DEVICES || it.screen == Screen.DASHBOARD) it.screen else it.garageReturn
+            it.copy(screen = Screen.GARAGE, garageReturn = back, garage = it.garage.copy(message = null, importErrors = emptyList()))
+        }
+        loadGarage()
+    }
+
+    fun closeGarage() {
+        _state.update { it.copy(screen = if (it.offline) Screen.DEVICES else Screen.DASHBOARD) }
+    }
+
+    private fun loadGarage() {
+        _state.update { it.copy(garage = it.garage.copy(loading = true)) }
+        viewModelScope.launch {
+            val list = try {
+                profiles.allProfiles()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                appendLog("Saved vehicles: ${e.message}")
+                emptyList()
+            }
+            _state.update { it.copy(garage = it.garage.copy(profiles = list, loading = false)) }
+        }
+    }
+
+    /** Opens a saved profile's modules and raw log. While connected only the connected vehicle can be opened. */
+    fun openSavedProfile(vin: String) {
+        val current = _state.value
+        if (!current.offline && current.savedProfile?.vin != vin) {
+            _state.update { it.copy(garage = it.garage.copy(message = "Disconnect first to browse another vehicle; the connected car's profile stays loaded while connected.")) }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val profile = profiles.load(vin) ?: run {
+                    _state.update { it.copy(garage = it.garage.copy(message = "Profile $vin no longer exists")) }
+                    loadGarage()
+                    return@launch
+                }
+                val log = profiles.rawLog(vin)
+                _state.update {
+                    it.copy(
+                        profile = ProfileState.Loaded(profile, isNew = false),
+                        rawLog = log,
+                        scan = if (it.offline) ScanUiState(includeOtherBus = it.scan.includeOtherBus) else it.scan,
+                        screen = Screen.MODULES,
+                    )
+                }
+                refreshNaming()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(garage = it.garage.copy(message = "Could not open $vin: ${e.message}")) }
+            }
+        }
+    }
+
+    /** Writes [vin]'s profile as JSON to the cache for the share sheet. */
+    suspend fun writeProfileExport(vin: String, includeRawLog: Boolean = true): File {
+        val bundle = profiles.export(vin, includeRawLog) ?: throw IllegalStateException("No saved profile for $vin")
+        val now = System.currentTimeMillis()
+        val app = getApplication<Application>()
+        val json = ProfileTransferCodec.encode(bundle, now)
+        appendLog("Exported profile $vin (${bundle.modules.size} modules, ${bundle.rawLog.size} log entries)")
+        return withContext(Dispatchers.IO) { ReportSharer.write(app, ProfileTransferCodec.fileName(vin, now), json) }
+    }
+
+    /** Validates and imports a profile file's text. Problems are listed; an existing VIN asks first. */
+    fun importProfile(text: String) {
+        val result = ProfileTransferCodec.decode(text)
+        val bundle = result.bundle
+        if (bundle == null) {
+            _state.update { it.copy(garage = it.garage.copy(importErrors = result.errors.ifEmpty { listOf("Unknown problem") }, message = null)) }
+            return
+        }
+        storeImport(bundle, overwrite = false)
+    }
+
+    fun confirmImportOverwrite() {
+        val bundle = _state.value.garage.pendingOverwrite ?: return
+        storeImport(bundle, overwrite = true)
+    }
+
+    fun cancelImportOverwrite() {
+        _state.update { it.copy(garage = it.garage.copy(pendingOverwrite = null)) }
+    }
+
+    fun dismissGarageMessage() {
+        _state.update { it.copy(garage = it.garage.copy(message = null, importErrors = emptyList())) }
+    }
+
+    private fun storeImport(bundle: com.bod3.app.profile.ProfileBundle, overwrite: Boolean) {
+        viewModelScope.launch {
+            try {
+                val profile = profiles.import(bundle, overwrite)
+                appendLog("Imported profile ${profile.vin} (${profile.modules.size} modules)")
+                _state.update {
+                    it.copy(
+                        garage = it.garage.copy(pendingOverwrite = null, importErrors = emptyList(), message = "Imported ${profile.title} with ${profile.modules.size} modules"),
+                        profile = if (it.savedProfile?.vin == profile.vin) ProfileState.Loaded(profile, false) else it.profile,
+                    )
+                }
+                if (_state.value.savedProfile?.vin == profile.vin) refreshNaming()
+                loadGarage()
+            } catch (e: VehicleProfileService.ProfileExistsException) {
+                _state.update { it.copy(garage = it.garage.copy(pendingOverwrite = bundle)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(garage = it.garage.copy(pendingOverwrite = null, importErrors = listOf("Import failed: ${e.message}"))) }
+            }
+        }
+    }
+
+    fun deleteSavedProfile(vin: String) {
+        viewModelScope.launch {
+            try {
+                profiles.delete(vin)
+                appendLog("Deleted profile $vin")
+                _state.update {
+                    it.copy(
+                        garage = it.garage.copy(message = "Deleted $vin"),
+                        profile = if (it.savedProfile?.vin == vin) ProfileState.None else it.profile,
+                        rawLog = if (it.savedProfile?.vin == vin) emptyList() else it.rawLog,
+                    )
+                }
+                refreshNaming()
+                loadGarage()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(garage = it.garage.copy(message = "Could not delete $vin: ${e.message}")) }
+            }
+        }
+    }
+
+    fun openProfileEcus() {
+        if (_state.value.savedProfile == null) return
+        refreshNaming()
+        _state.update { it.copy(screen = Screen.PROFILE_ECUS) }
+    }
+
+    fun closeProfileEcus() {
+        _state.update { it.copy(screen = Screen.MODULES) }
+    }
+
+    /** Applies [change] to the loaded profile's extras; returns the validation error, or null when saved. */
+    private fun updateExtras(change: (ProfileExtras) -> ProfileExtras): String? {
+        val vin = _state.value.savedProfile?.vin ?: return "No vehicle profile loaded"
+        return try {
+            extrasStore.update(vin, change)
+            refreshNaming()
+            null
+        } catch (e: IllegalArgumentException) {
+            e.message ?: "Invalid entry"
+        }
+    }
+
+    /** Adds or replaces a manual ECU; [originalKey] is the request ID being edited. Returns an error or null. */
+    fun saveManualEcu(ecu: EcuDefinition, originalKey: String?): String? {
+        val problems = ecu.problems()
+        if (problems.isNotEmpty()) return problems.joinToString("\n")
+        return updateExtras { it.withEcu(ecu, originalKey) }
+    }
+
+    fun deleteManualEcu(key: String) {
+        updateExtras { it.withoutEcu(key) }?.let { appendLog("Manual ECUs: $it") }
+    }
+
+    /** Copies the data-pack vehicle's ECUs into the manual list (existing request IDs are kept). */
+    fun copyPackEcusToProfile() {
+        val current = _state.value
+        val key = current.profileExtras.vehicleKey ?: current.data.selectedVehicle?.vehicle?.key
+        val vehicle = current.data.vehicles.firstOrNull { it.vehicle.key == key }?.vehicle ?: return
+        updateExtras { extras ->
+            val existing = extras.manualEcus.map { it.key }.toSet()
+            extras.copy(manualEcus = extras.manualEcus + vehicle.ecus.filterNot { it.key in existing })
+        }?.let { appendLog("Manual ECUs: $it") }
+    }
+
+    /** Chooses the data-pack vehicle used to name this VIN's modules (null = the globally selected vehicle). */
+    fun setProfileVehicle(key: String?) {
+        updateExtras { it.copy(vehicleKey = key) }?.let { appendLog("Profile vehicle: $it") }
+    }
+
+    /** Sets (or with a blank name, removes) the user's name for a module of the loaded profile. */
+    fun renameModule(requestId: String, name: String) {
+        updateExtras { it.withName(requestId, name) }?.let { appendLog("Rename: $it") }
     }
 
     /** Plain-text raw log of the whole scan, or only the requests sent to [module]. */
