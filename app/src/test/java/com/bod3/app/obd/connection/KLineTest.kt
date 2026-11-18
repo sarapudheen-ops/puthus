@@ -30,7 +30,7 @@ class KLineTest {
         scope.cancel()
     }
 
-    private suspend fun connected(protocol: Char): Pair<Session, ConnectionResult> {
+    private suspend fun connected(protocol: String): Pair<Session, ConnectionResult> {
         val manager = ConnectionManager(scope, ConnectionStore(InMemoryKeyValueStore()), Dispatchers.Default)
         val result = manager.connect(FakeAdapterTransport(SimulatedVehicleElm(vehicleProtocol = protocol, autoSearchWorks = false)::respond), "K", ConnectionProfile.DEFAULT)
         return Session(result.driver, result.negotiation.protocol!!.protocol) to result
@@ -38,7 +38,7 @@ class KLineTest {
 
     @Test
     fun iso9141LiveDataVinAndDtcs() = runBlocking<Unit> {
-        val (session, result) = connected('3')
+        val (session, result) = connected("3")
         assertEquals(ObdProtocol.ISO_9141_2, session.protocol)
         val reader = VehicleReader(session, result.driver)
         assertEquals("WVGZZZ5NZJW000001", reader.readVin())
@@ -56,7 +56,7 @@ class KLineTest {
 
     @Test
     fun kwp2000DtcsAndPhysicalAddressingRefused() = runBlocking<Unit> {
-        val (session, result) = connected('5')
+        val (session, result) = connected("5")
         assertEquals(ObdProtocol.ISO_14230_4_KWP_FAST, session.protocol)
         assertEquals(listOf("P0420", "P0171", "P0300", "U0100"), ObdDtcReader(session).read(DtcKind.STORED).codes)
         assertThrows(UnsupportedOperationException::class.java) {
@@ -67,7 +67,7 @@ class KLineTest {
 
     @Test
     fun canDtcsWithCountByte() = runBlocking<Unit> {
-        val (session, result) = connected('6')
+        val (session, result) = connected("6")
         val report = ObdDtcReader(session).read(DtcKind.STORED)
         assertEquals(listOf("P0420", "P0171", "P0300", "U0100"), report.codes) // multi-frame on CAN (10 bytes)
         assertEquals("7E8", report.ecus.single().ecu)

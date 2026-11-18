@@ -119,6 +119,9 @@ class Session(
     var protocol: ObdProtocol = initialProtocol
         private set
 
+    /** Bit rate used when (re-)selecting protocols with a configurable rate. */
+    val protocolBaudKbps: Double? get() = options.canBaudKbps
+
     /**
      * Routing groups the adapter is currently configured with; null means unknown and will be re-sent.
      * After `ATZ` the adapter sends functional requests and auto-receives OBD replies, i.e. [EcuTarget.Broadcast].
@@ -167,8 +170,10 @@ class Session(
      */
     suspend fun switchProtocol(newProtocol: ObdProtocol) = lock.withLock {
         if (newProtocol == protocol) return@withLock
-        val response = executor.execute("ATSP${newProtocol.code}", HEADER_COMMAND_TIMEOUT_MS)
-        if (!response.isOk) throw ObdRequestException(response.error ?: ElmError.UNKNOWN_COMMAND, response)
+        for (command in newProtocol.selectCommands(protocolBaudKbps)) {
+            val response = executor.execute(command, HEADER_COMMAND_TIMEOUT_MS)
+            if (!response.isOk) throw ObdRequestException(response.error ?: ElmError.UNKNOWN_COMMAND, response)
+        }
         protocol = newProtocol
         appliedHeader = null
         appliedFilter = null

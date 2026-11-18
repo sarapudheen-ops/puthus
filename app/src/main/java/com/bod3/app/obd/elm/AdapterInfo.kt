@@ -18,12 +18,9 @@ data class AdapterIdentity(val raw: String, val chip: String?, val version: Stri
 }
 
 /**
- * Vendor extensions detected on the adapter.
- *
- * - **VT** commands (e.g. `VTVERS`) are Vgate/vLinker extensions found on MIC3313-based adapters.
- * - **ST** commands (e.g. `STI`) are OBDLink/STN extensions.
- *
- * Until detection has run, both are considered unsupported and [AdapterDriver] refuses to send them.
+ * Firmware versions the adapter reported once per connection: `VTVERS` (vLinker VT set) and `STI`
+ * (STN set). Shown on the dashboard and in the diagnostic report only. They never gate anything:
+ * ST/VT commands are always sent and a `?` reply is logged and skipped.
  */
 data class AdapterCapabilities(val vtVersion: String?, val stVersion: String?) {
     val supportsVt: Boolean get() = vtVersion != null
@@ -33,9 +30,9 @@ data class AdapterCapabilities(val vtVersion: String?, val stVersion: String?) {
         val NONE = AdapterCapabilities(vtVersion = null, stVersion = null)
 
         /**
-         * Interprets the reply to a capability probe (`VTVERS`, `STI`) conservatively: only a clean,
-         * non-empty text reply counts as support. `?`, any adapter error, or a bare `OK` (some clones
-         * acknowledge everything) all mean "not supported".
+         * Interprets the reply to a version query (`VTVERS`, `STI`): only a clean, non-empty text
+         * reply is a version. `?`, any adapter error, or a bare `OK` (some clones acknowledge
+         * everything) mean "not reported".
          */
         fun interpretProbe(response: ElmResponse): String? {
             if (!response.isSuccess) return null

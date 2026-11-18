@@ -66,35 +66,34 @@ class AdapterDriverTest {
     }
 
     @Test
-    fun extensionCommandsAreBlockedUntilCapabilitiesAreDetected() = runBlocking<Unit> {
+    fun vendorCommandsAreSentDirectlyWithoutDetection() = runBlocking<Unit> {
         val transport = mic3313()
         val driver = openDriver(transport)
 
-        val error = assertThrows(UnsupportedCommandException::class.java) {
-            runBlocking { driver.execute("VTVERS", 1_000) }
-        }
-        assertTrue(error.message!!.contains("not been detected"))
-        assertTrue(transport.written.isEmpty())
-        driver.close()
-    }
-
-    @Test
-    fun onlyDetectedExtensionsAreAllowed() = runBlocking<Unit> {
-        val transport = mic3313()
-        val driver = openDriver(transport)
-        driver.initialize()
-        transport.written.clear()
-
+        // No initialize(): ST/VT commands are not gated on firmware detection.
         assertEquals("MIC3313 V2.1", driver.execute("vtvers", 1_000).text)
-        assertThrows(UnsupportedCommandException::class.java) {
-            runBlocking { driver.execute("STDI", 1_000) }
-        }
         assertEquals(listOf("VTVERS"), transport.written)
         driver.close()
     }
 
     @Test
-    fun plainElm327HasNoExtensions() = runBlocking<Unit> {
+    fun unknownVendorCommandIsLoggedAndReturnedNotThrown() = runBlocking<Unit> {
+        val transport = mic3313()
+        val log = mutableListOf<String>()
+        val driver = AdapterDriver(transport, scope, Dispatchers.Default, logger = { log += it })
+        driver.open()
+        driver.initialize()
+        transport.written.clear()
+
+        val reply = driver.execute("STDI", 1_000)
+        assertEquals(ElmError.UNKNOWN_COMMAND, reply.error)
+        assertEquals(listOf("STDI"), transport.written)
+        assertTrue(log.any { it.contains("answered ? to STDI") })
+        driver.close()
+    }
+
+    @Test
+    fun firmwareVersionsAreForDisplayOnly() = runBlocking<Unit> {
         val transport = mic3313(mapOf("VTVERS" to "?", "STI" to "OK"))
         val driver = openDriver(transport)
 
@@ -102,7 +101,11 @@ class AdapterDriverTest {
 
         assertNull(info.capabilities.vtVersion)
         assertNull(info.capabilities.stVersion) // a bare OK from a clone is not a version string
-        assertThrows(UnsupportedCommandException::class.java) { runBlocking { driver.execute("VTVERS", 1_000) } }
+        assertEquals(1, transport.written.count { it == "VTVERS" }) // read once per connection
+        // Even without a reported VT version, VT commands are still sent.
+        transport.written.clear()
+        driver.execute("VTTOST 20", 1_000)
+        assertEquals(listOf("VTTOST 20"), transport.written)
         driver.close()
     }
 

@@ -54,8 +54,8 @@ object DiagnosticReport {
             } else {
                 line("ATI", adapter.identity.raw.ifEmpty { "—" })
                 adapter.description?.let { line("AT@1", it) }
-                line("VT extensions", adapter.capabilities.vtVersion ?: "not supported")
-                line("ST extensions", adapter.capabilities.stVersion ?: "not supported")
+                line("VT firmware (VTVERS)", adapter.capabilities.vtVersion ?: "not reported")
+                line("ST firmware (STI)", adapter.capabilities.stVersion ?: "not reported")
             }
         }
 

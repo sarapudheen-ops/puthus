@@ -15,7 +15,7 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
 ## Features (Phase 1)
 
 - Pick a paired Bluetooth adapter and connect over SPP (handles the Android 12+ `BLUETOOTH_CONNECT` permission).
-- Adapter info: `ATI`, `AT@1`, firmware via `VTVERS`, detected vendor extensions.
+- Adapter info: `ATI`, `AT@1`, firmware via `VTVERS` / `STI`.
 - Vehicle info: detected protocol, VIN (Service 09 PID 02), battery voltage (`ATRV`), responding ECUs.
 - Live data for the Service 01 PIDs the vehicle reports as supported.
 - **Read-only:** the session layer refuses every service except the OBD reads (01, 02, 03, 06, 07, 09, 0A)
@@ -54,14 +54,14 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
 ## Features (M1): connection for any vehicle
 
 - **Protocol negotiation:** tries the protocol that last worked with this adapter first, then the
-  automatic search (`ATSP0`), then `ATSP5, 4, 3, 6, 7, 8, 9` (KWP fast, KWP slow, ISO 9141-2, the four
-  CAN variants). Each attempt sends `ATSPx`, the read-only probe `0100` and `ATDP`; the raw reply,
+  automatic search (`ATSP0`), then every other protocol the vLinker MC+ supports (see *Protocols* below).
+  Each attempt sends the protocol's selection commands, its read-only probe and `ATDP`; the raw reply,
   `ATDP` text and duration are logged and shown under "Protocol detection". The working protocol is
   remembered per adapter. If nothing answers, the adapter stays connected so you can turn the ignition
   on and tap *Detect vehicle*.
 - **Connection profiles** (gear icon on the adapter list and the dashboard): force a protocol (with or
-  without fallbacks), request and search timeouts, adapter reply timeout (`ATST`, or `VTTOST` when the
-  adapter supports vLinker VT commands), adaptive timing (`ATAT0/1/2`), a broadcast receive filter
+  without fallbacks), request and search timeouts, adapter reply timeout (`ATST` or vLinker `VTTOST`), a
+  CAN bit rate for user CAN B/C and STN CAN (10-1000 kbit/s), extra AT/ST/VT init commands, adaptive timing (`ATAT0/1/2`), a broadcast receive filter
   (`ATCF`/`ATCM`), custom flow control (`ATFCSH`/`ATFCSD`/`ATFCSM1`) and ISO 15765-2 extended addressing
   (`ATCEA`). Two built-in profiles (Automatic and a patient K-line profile). Rejected setup commands are
   logged and skipped, never fatal.
@@ -71,7 +71,8 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
   Read-only.
 - **Reconnect:** if the Bluetooth link drops, live data and scans stop, and the app reconnects after 1,
   3, 6 and 10 s, trying the remembered protocol first. Live data resumes after a successful reconnect.
-- **Adapter capabilities:** ATI, AT@1, VT (`VTVERS`) and ST (`STI`) detection, plus the profile's setup steps.
+- **Adapter info:** ATI, AT@1, the firmware versions from `VTVERS` and `STI` (read once per connection,
+  display and report only), plus the profile's setup steps.
 - **Battery voltage monitor:** `ATRV` every 5 s with a graph, min/max and low/charging thresholds
   (12.0 V / 13.2 V). It pauses during module scans and while the terminal is open.
 - **Logs:** every log (adapter log, raw scan log, module log, protocol attempts, terminal) has Copy, Share
@@ -80,10 +81,33 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
   voltage, fault codes, modules, reconnects and all logs, shared through the share sheet (FileProvider,
   cache only).
 - **Expert mode and raw terminal:** off by default; you must acknowledge the risks to turn it on. The terminal
-  sends AT commands as typed, except baud-rate, memory, low-power and monitor commands. ST/VT commands are
-  limited to identification queries. OBD/UDS requests must pass the same read-only policy as the rest of
+  sends AT, ST and VT commands as typed, except baud-rate, memory, low-power, monitor and bootloader/factory
+  reset commands. OBD/UDS requests must pass the same read-only policy as the rest of
   the app, so writes, clears and actuator tests are blocked. When the terminal closes, the app restores
   `ATE0 ATS0 ATH1 ATCAF1 ATR1` and, if routing was changed, re-selects the protocol and re-sends its routing.
+
+### Protocols (vLinker MC+ / MIC3313)
+
+Every protocol is listed under *Connection settings → Supported protocols*, can be forced in a profile, and
+is tried by automatic detection when the `ATSP0` search fails:
+
+| Code | Protocol | Selection |
+|---|---|---|
+| 1, 2 | SAE J1850 PWM / VPW | `ATSP1`, `ATSP2` |
+| 3, 4, 5 | ISO 9141-2, ISO 14230-4 KWP (5-baud, fast init) | `ATSP3`–`ATSP5` |
+| 6–9 | ISO 15765-4 CAN 11/29-bit, 500/250 kbit/s | `ATSP6`–`ATSP9` |
+| A | SAE J1939 (probe: PGN 00FECA) | `ATSPA` |
+| B, B/29 | User1 CAN, 11 or 29-bit, custom bit rate (default 125k) | `ATPB oo dd`, `ATSPB` (+ `STPBR` for e.g. 1 Mbit/s) |
+| C, C/29 | User2 CAN, 11 or 29-bit, custom bit rate (default 50k) | `ATPP 2E/2F`, `ATSPC` (+ `STPBR`) |
+| STN 31/32 | ISO 15765 11/29-bit, custom bit rate | `STP 31/32` (+ `STPBR`) |
+| STN 41/42 | ISO 11898 raw CAN 11/29-bit | `STP 41/42` |
+| STN 51–54 | GM SW-CAN (ISO 15765 and raw) | `STP 51`–`STP 54` |
+| STN 61–64 | Ford MS-CAN (ISO 15765 and raw) | `STP 61`–`STP 64` |
+| VT KWP1281 | VAG KWP1281 on K-line | `VTP291` |
+
+ISO 15765-2 extended addressing uses `ATCEA hh`. ST and VT commands are sent directly with no capability
+gate: if the adapter answers `?` the reply is logged and skipped (a rejected *selection* command only fails
+that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCSEGT1`, `VTVLCW`).
 
 ## Features (M2): diagnostics
 
@@ -132,7 +156,7 @@ ui/                 Compose screens + ObdViewModel
 bluetooth/          permissions, paired-device listing (Android)
 obd/transport/      Transport interface; BluetoothSppTransport (BLE / Wi-Fi / USB can be added later)
 obd/elm/            AdapterDriver: init sequence, FIFO command queue with timeouts,
-                    capability detection, response parsing (ElmResponseParser)
+                    firmware version read, response parsing (ElmResponseParser)
 obd/protocol/       ObdProtocol (ATDPN), FrameParser, ISO-TP reassembly
 obd/session/        Session: per-request ECU targeting (ATSH / ATCP / ATCRA / ATCF+ATCM / flow control),
                     protocol switching (ATSP), ReadOnlyPolicy, ProtocolDetector
@@ -166,12 +190,12 @@ framing, both ID lengths and per-module behaviour (negative replies, response pe
 control), and it fails any test that sends a request outside the read-only policy. Clears that reach the
 bus are recorded separately (`clears`), so tests can prove a clear only goes out with a confirmation.
 `testing/SimulatedVehicleElm` simulates a vLinker MC+ plugged into a vehicle on any protocol (automatic
-search, explicit `ATSPx`, `ATDP`/`ATDPN`, VT detection, K-line framing with checksums, ISO-TP on CAN). The
+search, `ATSPx`, user CAN `ATPB`/`ATPP` with bit rates, `STP nn`/`STPBR`, `VTP291`, J1939, `ATDP`/`ATDPN`, K-line framing with checksums, ISO-TP on CAN). The
 connection tests use it for negotiation fallbacks, profile setup, K-line VIN/live data/DTCs and link loss.
 
 **Adapter init:** `ATZ`, `ATE0`, `ATL0`, `ATS0`, `ATH1`, `ATSP0`, then `ATI`, `AT@1`. `ATH1` and `ATSP0` are
-required; the others are tolerated if a clone rejects them. ST/VT vendor commands are blocked until the
-`VTVERS` / `STI` probes confirm support.
+required; the others are tolerated if a clone rejects them. `VTVERS` / `STI` are read once for display and
+the report; ST/VT commands are never gated on them.
 
 **ECU targeting:** `session.request(EcuTarget.Physical("7E0", "7E8"), 0x01, 0x0C)` sends
 `ATSH 7E0` and `ATCRA 7E8` (only when the target changes) and then the request; `EcuTarget.Broadcast` returns

@@ -60,7 +60,7 @@ class RawTerminal(
         if (routingDirty && session != null) {
             val protocol: ObdProtocol = session.protocol
             try {
-                executor.execute("ATSP${protocol.code}", 2_000L)
+                protocol.selectCommands(session.protocolBaudKbps).forEach { executor.execute(it, 2_000L) }
             } catch (e: AdapterException) {
                 add(TerminalLine.Kind.ERROR, "Restoring protocol failed: ${e.message}")
             }

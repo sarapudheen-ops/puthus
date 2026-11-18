@@ -22,7 +22,11 @@ data class ConnectionProfile(
     val name: String,
     /** Use only this protocol (plus the fallback list when [tryFallbacks] is on). Null = automatic. */
     val forcedProtocol: ObdProtocol? = null,
-    /** When automatic detection fails, try `ATSP5, 4, 3, 6, 7, 8, 9` in turn. */
+    /**
+     * When automatic detection fails, try every other protocol the vLinker MC+ supports in turn (see
+     * [ProtocolNegotiator.FALLBACK_ORDER]): K-line, HS-CAN, J1850, J1939, user CAN B/C, STN CAN
+     * variants, MS-CAN, SW-CAN and VT KWP1281.
+     */
     val tryFallbacks: Boolean = true,
     /** Host-side timeout for ordinary requests. */
     val requestTimeoutMs: Long = 5_000,
@@ -32,7 +36,7 @@ data class ConnectionProfile(
     val adapterTimeoutMs: Int? = null,
     /** Adaptive timing `ATAT0/1/2`, or null to keep the default (1). */
     val adaptiveTiming: Int? = null,
-    /** Set the reply timeout with the vLinker `VTTOST` command instead of `ATST` when the adapter supports VT. */
+    /** Set the reply timeout with the vLinker `VTTOST` command instead of `ATST`. */
     val useVtTimeout: Boolean = false,
     /** Receive filter for broadcast requests as `pattern/mask` (e.g. `7E8`/`7F8`), or null for automatic. */
     val broadcastFilter: String? = null,
@@ -42,6 +46,13 @@ data class ConnectionProfile(
     val flowControlData: String = "300000",
     /** ISO 15765-2 extended addressing target byte (`ATCEA hh`), or null for normal addressing. */
     val extendedAddress: String? = null,
+    /**
+     * Bit rate in kbit/s for protocols with a configurable rate (user CAN `B`/`C` via `ATPB`/`ATPP`,
+     * STN ISO 15765 via `STPBR`), or null for the protocol's default. 10-1000 kbit/s.
+     */
+    val canBaudKbps: Double? = null,
+    /** Extra adapter commands sent after setup (AT, ST or VT), e.g. `STCSEGT1`. Unknown commands are logged and skipped. */
+    val extraInitCommands: List<String> = emptyList(),
 ) {
     init {
         require(name.isNotBlank()) { "Profile name must not be empty" }
@@ -58,7 +69,14 @@ data class ConnectionProfile(
         require(extendedAddress == null || (extendedAddress.length == 2 && extendedAddress.isHexId())) {
             "Extended address must be one hex byte"
         }
+        require(canBaudKbps == null || canBaudKbps in 10.0..1_000.0) { "CAN bit rate must be 10-1000 kbit/s" }
+        require(extraInitCommands.all { it.isNotBlank() && it.length <= 40 && it.all { c -> c.isLetterOrDigit() || c == ' ' || c == ',' || c == '.' } }) {
+            "Extra commands must be plain AT/ST/VT commands"
+        }
     }
+
+    /** Bit rate to use for [protocol]: the profile's rate when the protocol supports one. */
+    fun baudFor(protocol: ObdProtocol): Double? = canBaudKbps?.takeIf { protocol.hasCustomBaud }
 
     fun sessionOptions() = com.bod3.app.obd.session.SessionOptions(
         extendedAddressing = extendedAddress != null,
@@ -66,6 +84,7 @@ data class ConnectionProfile(
         broadcastMask = broadcastMask,
         customFlowControl = flowControlMode == FlowControlMode.CUSTOM_DATA,
         flowControlData = flowControlData,
+        canBaudKbps = canBaudKbps,
     )
 
     /** `ATST` argument (4.096 ms units), or null. */
@@ -108,6 +127,8 @@ object ConnectionProfileCodec {
         "flowControlMode" to profile.flowControlMode.name,
         "flowControlData" to profile.flowControlData,
         "extendedAddress" to profile.extendedAddress,
+        "canBaudKbps" to profile.canBaudKbps,
+        "extraInitCommands" to profile.extraInitCommands,
     )
 
     fun decode(map: Map<*, *>): ConnectionProfile {
@@ -130,6 +151,8 @@ object ConnectionProfileCodec {
             flowControlMode = string("flowControlMode")?.let { FlowControlMode.valueOf(it) } ?: FlowControlMode.AUTO,
             flowControlData = string("flowControlData")?.uppercase() ?: "300000",
             extendedAddress = string("extendedAddress")?.uppercase(),
+            canBaudKbps = number("canBaudKbps"),
+            extraInitCommands = (map["extraInitCommands"] as? List<*>)?.filterIsInstance<String>()?.map { it.trim().uppercase() }.orEmpty(),
         )
     }
 

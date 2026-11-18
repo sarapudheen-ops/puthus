@@ -15,7 +15,7 @@ import org.junit.Test
 /** Clearing fault memory is the only non-read request before M5, and only with a fresh user confirmation. */
 class ClearConfirmationTest {
 
-    private val elm = SimulatedVehicleElm(vehicleProtocol = '6')
+    private val elm = SimulatedVehicleElm(vehicleProtocol = "6")
     private val session = Session(elm.executor(), ObdProtocol.ISO_15765_4_CAN_11_500)
 
     @Test

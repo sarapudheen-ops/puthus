@@ -19,7 +19,7 @@ import org.junit.Test
 class ModuleScannerTest {
 
     private fun setup(modules: List<SimModule> = TestVehicle.all(), protocol: ObdProtocol = ObdProtocol.ISO_15765_4_CAN_11_500): Triple<SimulatedCanAdapter, Session, ModuleScanner> {
-        val adapter = SimulatedCanAdapter(modules, protocol.code)
+        val adapter = SimulatedCanAdapter(modules, protocol.dpn!!)
         val session = Session(adapter, protocol)
         return Triple(adapter, session, ModuleScanner(session, adapter))
     }

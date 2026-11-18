@@ -44,7 +44,7 @@ class ConnectionManager(
             driver.open()
             onStep("Initialising adapter…")
             val adapter = driver.initialize()
-            val setup = AdapterSetup.apply(driver, profile, adapter.capabilities, logger)
+            val setup = AdapterSetup.apply(driver, profile, logger)
             onStep("Detecting vehicle protocol…")
             val negotiation = detectProtocol(driver, adapterAddress, profile)
             return ConnectionResult(driver, adapter, profile, setup, negotiation)

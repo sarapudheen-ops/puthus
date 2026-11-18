@@ -31,8 +31,12 @@ suspend fun CommandExecutor.execute(command: String): ElmResponse =
  * Responsibilities:
  * - owns the [Transport] and a background reader that splits the incoming byte stream on the `>` prompt;
  * - runs every command through a FIFO [CommandQueue] with a per-command timeout;
- * - performs the init sequence (`ATZ ATE0 ATL0 ATS0 ATH1 ATSP0`) and reads `ATI` / `VTVERS`;
- * - detects vendor extensions and refuses to send ST/VT commands the adapter has not been shown to support.
+ * - performs the init sequence (`ATZ ATE0 ATL0 ATS0 ATH1 ATSP0`) and reads `ATI` / `AT@1`;
+ * - reads the firmware versions (`VTVERS`, `STI`) once per connection, for display and the report.
+ *
+ * ST and VT commands are sent directly, like AT commands: the vLinker MC+ implements the full STN and
+ * VT sets. There is no capability gate. If an adapter answers `?` the reply is logged and returned to
+ * the caller, which decides whether to carry on.
  *
  * This class never talks to the vehicle on its own; OBD requests go through
  * [com.bod3.app.obd.session.Session].
@@ -51,9 +55,6 @@ class AdapterDriver(
     @Volatile
     private var resyncNeeded = false
 
-    @Volatile
-    private var capabilitiesDetected = false
-
     /** Set once the link is gone; every later command fails fast with this error. */
     @Volatile
     private var connectionError: TransportException? = null
@@ -66,6 +67,7 @@ class AdapterDriver(
      */
     val linkLost: StateFlow<TransportException?> = _linkLost.asStateFlow()
 
+    /** Firmware versions read once during [initialize]; display and report only, never a gate. */
     @Volatile
     var capabilities: AdapterCapabilities = AdapterCapabilities.NONE
         private set
@@ -80,7 +82,7 @@ class AdapterDriver(
     }
 
     /**
-     * Resets and configures the adapter, then identifies it and detects vendor extensions.
+     * Resets and configures the adapter, then identifies it and reads its firmware versions.
      *
      * `ATH1` (headers on) and `ATSP0` (automatic protocol) are required; the other settings only make
      * parsing easier and are tolerated if a clone rejects them, because the parser copes either way.
@@ -102,21 +104,20 @@ class AdapterDriver(
             null
         }
 
-        capabilities = detectCapabilities()
+        capabilities = readFirmwareVersions()
         return AdapterInfo(identity = identity, description = description, capabilities = capabilities)
     }
 
     /**
-     * Sends [command] and waits up to [timeoutMs] for the prompt.
-     *
-     * ST and VT commands are rejected with [UnsupportedCommandException] unless capability detection
-     * has run and found the matching extension.
+     * Sends [command] (AT, ST, VT or a hex request) and waits up to [timeoutMs] for the prompt. A `?`
+     * reply (unknown command) is logged and returned, not thrown.
      */
     override suspend fun execute(command: String, timeoutMs: Long): ElmResponse {
         val normalized = command.trim().uppercase()
         require(normalized.isNotEmpty()) { "Empty command" }
-        checkExtensionAllowed(normalized)
-        return sendRaw(normalized, timeoutMs)
+        val response = sendRaw(normalized, timeoutMs)
+        if (response.error == ElmError.UNKNOWN_COMMAND) logger("Adapter answered ? to $normalized; skipping")
+        return response
     }
 
     /** Closes the link. Safe to call more than once. */
@@ -125,21 +126,6 @@ class AdapterDriver(
         transport.close()
         readerJob?.cancel()
         prompts.close()
-    }
-
-    private fun checkExtensionAllowed(command: String) {
-        val family = when {
-            command.startsWith("ST") -> "ST"
-            command.startsWith("VT") -> "VT"
-            else -> return
-        }
-        if (!capabilitiesDetected) {
-            throw UnsupportedCommandException(command, "adapter capabilities have not been detected yet")
-        }
-        val supported = if (family == "ST") capabilities.supportsSt else capabilities.supportsVt
-        if (!supported) {
-            throw UnsupportedCommandException(command, "adapter does not support $family commands")
-        }
     }
 
     private suspend fun reset() {
@@ -153,19 +139,12 @@ class AdapterDriver(
         }
     }
 
-    /**
-     * Probes vendor extensions. These probes are the only ST/VT commands ever sent before
-     * capabilities are known; an ELM327 answers unknown commands with `?`, which is harmless.
-     */
-    private suspend fun detectCapabilities(): AdapterCapabilities {
+    /** Reads `VTVERS` and `STI` once. Unknown (`?`) or empty replies just mean "not reported". */
+    private suspend fun readFirmwareVersions(): AdapterCapabilities {
         val vtVersion = probe("VTVERS")
         val stVersion = probe("STI")
-        capabilitiesDetected = true
-        val detected = AdapterCapabilities(vtVersion = vtVersion, stVersion = stVersion)
-        logger(
-            "Capabilities: VT=" + (vtVersion ?: "no") + ", ST=" + (stVersion ?: "no"),
-        )
-        return detected
+        logger("Firmware: VT=" + (vtVersion ?: "not reported") + ", ST=" + (stVersion ?: "not reported"))
+        return AdapterCapabilities(vtVersion = vtVersion, stVersion = stVersion)
     }
 
     private suspend fun probe(command: String): String? = try {
