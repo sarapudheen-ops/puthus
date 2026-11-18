@@ -157,7 +157,12 @@ class SourceBrowserTest {
         // Reproduce Android 24's older LOWER() even on a modern JVM SQLite.
         org.sqlite.Function.create(connection, "lower", object : org.sqlite.Function() {
             override fun xFunc() { result(value_text(0)?.substringBefore('\u0000')?.lowercase()) }
-        })
+        }, 1, 0)
+        // Exact arity replaces the built-in; a variadic registration may not.
+        connection.prepareStatement("SELECT lower(?)").use { statement ->
+            statement.setString(1, "P1234\u0000Engine")
+            statement.executeQuery().use { it.next(); assertEquals("p1234", it.getString(1)) }
+        }
         val page = load(SourceLocation.Texts("TCODE_EN.GAG"), "engine")
         assertEquals(1, page.rows.size)
         assertTrue(page.rows.single().detail.contains("P1234\\0Engine speed\\0"))

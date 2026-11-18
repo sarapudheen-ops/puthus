@@ -96,6 +96,22 @@ python3 tools/thinkdiag/sweep_reports.py unpack "$EVIDENCE"/parts/*.json --outpu
 
 Use a fresh directory / one coherent run: missing, duplicate, inconsistent, corrupted or oversized parts are rejected. The bundle is non-executable report text, not a diagnostic import. Source-byte excerpts inside it remain research files outside Git and must be checked against their own declared size/SHA-256 before inspection.
 
+## Complete app source library
+
+After the decoding/English recovery commands above, build the audited app assets (not a catalog import):
+
+```sh
+"$PY" tools/thinkdiag/build_app_database.py .local/thinkdiag/TOYOTA.zip \
+  --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+  --manifest .local/thinkdiag/report/decoded-manifest.json \
+  --output .local/toyota-app-assets/toyota-source
+python3 tools/thinkdiag/verify_app_database.py --directory .local/toyota-app-assets/toyota-source
+```
+
+`build_app_database.py` retains every decoded byte, rehashes every stored payload, includes all English records (including 4,502 non-UTF-8 records), and validates the full census and reader-backed frame joins. Unknown schemas and the three invalid command descriptors remain explicit. A separate NUL-free `search_text` derivative handles old Android SQLite's NUL-terminating `LOWER()` without altering original text/raw bytes. The shared SQL schema is tested by Python and by the app's SQLite JDBC fixtures.
+
+Gradle requires these complete verified assets; Android CI prepares/caches them automatically. The inspection workflow builds the library twice and compares the complete ZIP/manifest byte-for-byte on the same toolchain. After building an APK, add `--apk app/build/outputs/apk/debug/app-debug.apk` to the verification command to prove the actual package contains the same data. Push CI additionally runs the real APK's source-library tests on Android 24; test output is published as the **Toyota Android 24 source smoke evidence** check as well as an artifact. See the [app-library guide](../../docs/toyota-app-library.md) for storage, browsing and the remaining operational-semantic boundary. Raw archives, ELF files and research directories are not copied into the APK.
+
 ## Conversion audit
 
 `convert_dtcs.py` keeps only explicit SAE-shaped base/extended code pairs with a unique remaining description, normalizes whitespace, and excludes placeholder and generic-category text. It preserves extended-code suffixes and never resolves conflicts by frequency. The full `toyota-dtc-audit.json` maps every accepted code to source record IDs and lists all conflicting variants; it is a research artifact, not a bundled dataset. [`toyota-dtcs.provenance.json`](toyota-dtcs.provenance.json) pins the bundled derivative's hash, size, scope, counts and rules. CI regenerates and compares the derivative byte-for-byte; app unit tests also validate the real asset and scoped import/export.
