@@ -1,8 +1,8 @@
 # Toyota/Lexus release data recovery
 
-> **Renewed diagnostic-source sweep:** the folder contains vehicle/system/ECU maps, communication-byte/frame dictionaries, live-data/expression tables and actuator/customization reader paths beyond DTC text. See the [full findings and unresolved conversion work](toyota-diagnostic-sweep.md). The passive-only limitation below describes what is currently integrated in bod3, **not** what exists in the source archive.
+> **Complete recovered corpus now bundled:** open **Data packs → Browse recovered Toyota data** for all 1,410 decoded files, all 198,091 English records (including opaque bytes), the source menu and validated cross-table relationships. See the [offline app library and build guide](toyota-app-library.md). This is complete **source-data integration**, not complete operational enhanced diagnostics. The diagnostic fault-text integration below remains the validated passive subset; see the [sweep evidence and unresolved semantics](toyota-diagnostic-sweep.md).
 
-## What is usable in bod3 now
+## What is used in operational fault displays
 
 `app/src/main/assets/datapacks/toyota-lexus-dtcs.json` is a **passive English DTC reference**, recovered from this repository's `assets-v1/TOYOTA.zip` release asset (Toyota V10.62).
 
@@ -57,10 +57,10 @@ The original outer ZIP is **not password-encrypted**. Its contained database for
 
 | Output | Result | App integration |
 |---|---:|---|
-| YZJM binary wrapper | 1,410 tables; 114,797,280 decoded payload bytes | Not interpreted as commands |
-| English GGP/LAH members | 8 files; 198,091 indexed records | Selected TCODE pairs only |
-| Valid UTF-8 records | 193,589 | JSON exports for further analysis |
-| Non-UTF-8 ADAS records | 4,502 | Omitted from text JSON; original member bytes retained, encoding not guessed |
+| YZJM binary wrapper | 1,410 tables; 114,797,280 decoded payload bytes | Complete source library; not executable commands |
+| English GGP/LAH members | 8 files; 198,091 indexed records | All records in source browser; only validated TCODE subset used by fault displays |
+| Valid UTF-8 records | 193,589 | Exact content, including embedded/trailing NULs, retained in SQLite |
+| Non-UTF-8 ADAS records | 4,502 | Exact raw bytes in source library; encoding not guessed |
 
 The eight members are TEXT_EN.GAG (35,882 records), DSTREAM_EN.GAG (44,800), TCODE_EN.GAG (27,035), RCODE_EN.GAG (1,885), EXPRESS.GAG (12,594), VEHICLEADAS.GAG (61,656), VEHICLEMANUAL.GAG (13,538), and VEHICLEDTCS.GAG (701).
 
@@ -74,6 +74,7 @@ Its artifacts are:
 
 - **`toyota-recovered-data`** (14 days): decoded YZJM payloads, all eight original GGP member files, ID-to-UTF-8 JSON maps, the converted app pack, the per-code source-ID/conflict audit, and the binary manifest/text-library summaries; also the full menu/system/section inventories and diagnostic frame/byte-reference audits from the renewed sweep. Non-UTF-8 records can still be recovered from the retained member files with the data-only reader.
 - **`toyota-data-inspection`** (7 days): inspection, full selected-reader disassembly, extraction and conversion reports. The sweep overview is a readable check; complete detailed reports are in checksum-verified compressed `Toyota sweep evidence NNN` checks. Compact converted-text shards also remain checksummed for inspection where artifact-download hosts are blocked.
-- **`app-debug-apk`** from **Android CI**: the debug APK including the scoped reference.
+- **`toyota-app-library`** (14 days): the complete compressed SQLite source library and its source/processor/census/database/archive manifest.
+- **`app-debug-apk`** from **Android CI**: the debug APK including both the scoped DTC reference and the complete offline source library. Packaging verifies their integrity; the source library remains isolated from diagnostic engines.
 
-Regenerate the research artifacts when they expire. Full archives, raw libraries and decoded research datasets stay in ignored `.local/thinkdiag/`, **not in Git or the APK**. The only bundled Toyota dataset is the validated passive DTC subset. Existing read-only/Expert-mode, confirmation, coding-engine and actuator-engine restrictions are unchanged.
+Regenerate artifacts when they expire. Full archives, vendor libraries and research directories stay in ignored `.local/thinkdiag/`, **out of Git and not copied into the APK**. Only the deliberate data-only SQLite derivative and validated passive DTC asset ship. Existing read-only/Expert-mode, confirmation, coding-engine and actuator-engine restrictions are unchanged. See [installation/build/storage details](toyota-app-library.md).

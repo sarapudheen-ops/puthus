@@ -33,7 +33,7 @@ cmp .local/thinkdiag/converted/toyota-lexus-dtcs.json app/src/main/assets/datapa
 
 The archive-specific drivers refuse a different SHA-256. Native virtual addresses and format constants are specific to Toyota V10.62, **not** a general ThinkDiag decoder. Generic readers validate bounded inputs, supported revisions, safe paths, directory checksums, record bounds, permutations and duplicate IDs; tests include corrupt/truncated files and traversal attempts. An unknown format fails closed. No passwords, activation material or runtime device credentials are requested.
 
-The GitHub Actions workflow `.github/workflows/thinkdiag-data.yml` runs the same pipeline and publishes recovered-data/report artifacts. Use it when the local environment cannot follow GitHub's release-asset redirect. A zero-byte failed download is not an archive. Recovered payloads, raw vendor files and full ID/conflict audits must stay outside Git in `.local/`; do not add them to Android assets. Only a reviewed, provenance-bearing passive subset is bundled.
+The GitHub Actions workflow `.github/workflows/thinkdiag-data.yml` runs the same pipeline and publishes recovered-data/report artifacts, plus the complete indexed `toyota-app-library`. Use it when the local environment cannot follow GitHub's release-asset redirect. A zero-byte failed download is not an archive. Recovered files, raw vendor files and full ID/conflict audits stay outside Git in `.local/`; do not copy research directories wholesale into assets. The deliberately generated, checksum/census-verified **data-only SQLite derivative** is now bundled by Android CI, alongside the unchanged passive DTC reference. Native libraries and scripts are never executed. See the [app-library build guide](../../docs/toyota-app-library.md) for preparation commands, storage and semantic boundaries.
 
 ## Format evidence
 
@@ -57,7 +57,7 @@ The GitHub Actions workflow `.github/workflows/thinkdiag-data.yml` runs the same
 
 ### Diagnostic table and menu evidence
 
-`sweep_toyota.py` inventories every archive/nested file, all native exports and all recovered English libraries. It checks every decoded payload against its SHA-256 manifest, rather than extrapolating from one ECU. It emits a complete MENU graph, regional system/function indexes, per-ECU section records, shared-table schemas/strides, command/frame-reference audits and explicit whole-file/record exceptions. These outputs are research-only; nothing is imported into the app.
+`sweep_toyota.py` inventories every archive/nested file, all native exports and all recovered English libraries. It checks every decoded payload against its SHA-256 manifest, rather than extrapolating from one ECU. It emits a complete MENU graph, regional system/function indexes, per-ECU section records, shared-table schemas/strides, command/frame-reference audits and explicit whole-file/record exceptions. Reports/disassemblies stay research artifacts. `build_app_database.py` separately accounts for every decoded byte and every English record in the app's passive source database; it never converts unresolved records into executable catalog definitions.
 
 `toyota_structure.py` implements bounded reader-backed layouts:
 

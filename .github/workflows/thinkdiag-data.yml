@@ -62,6 +62,15 @@ jobs:
             -f status=completed -f conclusion=success \
             -f 'output[title]=Complete data-only app library' \
             -F 'output[summary]=@.local/thinkdiag/app-library/manifest.json'
+      - name: Verify the full app library is exactly reproducible on this toolchain
+        run: |
+          python3 tools/thinkdiag/verify_app_database.py --directory .local/thinkdiag/app-library
+          python3 tools/thinkdiag/build_app_database.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/app-library-again
+          cmp .local/thinkdiag/app-library/manifest.json .local/thinkdiag/app-library-again/manifest.json
+          cmp .local/thinkdiag/app-library/toyota-source.zip .local/thinkdiag/app-library-again/toyota-source.zip
       - name: Upload offline app source library (no vendor executables)
         uses: actions/upload-artifact@v7
         with:

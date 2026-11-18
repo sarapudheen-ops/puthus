@@ -39,7 +39,7 @@ jobs:
       - name: Build debug APK, run lint and unit tests
         run: |
           set -o pipefail
-          ./gradlew assembleDebug lintDebug testDebugUnitTest --continue --stacktrace 2>&1 | tee build.log
+          ./gradlew assembleDebug assembleDebugAndroidTest lintDebug testDebugUnitTest --continue --stacktrace 2>&1 | tee build.log
 
       - name: Summarise unit tests
         if: always()
@@ -67,6 +67,13 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+      - name: Upload device-test APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-debug-device-tests
+          path: app/build/outputs/apk/androidTest/debug/*.apk
+          if-no-files-found: error
+
       - name: Upload build reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -77,4 +84,48 @@ jobs:
             app/build/reports/
             app/build/test-results/
             build/reports/
+          if-no-files-found: warn
+
+  offline-source-device:
+    name: Offline source library (Android 24)
+    # One real minSdk run per push, rather than duplicating an emulator on the PR event.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-debug-apk
+          path: .local/device/app
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-debug-device-tests
+          path: .local/device/tests
+      - name: Enable KVM for the Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install the actual APK and inspect every source family on minSdk
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          target: default
+          arch: x86_64
+          disable-animations: true
+          script: |
+            mkdir -p .local/device/reports
+            adb install .local/device/app/app-debug.apk
+            adb install .local/device/tests/app-debug-androidTest.apk
+            adb shell am instrument -w -r -e class com.bod3.app.source.ToyotaSourceInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
+            adb logcat -d > .local/device/reports/logcat.txt
+            grep -Eq '^OK \([1-9][0-9]* tests?\)' .local/device/reports/instrumentation.txt
+            ! grep -q 'FAILURES!!!' .local/device/reports/instrumentation.txt
+      - name: Upload Android SQLite smoke results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: source-library-android24-results
+          path: .local/device/reports/
           if-no-files-found: warn

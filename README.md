@@ -336,9 +336,19 @@ Data-pack v2 `dtcGroups` preserves manufacturer scope and source through import/
 Conflicts, placeholders and unsupported code forms are excluded, and extended codes are not promoted to
 base codes. No Toyota PIDs, ECU addresses, coding or actuator commands have been enabled from this data.
 
-See [Toyota data, limitations, usage and schema](docs/toyota-data.md) and
-[reproduction tools and static format evidence](tools/thinkdiag/README.md). CI regenerates the bundled
-reference byte-for-byte; no physical adapter/car testing has been performed.
+**Complete recovered source library:** **Data packs → Browse recovered Toyota data** now also bundles
+all 1,410 decoded files, all 198,091 English records (including non-UTF-8 bytes), the manual source menu,
+regional system/ECU relationships and shared frame/byte dictionaries. Search, follow validated source
+links, inspect raw rows/opaque formats and share evidence pages offline. Catalog model pages can
+explicitly search the corresponding source paths. This is an indexed, lazily installed data pack
+(about 34 MiB compressed / 239 MiB installed), not new executable ECU/PID/coding/test definitions.
+Opening it never selects a vehicle or sends/evaluates recovered bytes or EXPRESS scripts.
+
+See [complete offline library, build steps and operational boundaries](docs/toyota-app-library.md),
+[Toyota DTC semantics and schema](docs/toyota-data.md), and
+[reproduction tools and static format evidence](tools/thinkdiag/README.md). CI regenerates the passive
+reference byte-for-byte and checks the complete source library is in the APK; no physical adapter/car
+testing has been performed.
 
 ## Architecture
 
@@ -404,7 +414,8 @@ tracked separately, so only the group that changed is re-sent.
 
 ## Building
 
-Requires JDK 17 and the Android SDK (set `ANDROID_HOME` or create `local.properties` with `sdk.dir=...`).
+Requires JDK 17, Python 3.10+ and the Android SDK (set `ANDROID_HOME` or create `local.properties` with `sdk.dir=...`).
+Before the first build, **[prepare the complete Toyota offline data assets](docs/toyota-app-library.md#build-and-reproduce)** from the pinned release into `.local/toyota-app-assets/toyota-source`. Large generated data stays out of Git. Gradle rejects missing, stale, partial or corrupt data instead of silently producing an incomplete APK. Android CI performs preparation automatically.
 
 ```sh
 ./gradlew assembleDebug   # APK -> app/build/outputs/apk/debug/
@@ -415,4 +426,6 @@ Requires JDK 17 and the Android SDK (set `ANDROID_HOME` or create `local.propert
 ## CI
 
 `.github/workflows/android.yml` runs `assembleDebug lintDebug testDebugUnitTest` on every push and pull
-request, and uploads the debug APK plus build, lint and test reports as workflow artifacts.
+request, prepares and verifies the complete offline Toyota source library, and uploads the debug APK
+plus build, lint and test reports as workflow artifacts. Push builds also install the actual APK and
+run source-library smoke tests on an Android 24 emulator (minimum supported API).
