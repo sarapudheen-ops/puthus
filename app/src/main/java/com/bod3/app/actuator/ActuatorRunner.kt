@@ -28,6 +28,7 @@ enum class StopReason(val label: String) {
     CONNECTION_LOST("Connection to the adapter lost"),
     MODULE_SILENT("The module stopped answering"),
     CANCELLED("Cancelled"),
+    ERROR("Execution failed"),
 }
 
 enum class RunOutcome(val label: String) {
@@ -137,6 +138,9 @@ class ActuatorRunner(
             }
         } catch (e: CancellationException) {
             boundaryCancellation = e
+        } catch (e: Exception) {
+            log.step("Operation failed: ${e.message ?: e.javaClass.simpleName}", ok = false)
+            if (completed == null) completed = RunResult(RunOutcome.FAILED, "Operation failed before starting: ${e.message}", StopReason.ERROR) to null
         }
         val (result, cancellation) = completed ?: (RunResult(RunOutcome.REFUSED, "Cancelled before starting", StopReason.CANCELLED) to boundaryCancellation)
         val cancelled = cancellation ?: boundaryCancellation
@@ -254,22 +258,38 @@ class ActuatorRunner(
         } catch (e: CancellationException) {
             cancelled = e
             stopReason = StopReason.CANCELLED
+        } catch (e: Exception) {
+            stopReason = StopReason.ERROR
+            failure = RunResult(RunOutcome.FAILED, "Execution failed: ${e.message ?: e.javaClass.simpleName}", stopReason)
+            log.step(failure.message, ok = false)
         }
 
-        // Clean-up always runs, even when the caller's coroutine was cancelled.
+        // UI callbacks, unexpected executor errors and cancellation must not bypass output-off,
+        // default-session attempts or grant revocation. No cleanup write is ever reported as verified
+        // merely because it was attempted, and a dropped route is never reconnected for cleanup.
         val stopConfirmed = withContext(NonCancellable) {
-            onPhase(RunPhase.Stopping(stopReason ?: StopReason.USER))
-            var confirmed = !startSent
-            if (startSent) {
-                var outcome = send("Stop", recipe.stop, STOP_TIMEOUT_MS)
-                if (!outcome.isPositive && outcome !is UdsOutcome.ConnectionLost) outcome = send("Stop (retry)", recipe.stop, STOP_TIMEOUT_MS)
-                confirmed = outcome.isPositive
+            try {
+                try { onPhase(RunPhase.Stopping(stopReason ?: StopReason.USER)) }
+                catch (e: Exception) { log.step("Stopping display failed: ${e.message}", ok = false) }
+                suspend fun cleanup(label: String, request: List<Int>): UdsOutcome? = try {
+                    send(label, request, STOP_TIMEOUT_MS)
+                } catch (e: Exception) {
+                    log.step("$label failed: ${e.message}", Hex.format(request), ok = false)
+                    null
+                }
+                var confirmed = !startSent
+                if (startSent) {
+                    var outcome = cleanup("Stop", recipe.stop)
+                    if (outcome?.isPositive != true && outcome !is UdsOutcome.ConnectionLost) outcome = cleanup("Stop (retry)", recipe.stop)
+                    confirmed = outcome?.isPositive == true
+                }
+                if (recipe.session != recipe.defaultSession) {
+                    cleanup("Return to default session", listOf(WritePolicy.SESSION_CONTROL, recipe.defaultSession))
+                }
+                confirmed
+            } finally {
+                grant.revoke()
             }
-            if (recipe.session != recipe.defaultSession) {
-                send("Return to default session", listOf(WritePolicy.SESSION_CONTROL, recipe.defaultSession))
-            }
-            grant.revoke()
-            confirmed
         }
         cancelled?.let { return RunResult(RunOutcome.FAILED, "Cancelled", StopReason.CANCELLED, stopConfirmed, report) to it }
 

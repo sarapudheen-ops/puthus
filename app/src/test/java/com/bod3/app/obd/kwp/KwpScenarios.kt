@@ -251,6 +251,67 @@ object KwpScenarios {
         check(audit.records().single().details["Stop reason"] == "Cancelled")
     }
 
+    suspend fun codingRecovery(mode: String): Unit = coroutineScope {
+        val b = Bench(); val store = CodingBackupStore(InMemoryKeyValueStore()); val audit = AuditStore(InMemoryKeyValueStore())
+        val recipe = CodingRecipe("synthetic-recovery", "Synthetic recovery", module =
+            ActuatorModule("Synthetic ECU", requestId = "8010F1", responseId = "80F110", link = link),
+            method = CodingMethod.DID_VALUE, did = 0x20, byteIndex = 0,
+            options = listOf(CodingOption(0, "Off"), CodingOption(1, "On")), session = 0x81,
+            readService = 0x21, writeService = 0x3B)
+        val engine = CodingEngine(b.session, probe, { true }, audit, store, { b.now })
+        val reading = (engine.read(recipe) as ReadResult.Ready).reading
+        var run: Deferred<CodingResult>? = null
+        b.adapter.ecu.wrongReadBack = mode == "mismatch"
+        b.adapter.onRequest = { request ->
+            if (request.first() == 0x3B) {
+                if (mode == "cancel-after") run!!.cancel()
+                if (mode == "disconnect") b.adapter.disconnected = true
+            }
+        }
+        run = async(start = CoroutineStart.LAZY) {
+            engine.write(reading, 1, CodingConfirmation.forWrite(reading, 1) { b.now }) { step ->
+                if (step == CodingStep.WRITE && mode == "cancel-before") run!!.cancel()
+                if (step == CodingStep.VERIFY && mode == "exception") error("Synthetic UI failure")
+                if (step == CodingStep.CLOSE && mode == "exception") error("Synthetic closing UI failure")
+            }
+        }
+        if (mode.startsWith("cancel")) fails<CancellationException> { run.await() }
+        else {
+            val result = run.await()
+            check(result.outcome == if (mode == "mismatch") CodingOutcome.VERIFY_FAILED else CodingOutcome.UNKNOWN) { result.toString() }
+        }
+        check(audit.records().size == 1 && !audit.records().single().success)
+        if (mode == "cancel-before") {
+            check(b.ecuRequests().none { it.first() == 0x3B })
+            check(b.adapter.ecu.locals[0x20] == reading.data)
+            check(audit.records().single().outcome.startsWith(CodingOutcome.ABORTED.label))
+        } else {
+            check(store.get(reading.backup.id)!!.status in setOf(BackupStatus.WRITE_UNKNOWN, BackupStatus.WRITE_FAILED))
+        }
+        if (mode != "disconnect") check(b.adapter.ecu.session == 1)
+        if (mode == "mismatch") {
+            b.adapter.ecu.wrongReadBack = false
+            check(engine.rollback(reading.backup, CodingConfirmation.forRollback(reading.backup) { b.now }).outcome == CodingOutcome.VERIFIED)
+            check(b.adapter.ecu.locals[0x20] == reading.data)
+        }
+    }
+
+    suspend fun actuatorUnexpectedFailure() {
+        val b = Bench(); val audit = AuditStore(InMemoryKeyValueStore())
+        val recipe = ActuatorRecipe("synthetic-error", "Synthetic callback error", "Not vehicle data",
+            ActuatorModule("Synthetic ECU", requestId = "8010F1", responseId = "80F110", link = link),
+            session = 0x81, start = listOf(0x30, 0x20, 3, 1), stop = listOf(0x30, 0x20, 0),
+            durationSeconds = 1, safetyNotes = listOf("Synthetic only"))
+        b.client.readLocal(0x20)
+        val runner = ActuatorRunner(b.session, probe, { true }, audit, clock = { b.now }, sleep = { b.now += it })
+        val result = runner.run(recipe, ActuatorConfirmation.forRecipe(recipe) { b.now }) {
+            if (it is RunPhase.Running || it is RunPhase.Stopping) error("Synthetic UI failure")
+        }
+        check(result.outcome == RunOutcome.FAILED && result.stopConfirmed)
+        check(!b.adapter.ecu.output && b.adapter.ecu.session == 1)
+        check(audit.records().single().details["Stop reason"] == StopReason.ERROR.label)
+    }
+
     fun formulaOffset() {
         val p = CustomPid("synthetic", "Synthetic", "2120", "(A*256+B)/4", header = "8010F1", responseHeader = "80F110",
             link = link, dataOffset = 2, sourceRecords = listOf("synthetic:formula"))

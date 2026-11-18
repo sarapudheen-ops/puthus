@@ -29,5 +29,11 @@ class KwpTest {
     @Test fun codingBackupDiffWriteVerifyRollbackAndSingleUseConfirmation() = runBlocking { KwpScenarios.coding() }
     @Test fun outputAndRoutineStopAndReturnToDefaultSession() = runBlocking { KwpScenarios.actuator() }
     @Test fun cancellationStillStopsAndAuditsAcrossRoutingContext() = runBlocking { KwpScenarios.actuatorCancellation() }
+    @Test fun codingCancellationBeforeWriteNeverSendsWrite() = runBlocking { KwpScenarios.codingRecovery("cancel-before") }
+    @Test fun codingCancellationDuringWriteAuditsUnknownAndPreservesBackup() = runBlocking { KwpScenarios.codingRecovery("cancel-after") }
+    @Test fun codingDisconnectDoesNotReconnectAndReplayWrite() = runBlocking { KwpScenarios.codingRecovery("disconnect") }
+    @Test fun codingMismatchedReadBackCanBeRolledBack() = runBlocking { KwpScenarios.codingRecovery("mismatch") }
+    @Test fun codingUnexpectedCallbackExceptionStillClosesAndAudits() = runBlocking { KwpScenarios.codingRecovery("exception") }
+    @Test fun actuatorUnexpectedCallbackExceptionStillStopsAndAudits() = runBlocking { KwpScenarios.actuatorUnexpectedFailure() }
     @Test fun localFormulaByteOffsetAndEcho() = KwpScenarios.formulaOffset()
 }
