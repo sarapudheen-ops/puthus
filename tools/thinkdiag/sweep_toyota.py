@@ -73,6 +73,13 @@ def json_text(value) -> str:
 
 def publishable_report(directory: Path, name: str, title: str, text: str) -> list[str]:
     """Chunk at lines under Checks API's UTF-8 limit, never silently truncate."""
+    # Static address-range selectors contain ':' and '@'. Preserve them verbatim in
+    # the report title/body, but use portable manifest/artifact names (also on NTFS).
+    # The suffix prevents two distinct selectors with the same sanitized stem from
+    # overwriting one another. Ordinary, already-safe report names stay stable.
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+    if safe_name != name:
+        safe_name += "-" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
     directory.mkdir(parents=True, exist_ok=True)
     parts, lines, size = [], [], 0
     for line in text.splitlines(keepends=True):
@@ -89,7 +96,7 @@ def publishable_report(directory: Path, name: str, title: str, text: str) -> lis
     paths = []
     for index, body in enumerate(parts, 1):
         suffix = f"-{index:03d}" if len(parts) > 1 else ""
-        path = directory / f"sweep-{name}{suffix}.md"
+        path = directory / f"sweep-{safe_name}{suffix}.md"
         path.write_text(f"# {title}\n\nPart {index}/{len(parts)}; research only, not runnable definitions.\n\n{body}", encoding="utf-8")
         if path.stat().st_size > 60000:
             raise ValueError("Report exceeds Checks API budget")

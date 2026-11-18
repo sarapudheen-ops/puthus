@@ -25,6 +25,22 @@ class SweepSafetyTest(unittest.TestCase):
                 recovered.append(data.decode().split("\n\n", 2)[2])
             self.assertEqual(text, "".join(recovered))
 
+    def test_address_range_report_names_are_portable_and_manifest_compatible(self):
+        from sweep_reports import make_parts, unpack_parts
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            reports = []
+            selectors = ["reader-CALC.so-@0x1032c:0x1ab8", "reader-CALC.so-@0x1032c?0x1ab8", "../unsafe\\name"]
+            for selector in selectors:
+                names = publishable_report(root, selector, selector, "Complete evidence\n")
+                self.assertEqual(1, len(names))
+                self.assertRegex(names[0], r"^sweep-[A-Za-z0-9_.-]+\.md$")
+                report = (root / names[0]).read_text()
+                self.assertIn(selector, report)
+                reports.append({"file": names[0], "text": report})
+            self.assertEqual(len(selectors), len({r["file"] for r in reports}))
+            self.assertEqual(reports, unpack_parts(make_parts(reports)))
+
     def test_manifest_rejects_traversal_absolute_and_symlink_escape(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "decoded"
