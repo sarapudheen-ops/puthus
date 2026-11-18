@@ -58,7 +58,7 @@ def reader_report(data: bytes, name: str, wanted: list[str], *, include_symbols:
         text = block.split(b"\0", 1)[0]
         if len(text) >= 3 and all(32 <= b < 127 for b in text):
             return repr(text.decode("ascii"))
-        return block[:24].hex(" ")
+        return block.hex(" ")
 
     out = [f"# {name}: selected readers (static disassembly only)", ""]
     md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)

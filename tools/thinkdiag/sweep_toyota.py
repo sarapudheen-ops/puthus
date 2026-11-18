@@ -16,6 +16,7 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import zipfile
+import zlib
 
 from analyze_toyota import TOYOTA_SHA256, checked_infos, native_info
 from static_readers import reader_report
@@ -32,12 +33,12 @@ FOCUSED_READERS = {
         "GetExistDataIdList", "GetDsValue", "GetActCmdDataInfoP3", "GetActCmdDataInfoP4",
         "SetCmdToSndFrameFunc_1", "SetCmdToSndFrameFunc_2", "SetCmdToSndFrameFunc_3",
         "GetShowDsItem", "GetShowDsItem_P4", "GetShowDsItem_P5", "GetCmdDataIndex", "GetSystemEnterIndex",
-        "GetEcuDataP4", "CalDataFromSignalLSB", "GetDIDReceiveData"],
-    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex", "InitSetEnterFrame", "SendCmdAndGetReceive", "InitKWPISOMode", "InitCanBusMode"],
+        "GetEcuDataP4", "CalDataFromSignalLSB", "GetDIDReceiveData", "AnalyzeDataFunc_1", "AnalyzeDataFunc_2", "GetECUDataP3", "GetDataIdList", "GetDSDataP3"],
+    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex", "InitSetEnterFrame", "SendCmdAndGetReceive", "SendCmdAndGetReceive_EX", "SendCmdAndGetReceive_GN", "InitKWPISOMode", "InitCanBusMode", "MenuEnterCommunicationSet"],
     "libTOYOTA_CALC.so": ["ResultCalcFromCalcID", "Calc_C"],
     "libDIAG.so": ["InitMenuTree", "MenuTreeDispose_Ex", "GetMenuSubItemTextID_Ex",
         "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID",
-        "GetMenuID_Ex", "GetCurrentMenuSaveData", "MenuPro_Ex", "GetVehicleInfoManual", "DoDownTask", "GTokenMoveToSToken", "ManualSelectSystem", "DiagnoseSystem"],
+        "GetMenuID_Ex", "GetCurrentMenuSaveData", "MenuPro_Ex", "GetVehicleInfoManual", "DoDownTask", "GTokenMoveToSToken", "ManualSelectSystem", "DiagnoseSystem", "VehicleSystemScan", "VehicleSystemScanEx", "GetVehicleSystemBaseInfo", "GetCurrentMenuData", "MakeDataToBuffer_Ex"],
     "libTOYOTA_INFO.so": ["InitVehicleInfo"],
     "libTOYOTA_SCAN.so": ["GetSysListNo", "TransferVehicleInfo", "InitTopSystemList"],
 }
@@ -418,6 +419,20 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     emit_report("conversion-inputs", "SHA-pinned conversion input excerpts (not executable)", json_text(conversion_inputs))
     emit_report("conversion-expressions", "Complete recovered EXPRESS text for bounded translation (not execution)",
                 json_text(libraries.get("EXPRESS.GAG.json", {})))
+    # Complete applicability inputs, compressed for review through the same checksum-checked
+    # evidence path when release-asset downloads are inaccessible. Never native library bytes.
+    applicability = []
+    for name, source in sorted(paths.items()):
+        if name == "MENU.BIN" or re.fullmatch(r"(?:SYSLIST|FUNCDATA)_(?:EU|JP|NA)\.BIN", name):
+            raw = source.read_bytes()
+            applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                                  "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
+    for name in ("TEXT_EN.GAG.json", "DSTREAM_EN.GAG.json"):
+        if name in libraries:
+            raw = json_text(libraries[name]).encode("utf-8")
+            applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                                  "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
+    emit_report("conversion-applicability", "Complete applicability tables and English labels for conversion review (data only)", json_text(applicability))
     (output / "text-keyword-evidence.json").write_text(json_text(hits))
     (output / "sweep-summary.json").write_text(json_text(findings))
     emit_report("summary", "Toyota full diagnostic-data sweep", json_text(findings))
