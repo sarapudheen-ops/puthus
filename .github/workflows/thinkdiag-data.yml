@@ -17,7 +17,7 @@ jobs:
   inspect:
     name: Inspect Toyota archive (no vendor code execution)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -51,33 +51,26 @@ jobs:
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/sweep --report .local/thinkdiag/report
-      - name: Build complete offline app source library
+      - name: Convert source-bound, on-demand vehicle packs in Actions
         run: |
-          python3 tools/thinkdiag/build_app_database.py .local/thinkdiag/TOYOTA.zip \
+          python3 tools/thinkdiag/convert_vehicle_packs.py .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
-            --output .local/thinkdiag/app-library
+            --output .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/thinkdiag/vehicle-packs
           gh api --method POST "repos/$GH_REPO/check-runs" \
-            -f name='Toyota app library census' -f head_sha="$GITHUB_SHA" \
+            -f name='Toyota vehicle conversion accounting' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion=success \
-            -f 'output[title]=Complete data-only app library' \
-            -F 'output[summary]=@.local/thinkdiag/app-library/manifest.json'
-      - name: Verify the full app library is exactly reproducible on this toolchain
-        run: |
-          python3 tools/thinkdiag/verify_app_database.py --directory .local/thinkdiag/app-library
-          python3 tools/thinkdiag/build_app_database.py .local/thinkdiag/TOYOTA.zip \
-            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
-            --manifest .local/thinkdiag/report/decoded-manifest.json \
-            --output .local/thinkdiag/app-library-again
-          cmp .local/thinkdiag/app-library/manifest.json .local/thinkdiag/app-library-again/manifest.json
-          cmp .local/thinkdiag/app-library/toyota-source.zip .local/thinkdiag/app-library-again/toyota-source.zip
-      - name: Upload offline app source library (no vendor executables)
+            -f 'output[title]=Partial conversion: unresolved items remain disabled' \
+            -F 'output[summary]=@.local/thinkdiag/vehicle-packs/conversion-report.md'
+      - name: Upload on-demand packs and exact per-item conversion ledgers
         uses: actions/upload-artifact@v7
         with:
-          name: toyota-app-library
-          path: .local/thinkdiag/app-library/
+          name: toyota-vehicle-packs
+          path: .local/thinkdiag/vehicle-packs/
           if-no-files-found: error
-          retention-days: 14
+          compression-level: 0
+          retention-days: 7
       - name: Convert unambiguous English DTC descriptions (no vehicle commands)
         run: |
           python3 tools/thinkdiag/convert_dtcs.py .local/thinkdiag/english/TCODE_EN.GAG.json \

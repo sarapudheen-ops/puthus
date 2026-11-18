@@ -271,6 +271,18 @@ class CodingEngineTest {
     }
 
     @Test
+    fun unacknowledgedSessionStillAttemptsDefaultButNeverWrites() {
+        val bench = Bench()
+        val reading = bench.read()
+        bench.ecu.silentFor += 0x10
+        val result = bench.write(reading, 1)
+        assertEquals(CodingOutcome.ABORTED, result.outcome)
+        assertTrue(bench.writeRequests().isEmpty())
+        assertEquals(listOf(0x10, 0x01), bench.sent().last())
+        assertTrue(bench.audit.records().single().steps.any { it.label.contains("Return to default session") })
+    }
+
+    @Test
     fun connectionLossDuringWriteReportsUnknownAndOffersRollback() {
         val bench = Bench()
         val reading = bench.read()

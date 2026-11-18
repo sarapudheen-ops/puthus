@@ -412,6 +412,9 @@ class CodingEngine(
                 currentCoroutineContext().ensureActive()
                 sessionAttempted = true // A lost acknowledgement does not prove the ECU stayed in default session.
                 val outcome = send("Open session %02X".format(target.session), listOf(WritePolicy.SESSION_CONTROL, target.session))
+                // An explicit refusal proves this request did not open the session. Silence, pending,
+                // cancellation or an adapter error do not, so those still need a cleanup attempt.
+                if (outcome is UdsOutcome.Negative) sessionAttempted = false
                 if (!outcome.isPositive) return aborted("Could not open the diagnostic session: ${outcome.display}", current, backupId, report)
             }
             target.security?.let { spec ->
