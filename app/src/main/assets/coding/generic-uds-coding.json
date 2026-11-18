@@ -1,0 +1,68 @@
+{
+  "format": "bod3-coding",
+  "formatVersion": 1,
+  "id": "generic-uds-coding",
+  "name": "Generic UDS coding templates",
+  "version": 1,
+  "author": "bod3",
+  "description": "Starting points for your own recipes. Copy one with Edit, change the module, identifier and positions to match your module's documentation, then save it as your own recipe.",
+  "recipes": [
+    {
+      "id": "generic-long-coding-bit",
+      "name": "Long-coding bit (template)",
+      "description": "Switch one bit of a module's coding (identifier 0600).",
+      "module": { "name": "Engine", "address": "01", "requestId": "7E0", "responseId": "7E8" },
+      "method": "long_coding",
+      "did": "0600",
+      "byte": 0,
+      "mask": "01",
+      "values": [
+        { "value": 0, "label": "Off" },
+        { "value": 1, "label": "On" }
+      ],
+      "session": "03",
+      "preconditions": { "minVoltage": 12.0, "allowEngineRunning": false },
+      "source": "Template",
+      "notes": "Replace the module, byte and mask before use.",
+      "verified": false
+    },
+    {
+      "id": "generic-adaptation-value",
+      "name": "Adaptation channel value (template)",
+      "description": "A 2-byte numeric adaptation value, shown scaled.",
+      "module": { "name": "Engine", "address": "01", "requestId": "7E0", "responseId": "7E8" },
+      "method": "adaptation",
+      "did": "0100",
+      "byte": 0,
+      "length": 2,
+      "min": 0,
+      "max": 1000,
+      "factor": 0.1,
+      "unit": "%",
+      "session": "03",
+      "preconditions": { "minVoltage": 12.0, "allowEngineRunning": false },
+      "source": "Template",
+      "notes": "Identifier 0100 is a placeholder; use the adaptation channel identifier from your module's documentation.",
+      "verified": false
+    },
+    {
+      "id": "generic-did-value",
+      "name": "Identifier option (template)",
+      "description": "Choose one of a few named values stored in an identifier byte.",
+      "module": { "name": "Engine", "address": "01", "requestId": "7E0", "responseId": "7E8" },
+      "method": "did_value",
+      "did": "0101",
+      "byte": 0,
+      "values": [
+        { "value": 0, "label": "Variant A" },
+        { "value": 1, "label": "Variant B" },
+        { "value": 2, "label": "Variant C" }
+      ],
+      "session": "03",
+      "preconditions": { "minVoltage": 12.0, "allowEngineRunning": false },
+      "source": "Template",
+      "notes": "Placeholder identifier and values.",
+      "verified": false
+    }
+  ]
+}

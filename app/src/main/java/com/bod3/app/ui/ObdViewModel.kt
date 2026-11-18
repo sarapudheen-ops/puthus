@@ -9,6 +9,10 @@ import com.bod3.app.actuator.ActuatorLibrary
 import com.bod3.app.actuator.SessionStateProbe
 import com.bod3.app.actuator.VehicleContext
 import com.bod3.app.android.AssetActuatorPacks
+import com.bod3.app.android.AssetCodingPacks
+import com.bod3.app.coding.CodingBackupStore
+import com.bod3.app.coding.CodingController
+import com.bod3.app.coding.CodingLibrary
 import com.bod3.app.android.AssetDataPacks
 import com.bod3.app.audit.AuditStore
 import com.bod3.app.android.ReportSharer
@@ -111,7 +115,7 @@ import kotlinx.coroutines.withContext
 enum class Screen {
     DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
     VEHICLES, VEHICLE_EDIT, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
-    ACTUATORS, ACTUATOR_RUN,
+    ACTUATORS, ACTUATOR_RUN, CODING, CODING_RUN, CODING_EDITOR,
 }
 
 sealed interface ConnectionState {
@@ -310,6 +314,21 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         environment = ::actuatorEnvironment,
         log = ::appendLog,
         bundledErrors = bundledActuators.errors,
+    )
+
+    // ---- Coding (M5) ----
+    private val bundledCoding = AssetCodingPacks.load(application)
+
+    /** Coding screens; writes need Expert mode, a backup, a confirmed diff and passing safety checks. */
+    val coding = CodingController(
+        scope = viewModelScope,
+        library = CodingLibrary(bundledCoding.packs, SharedPrefsKeyValueStore(application)),
+        audit = auditStore,
+        backups = CodingBackupStore(SharedPrefsKeyValueStore(application)),
+        expertMode = { connectionStore.expertModeEnabled },
+        environment = ::actuatorEnvironment,
+        log = ::appendLog,
+        bundledErrors = bundledCoding.errors,
     )
 
     private val profiles: VehicleProfileService by lazy {
@@ -701,7 +720,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openTerminal() {
         val currentDriver = driver ?: return
-        if (!connectionStore.expertModeEnabled || scanJob?.isActive == true) return
+        if (!connectionStore.expertModeEnabled || scanJob?.isActive == true || coding.state.value.busy || actuators.state.value.running) return
         pauseLiveData()
         // The terminal talks to the adapter directly (not through the session's routing) and every
         // diagnostic request still passes the read-only policy.
@@ -933,7 +952,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         voltageJob?.cancel()
         voltageJob = viewModelScope.launch {
             while (isActive) {
-                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL || actuators.state.value.running
+                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL || actuators.state.value.running || coding.state.value.busy
                 if (!busy) sampleVoltage()
                 delay(VOLTAGE_INTERVAL_MS)
             }
@@ -1340,7 +1359,9 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { s -> s.ecuDetail?.let { s.copy(ecuDetail = change(it)) } ?: s }
     }
 
-    private fun canUseBus(): Boolean = session != null && scanJob?.isActive != true && ecuJob?.isActive != true
+    /** Only one bus user at a time: scans, ECU reads, actuator tests and coding writes exclude each other. */
+    private fun canUseBus(): Boolean =
+        session != null && scanJob?.isActive != true && ecuJob?.isActive != true && !actuators.state.value.running && !coding.state.value.busy
 
     fun readEcu() {
         val currentSession = session ?: return
@@ -1516,6 +1537,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openActuators() {
+        if (coding.state.value.busy) return
         pauseLiveData()
         actuators.refresh()
         _state.update { it.copy(screen = Screen.ACTUATORS) }
@@ -1542,6 +1564,68 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val json = actuators.exportJson(recipeId)
         val app = getApplication<Application>()
         val name = "bod3-actuators-${recipeId ?: "mine"}-${System.currentTimeMillis()}.json"
+        return withContext(Dispatchers.IO) { ReportSharer.write(app, name, json) }
+    }
+
+    // ---- Coding ------------------------------------------------------------------------------------
+
+    fun openCoding() {
+        if (actuators.state.value.running || scanJob?.isActive == true) return
+        pauseLiveData()
+        coding.refresh()
+        _state.update { it.copy(screen = Screen.CODING) }
+    }
+
+    /** Leaving is blocked while a read or write is running, so it always finishes cleanly. */
+    fun closeCoding() {
+        if (coding.state.value.busy) return
+        coding.select(null)
+        _state.update { it.copy(screen = if (it.offline) Screen.DEVICES else Screen.DASHBOARD) }
+    }
+
+    fun openCodingRecipe(id: String) {
+        coding.select(id)
+        _state.update { it.copy(screen = Screen.CODING_RUN) }
+    }
+
+    fun closeCodingRecipe() {
+        if (coding.state.value.busy) return
+        coding.select(null)
+        coding.refresh()
+        _state.update { it.copy(screen = Screen.CODING) }
+    }
+
+    fun openCodingEditor(id: String?) {
+        if (coding.state.value.busy) return
+        coding.openEditor(id)
+        _state.update { it.copy(screen = Screen.CODING_EDITOR) }
+    }
+
+    fun codingEditorTemplate() {
+        coding.openEditor(null)
+    }
+
+    fun saveCodingEditor() {
+        val id = coding.saveEditor() ?: return
+        coding.select(id)
+        _state.update { it.copy(screen = Screen.CODING_RUN) }
+    }
+
+    fun closeCodingEditor() {
+        val back = if (coding.state.value.selectedId != null) Screen.CODING_RUN else Screen.CODING
+        coding.closeEditor()
+        _state.update { it.copy(screen = back) }
+    }
+
+    fun deleteCodingRecipe(id: String) {
+        coding.deleteUserRecipe(id)
+        if (coding.state.value.selectedId == null) _state.update { it.copy(screen = Screen.CODING) }
+    }
+
+    suspend fun writeCodingExport(recipeId: String?): File {
+        val json = coding.exportJson(recipeId)
+        val app = getApplication<Application>()
+        val name = "bod3-coding-${recipeId ?: "mine"}-${System.currentTimeMillis()}.json"
         return withContext(Dispatchers.IO) { ReportSharer.write(app, name, json) }
     }
 

@@ -237,6 +237,54 @@ simulated CAN adapter. They cover:
 - confirmation reuse;
 - applicability overrides.
 
+## Features (M5): coding
+
+Coding changes a value stored in a module: a long-coding byte/bit (VW `0600`), an adaptation channel, or
+any identifier value. All three are read with `22 <DID>` and written back whole with `2E <DID> <data>`.
+Only the bits or bytes of the recipe's field change; every other byte is written back exactly as read.
+
+- **Recipes** are JSON (`bod3-coding`, format version 1). Each recipe has a name, description, module (address,
+  CAN request/response IDs), method (`long_coding`, `adaptation`, `did_value`), identifier (default `0600`
+  for long coding), byte position, bit mask or length (1-4 bytes, big-endian), a value map or range
+  (with optional factor/offset/unit for display), session, optional security access, preconditions
+  (`minVoltage`, default 12.0 V; `allowEngineRunning`, default false), applicability (makes, models, module
+  part numbers, software versions), source, notes and `verified`. Bundled examples live in `assets/coding`
+  (generic templates and VW MQB, including Tiguan BCM comfort closing as a long-coding bit) and all ship as
+  **unverified**: long-coding positions differ between part numbers. Recipes can be added at runtime: import
+  a file, or create/edit one in the in-app JSON editor (editing a bundled recipe makes your own copy).
+  Every problem is listed with its JSON path.
+- **Validation:** identification records `F180`-`F19F` are never written (except `F198`/`F199`); long coding
+  needs a mask; masks are single-byte; identifier values need a value map; every option must fit the field;
+  sessions are `01`/`03` only; security levels are odd.
+- **Write flow** (single verified steps, aborting cleanly on any error):
+  1. **Verify the module:** `F187`/`F189` are read and matched against the recipe's part numbers and software
+     versions. A mismatch (or an unreadable value) refuses unless you tick the override.
+  2. **Read and back up:** the identifier is read and the whole data is saved as a persistent backup with
+     module, session and security details, so it can be restored even if the recipe is deleted later.
+  3. **Diff:** choose the new value and see before/after, byte by byte (hex and binary).
+  4. **Confirm:** single-use confirmation bound to that backup and that value, valid for 60 s.
+  5. **Safety checks:** Expert mode; battery ≥ the recipe minimum (unknown counts as a failure); ignition on;
+     engine off unless the recipe allows it; vehicle stationary.
+  6. **Re-read:** the value must still equal the backup, otherwise nothing is written.
+  7. `10 03`, security access, `2E`. A write is sent once and never retried.
+  8. **Verify:** read back and compare. Outcomes: verified, rejected (module unchanged), read-back differs, or
+     unknown (connection lost); the last two offer rollback straight away.
+  9. `10 01` and the grant is revoked, even after errors or cancellation.
+- **Rollback:** one tap after a write, or from any backup in the list. It writes the backup through the same
+  gates (Expert mode, confirmation, safety checks, session, security, read-back).
+- **Audit log:** every write, rollback and refusal is recorded with the before/intended/read-back data,
+  part number, software version, backup id, whether the version check was overridden, and every
+  request/response.
+- **Write policy:** the coding grant allows only `10 01/03`, `27`, `3E` and `2E` on one module. While a coding
+  read or write runs, scans, ECU reads, actuator tests, the terminal and voltage polling are blocked, and the
+  screen cannot be left.
+
+Tests (`coding/`) cover the codec and validator, the field bit math, backup → write → verify → rollback,
+refusal outside Expert mode, low/unknown battery voltage, engine running (and recipes that allow it),
+version mismatch and override, a wrong security key, a negative response to `2E`, connection loss during the
+write (before and after the module applied it), read-back mismatch, a module that silently ignores the
+write, a value that changed since the backup, confirmation reuse/expiry, and the screen controller.
+
 ## Architecture
 
 ```
@@ -268,11 +316,14 @@ diagnostics/        EcuWorkbench: per-ECU identification, DTCs, records and clea
 live/               LiveCatalog, LiveReader, LiveRecorder, CsvExporter, LiveHistory
 obd/terminal/       TerminalPolicy, RawTerminal (expert raw terminal)
 report/             DiagnosticReport (shareable text report)
-android/            SharedPreferences store, ReportSharer (FileProvider), AssetDataPacks, AssetActuatorPacks
+android/            SharedPreferences store, ReportSharer (FileProvider), AssetDataPacks, AssetActuatorPacks,
+                    AssetCodingPacks
 obd/session/WriteGrant  WritePolicy (per-purpose whitelist), WriteGate (Expert mode only), WriteGrant
 obd/uds/UdsWriteClient  session control, security access (seed/key algorithms), non-read requests as outcomes
 actuator/           recipe model + validation, JSON codec, ActuatorLibrary (bundled + user), PreconditionChecker,
                     ActuatorRunner (run engine), ActuatorController (screen logic)
+coding/             CodingRecipe + CodingField (bit math), JSON codec, CodingLibrary (bundled + user),
+                    CodingBackupStore, CodingEngine (read/backup/write/verify/rollback), CodingController
 audit/              AuditStore (permanent operation log), AuditFormatter
 recipe/             JsonFields (path-aware JSON reading), Hex
 ```

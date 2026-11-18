@@ -9,6 +9,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bod3.app.ui.screens.ActuatorRunScreen
 import com.bod3.app.ui.screens.ActuatorsScreen
+import com.bod3.app.ui.screens.CodingEditorScreen
+import com.bod3.app.ui.screens.CodingRunScreen
+import com.bod3.app.ui.screens.CodingScreen
 import com.bod3.app.ui.screens.ConnectionSettingsScreen
 import com.bod3.app.ui.screens.CustomPidsScreen
 import com.bod3.app.ui.screens.EcuDetailScreen
@@ -35,6 +38,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val log by viewModel.log.collectAsStateWithLifecycle()
     val actuatorState by viewModel.actuators.state.collectAsStateWithLifecycle()
+    val codingState by viewModel.coding.state.collectAsStateWithLifecycle()
 
     // Permission or Bluetooth state may change while we are in the background (system settings).
     LifecycleResumeEffect(Unit) {
@@ -77,6 +81,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     writeReport = viewModel::writeReport,
                     onOpenGarage = viewModel::openGarage,
                     onOpenActuators = viewModel::openActuators,
+                    onOpenCoding = viewModel::openCoding,
                 ),
             )
         }
@@ -312,6 +317,66 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 writeExport = { viewModel.writeActuatorExport(actuatorState.selectedId) },
                 onDismissMessage = viewModel.actuators::dismissMessage,
             )
+        }
+
+        Screen.CODING -> {
+            BackHandler(onBack = viewModel::closeCoding)
+            CodingScreen(
+                state = codingState,
+                expertMode = state.settings.expertMode,
+                connected = state.isConnected,
+                onBack = viewModel::closeCoding,
+                onOpen = viewModel::openCodingRecipe,
+                onNewRecipe = { viewModel.openCodingEditor(null) },
+                onImportText = viewModel.coding::importJson,
+                writeExport = { viewModel.writeCodingExport(null) },
+                writeAuditLog = viewModel::writeAuditLog,
+                onRequestRollback = viewModel.coding::requestRollback,
+                onConfirmRollback = viewModel.coding::confirmRollback,
+                onCancelRollback = viewModel.coding::cancelRollback,
+                onDismissMessage = viewModel.coding::dismissMessage,
+                onOpenSettings = viewModel::openSettings,
+            )
+        }
+
+        Screen.CODING_RUN -> {
+            BackHandler(onBack = viewModel::closeCodingRecipe)
+            CodingRunScreen(
+                state = codingState,
+                expertMode = state.settings.expertMode,
+                connected = state.isConnected,
+                onBack = viewModel::closeCodingRecipe,
+                onRead = viewModel.coding::read,
+                onOverride = viewModel.coding::setOverrideVersion,
+                onValue = viewModel.coding::setNewValue,
+                onWrite = viewModel.coding::requestWrite,
+                onConfirm = viewModel.coding::confirmWrite,
+                onCancelConfirm = viewModel.coding::cancelConfirmation,
+                onRollbackLast = viewModel.coding::rollbackLast,
+                onRequestRollback = viewModel.coding::requestRollback,
+                onConfirmRollback = viewModel.coding::confirmRollback,
+                onCancelRollback = viewModel.coding::cancelRollback,
+                onEdit = { id -> viewModel.openCodingEditor(id) },
+                onDelete = viewModel::deleteCodingRecipe,
+                writeExport = { viewModel.writeCodingExport(codingState.selectedId) },
+                onDismissMessage = viewModel.coding::dismissMessage,
+            )
+        }
+
+        Screen.CODING_EDITOR -> {
+            BackHandler(onBack = viewModel::closeCodingEditor)
+            val editor = codingState.editor
+            if (editor == null) {
+                LaunchedEffect(Unit) { viewModel.closeCodingEditor() }
+            } else {
+                CodingEditorScreen(
+                    editor = editor,
+                    onChange = viewModel.coding::updateEditor,
+                    onSave = viewModel::saveCodingEditor,
+                    onTemplate = viewModel::codingEditorTemplate,
+                    onBack = viewModel::closeCodingEditor,
+                )
+            }
         }
 
         Screen.PROFILE_ECUS -> {
