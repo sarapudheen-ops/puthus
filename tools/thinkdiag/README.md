@@ -59,4 +59,8 @@ Static Toyota readers identify SYSLIST vehicle-ID/section-offset pairs and 37-by
 
 `convert_dtcs.py` keeps only explicit SAE-shaped base/extended code pairs with a unique remaining description, normalizes whitespace, and excludes placeholder and generic-category text. It preserves extended-code suffixes and never resolves conflicts by frequency. The full `toyota-dtc-audit.json` maps every accepted code to source record IDs and lists all conflicting variants; it is a research artifact, not a bundled dataset. [`toyota-dtcs.provenance.json`](toyota-dtcs.provenance.json) pins the bundled derivative's hash, size, scope, counts and rules. CI regenerates and compares the derivative byte-for-byte; app unit tests also validate the real asset and scoped import/export.
 
+### Manual catalog integration
+
+The application now migrates the unchanged passive `dtcGroups` reference into a reusable catalog platform, retaining the original make restrictions and source once rather than copying 11,989 meanings into every generation. Catalog JSON exports preserve that platform and its restrictions; ECU CSV intentionally does not carry DTC text. A known profile make wins over a conflicting saved link or manual catalog choice for passive fault wording, but no reference lookup selects a vehicle, ECU list or connection profile. See the [catalog format/migration guide](../../docs/vehicle-catalog.md) and the catalog JVM migration/integration tests. This integration does not change the converter or bundled derivative's bytes/hash, and introduces no recovered diagnostic requests.
+
 Tests establish format handling, reproducibility and application isolation, **not** correctness of vendor descriptions for every vehicle. No real-car/adapter validation has been performed.
