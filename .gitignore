@@ -40,3 +40,5 @@ google-services.json
 
 # Local external archives, analysis output and tooling (never bundle raw vendor assets)
 .local/
+__pycache__/
+*.pyc
