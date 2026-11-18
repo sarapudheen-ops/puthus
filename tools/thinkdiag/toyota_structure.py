@@ -53,6 +53,38 @@ def leading_typed_table(data: bytes) -> tuple[TypedTable, bytes]:
     return typed_table(data[:end]), data[end:]
 
 
+def audit_command_pool(data: bytes) -> dict:
+    """Audit every descriptor, retaining malformed entries as explicit findings.
+
+    Unlike the strict parser this research-only view can describe a damaged
+    frame. No missing bytes are padded, no invalid byte sequence is returned,
+    and it cannot be used as an app pack/import result.
+    """
+    count, declared = uint(data, 2, 4), uint(data, 6, 4)
+    if count > MAX_RECORDS or 10 + count * 6 > len(data):
+        raise ValueError("Truncated or excessive command-pool descriptor array")
+    body_end = min(len(data), 10 + declared)
+    blob_start = 10 + count * 6
+    if blob_start > body_end:
+        raise ValueError("Command descriptors exceed the declared table body")
+    records = []
+    for index in range(count):
+        pos = 10 + index * 6
+        offset, length, flag = uint(data, pos, 4), data[pos + 4], data[pos + 5]
+        start = blob_start + offset
+        row = {"index": index + 1, "descriptorOffset": pos, "bytesOffset": start, "length": length, "flag": flag}
+        if offset >= 0x80000000 or start + length > body_end:
+            row["error"] = "Byte range outside available/declared command blob"
+        else:
+            row["bytesHex"] = data[start:start + length].hex(" ")
+        records.append(row)
+    return {"declaredEntries": count, "declaredBodyBytes": declared, "availableBodyBytes": body_end - 10,
+            "bodyShortfallBytes": max(0, 10 + declared - len(data)),
+            "trailingBytes": max(0, len(data) - 10 - declared), "entries": records,
+            "boundedEntries": sum("error" not in row for row in records),
+            "invalidEntries": [row for row in records if "error" in row]}
+
+
 def command_pool(data: bytes) -> tuple[list[dict], bytes]:
     """GetCmdDataInfo (libTOYOTA_COMM.so 0x1ACB0): six-byte descriptors.
 

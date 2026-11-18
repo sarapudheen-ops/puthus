@@ -19,7 +19,7 @@ import zipfile
 
 from analyze_toyota import TOYOTA_SHA256, checked_infos, native_info
 from static_readers import reader_report
-from toyota_structure import (ECU_FILE, command_pool, function_index, menu_nodes, section_directory,
+from toyota_structure import (ECU_FILE, audit_command_pool, function_index, menu_nodes, section_directory,
                               system_fields, system_lists, typed_table, uint)
 
 FOCUSED_READERS = {
@@ -95,6 +95,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         raise ValueError("Unexpected Toyota archive SHA-256")
     output.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
+    generated_reports = []
+
+    def emit_report(name, title, text):
+        generated_reports.extend(publishable_report(report_dir, name, title, text))
+
     manifest = json.loads(manifest_path.read_text())
     if not isinstance(manifest, list) or len(manifest) > 10000:
         raise ValueError("Invalid decoded manifest")
@@ -141,7 +146,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                                       "exports": exports, "needed": native["needed"]})
                 for function in FOCUSED_READERS.get(name, []):
                     report = reader_report(data, name, [function], include_symbols=False, max_output_chars=None)
-                    publishable_report(report_dir, f"reader-{name}-{function}", f"{name}: {function}", report)
+                    emit_report(f"reader-{name}-{function}", f"{name}: {function}", report)
             if name == "BIN.ZIP":
                 import io
                 with zipfile.ZipFile(io.BytesIO(data)) as nested:
@@ -161,7 +166,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         "utf8Records": sum(i.get("utf8Records", 0) for i in recovery),
         "nonUtf8RecordsRetainedInRawMembers": sum(i.get("records", 0) - i.get("utf8Records", 0) for i in recovery)}
     for native in native_census:
-        publishable_report(report_dir, "exports-" + native["library"], native["library"] + " full export census", json_text(native))
+        emit_report("exports-" + native["library"], native["library"] + " full export census", json_text(native))
 
     section_counts, header_shapes, unparsed = Counter(), Counter(), []
     section_strides, section_row_totals, typed_errors = Counter(), Counter(), []
@@ -210,7 +215,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # These three small source excerpts let an offline reviewer reproduce the
     # structural work without committing vendor data or executable libraries.
     (output / "structural-excerpts.json").write_text(json_text(samples))
-    publishable_report(report_dir, "structural-excerpts", "SHA-pinned ECU structural excerpts", json_text(samples))
+    emit_report("structural-excerpts", "SHA-pinned ECU structural excerpts", json_text(samples))
 
     parsed_other = set()
     shared_tables, pools, pool_samples = [], [], []
@@ -233,10 +238,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             pool_samples.append({"file": name, "sha256": hashlib.sha256(data).hexdigest(),
                                  "bytes": len(data), "base64": base64.b64encode(data).decode("ascii")})
             try:
-                commands, trailing = command_pool(data)
-                counts = Counter(c["bytesHex"].split(" ")[0] for c in commands if c["length"])
-                pools.append({"file": name, "entries": len(commands), "trailingBytes": len(trailing),
-                              "firstByteCounts": dict(counts), "examples": commands[:12]})
+                audit = audit_command_pool(data)
+                commands = audit.pop("entries")
+                counts = Counter(c["bytesHex"].split(" ")[0] for c in commands if c["length"] and "bytesHex" in c)
+                pools.append({"file": name, **audit, "firstByteCounts": dict(counts), "examples": commands[:12],
+                              "readShapedExamples": [c for c in commands if c.get("bytesHex", "").startswith(("21 ", "22 "))][:12]})
                 (output / (name.replace("/", "-") + ".commands.json")).write_text(json_text(commands))
             except ValueError as error:
                 pools.append({"file": name, "unparsed": str(error)})
@@ -244,7 +250,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     findings["families"]["opaqueCommandPools"] = pools
     (output / "shared-tables.json").write_text(json_text(shared_tables))
     (output / "command-pool-excerpts.json").write_text(json_text(pool_samples))
-    publishable_report(report_dir, "command-pool-excerpts", "Source command-pool excerpts (not executable recipes)", json_text(pool_samples))
+    emit_report("command-pool-excerpts", "Source command-pool excerpts (not executable recipes)", json_text(pool_samples))
 
     if "MENU.BIN" in paths:
         try:
@@ -358,8 +364,37 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         "uninterpretedDecodedFiles": len(findings["notStructurallyInterpreted"])}
     (output / "text-keyword-evidence.json").write_text(json_text(hits))
     (output / "sweep-summary.json").write_text(json_text(findings))
-    publishable_report(report_dir, "summary", "Toyota full diagnostic-data sweep", json_text(findings))
-    publishable_report(report_dir, "text-evidence", "Toyota non-DTC text evidence (not request definitions)", json_text(hits))
+    emit_report("summary", "Toyota full diagnostic-data sweep", json_text(findings))
+    emit_report("text-evidence", "Toyota non-DTC text evidence (not request definitions)", json_text(hits))
+    menu = findings["families"].get("MENU.BIN", {})
+    overview = ["This archive contains diagnostic building blocks beyond passive DTC text.", "",
+        f"- Source SHA-256: `{source_hash}`.",
+        f"- Inventoried {len(all_files):,} archive/nested files and {len(native_census)} ELF libraries.",
+        f"- Verified {len(manifest):,} decoded payload hashes ({findings['decodedBytes']:,} bytes).",
+        f"- Parsed {len(section_files):,} ECU directories; {len(unparsed)} directory errors.",
+        f"- Parsed {menu.get('nodes', 0):,} menu nodes; {menu.get('titleIdsResolved', 0):,} title IDs resolved.",
+        f"- Found {len(menu.get('innovaPaths', []))} Innova-labelled menu nodes.", "",
+        "| Region | Vehicle index rows | System rows | ECU-file links resolved |",
+        "|---|---:|---:|---:|"]
+    for region in ("EU", "JP", "NA"):
+        stats = findings["families"].get(f"SYSLIST_{region}.BIN", {})
+        counts = stats.get("counts", {})
+        overview.append(f"| {region} | {stats.get('vehicleIndexRows', 0):,} | {counts.get('records', 0):,} | {counts.get('resolvedEcuFileExists', 0):,} |")
+    overview.extend(["", "Command-pool audit (byte sequences are not approved requests):", ""])
+    for pool in pools:
+        overview.append(f"- {pool['file']}: {pool.get('boundedEntries', 0)}/{pool.get('declaredEntries', 0)} bounded entries; "
+                        f"{len(pool.get('invalidEntries', []))} invalid, {pool.get('bodyShortfallBytes', 0)} missing declared bytes. "
+                        + pool.get("unparsed", ""))
+    overview.extend(["", "**No new diagnostic operations were enabled in the app.** Vendor code and EXPRESS were not executed. "
+        "Source anomalies and uninterpreted formats remain explicit in the detailed reports.", "",
+        "Complete, checksum-verified text reports are available in the `Toyota sweep evidence NNN` checks "
+        "(compressed JSON/base64; use `sweep_reports.py unpack`) and in `toyota-data-inspection`. "
+        "Large source/decoded data stays outside Git and the APK.", ""])
+    emit_report("overview", "Toyota diagnostic-data re-sweep", "\n".join(overview))
+    report_index = {"sourceSha256": source_hash, "reports": [
+        {"file": name, "sha256": hashlib.sha256((report_dir / name).read_bytes()).hexdigest()}
+        for name in generated_reports]}
+    (report_dir / "sweep-reports.json").write_text(json_text(report_index))
     print(f"Swept {len(all_files)} archive/nested entries, {len(manifest)} decoded files, {len(native_census)} ELF libraries and {len(libraries)} text libraries.")
     print(f"Validated {len(section_files)} ECU section directories; {len(unparsed)} unparsed. Detailed findings: {output / 'sweep-summary.json'}")
 

@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from toyota_structure import (ECU_FILE, command_pool, function_index, leading_typed_table, menu_nodes,
+from toyota_structure import (ECU_FILE, audit_command_pool, command_pool, function_index, leading_typed_table, menu_nodes,
                               section_directory, sentinel_index, system_fields, system_lists, typed_table, uint)
 
 
@@ -45,6 +45,21 @@ class ToyotaStructureTest(unittest.TestCase):
             command_pool(struct.pack("<HII", 0, 3, len(body)) + body)
         with self.assertRaises(ValueError):
             leading_typed_table(source[:-1])
+
+    def test_command_audit_reports_truncation_without_padding_or_enabling_invalid_entry(self):
+        body = struct.pack("<IBBIBB", 0, 2, 0, 2, 2, 0) + b"\x21\x01\x3e\x00"
+        source = struct.pack("<HII", 0, 2, len(body)) + body
+        result = audit_command_pool(source[:-2])
+        self.assertEqual(2, result["bodyShortfallBytes"])
+        self.assertEqual(1, result["boundedEntries"])
+        self.assertEqual(2, result["invalidEntries"][0]["index"])
+        self.assertNotIn("bytesHex", result["entries"][1])
+        self.assertEqual("21 01", result["entries"][0]["bytesHex"])
+        with self.assertRaises(ValueError):
+            command_pool(source[:-2])
+        self.assertEqual(3, audit_command_pool(source + b"xyz")["trailingBytes"])
+        with self.assertRaises(ValueError):
+            audit_command_pool(struct.pack("<HII", 0, 5, len(body)) + body)
 
     def test_menu_boundaries_targets_and_saved_parameters(self):
         root = bytearray(61)
