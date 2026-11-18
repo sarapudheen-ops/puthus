@@ -102,11 +102,14 @@ def write_conversion(source: Path, output: Path, report_dir: Path):
     metadata = copy.deepcopy(pack)
     metadata["dtcGroups"][0]["dtcs"] = {}
     report = {"sourceArchiveSha256": TOYOTA_SHA256, "statistics": audit["statistics"], "packBytes": len(encoded),
+              "sourceByteExamples": [{"id": i, "hex": t[:120].encode("utf-8").hex(" ")} for i, t in list(records.items())[:3]],
               "packSha256": hashlib.sha256(encoded).hexdigest(), "packMetadata": metadata, "shards": manifest,
               "acceptedExamples": dict(list(dtcs.items())[:10]),
               "conflictExamples": dict(list(audit["conflicts"].items())[:5])}
     (report_dir / "converted-dtcs.md").write_text("# Toyota/Lexus passive DTC conversion\n\n```json\n" + json.dumps(report, indent=2) + "\n```\n")
     print(json.dumps(audit["statistics"]))
+    if not dtcs:
+        raise ValueError("No explicit DTC pairs were recovered; inspect sourceByteExamples in the conversion report")
 
 
 if __name__ == "__main__":
