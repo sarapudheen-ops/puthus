@@ -401,6 +401,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     fun connect(device: PairedAdapter) {
         if (connectJob?.isActive == true) return
         disconnectInternal()
+        _state.update { it.copy(profile = ProfileState.None) }
+        refreshNaming()
         connectJob = viewModelScope.launch {
             try {
                 val result = openConnection(device)
@@ -458,7 +460,9 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val address = adapterAddress ?: return
         val profile = _state.value.connectedProfile ?: connectionStore.activeProfile()
         infoJob = viewModelScope.launch {
-            _state.update { it.copy(protocol = Readout.Loading, vin = Readout.Loading, ecus = emptyMap(), attempts = emptyList()) }
+            profileJob?.cancel()
+            _state.update { it.copy(protocol = Readout.Loading, vin = Readout.Loading, ecus = emptyMap(), attempts = emptyList(), profile = ProfileState.None) }
+            refreshNaming()
             val negotiation = try {
                 connectionManager.detectProtocol(currentDriver, address, profile)
             } catch (e: CancellationException) {

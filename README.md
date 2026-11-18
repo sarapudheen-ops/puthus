@@ -1,6 +1,6 @@
 # bod3
 
-OBD-II diagnostic app for Android (read-only so far), built with Kotlin, Jetpack Compose and Material 3.
+OBD-II diagnostic app for Android (read-only by default; gated Expert-mode coding/tests), built with Kotlin, Jetpack Compose and Material 3.
 Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC3313 chip (Vgate / vLinker).
 
 | | |
@@ -125,9 +125,10 @@ that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCS
   against the read-only policy and shows formula errors with their position. *Test read* sends the request
   once. Stored in the user data pack.
 - **Data packs (JSON, `"format": "bod3-datapack"`):** custom PIDs, vehicles with ECU lists, and DTC
-  descriptions. Two packs are bundled in `assets/datapacks`: `generic-obd.json` (about 200 SAE J2012 code
-  descriptions, sample PIDs, generic 11/29-bit OBD ECUs) and `vw-group-mqb.json` (Tiguan AD1, Golf 7,
-  Passat B8, A3 8V, Octavia 5E and Leon 5F with 11 UDS ECUs each). Your own additions (PIDs, vehicles,
+  descriptions. Three packs are bundled in `assets/datapacks`: `generic-obd.json` (about 200 SAE J2012 code
+  descriptions, sample PIDs, generic 11/29-bit OBD ECUs), `vw-group-mqb.json` (Tiguan AD1, Golf 7,
+  Passat B8, A3 8V, Octavia 5E and Leon 5F with 11 UDS ECUs each), and `toyota-lexus-dtcs.json`
+  (11,989 manufacturer-scoped, passive fault-code meanings; see below). Your own additions (PIDs, vehicles,
   edited ECU lists, descriptions) are a separate user pack that overrides bundled entries with the same ID.
   Every pack is validated; errors name the field (`pids[2].formula: …`).
 - **Fault codes:** stored, pending and permanent codes with descriptions. Lookup order: your own
@@ -315,6 +316,24 @@ write, a value that changed since the backup, confirmation reuse/expiry, and the
   conditions not correct, 0x33/0x35/0x36 security, 0x31, 0x7F …) are mapped to the likely cause and
   what to do. Used for connection and reconnect failures, unavailable readouts and protocol
   detection.
+
+## Toyota/Lexus recovered reference data
+
+The `assets-v1/TOYOTA.zip` release database has been decoded **as data only**, without executing vendor
+libraries. Recovery produced 1,410 YZJM binary payloads and eight English text libraries (198,091 indexed
+records; 193,589 valid UTF-8). Recovered datasets remain outside Git and are available in the
+**Inspect Toyota release data** workflow's `toyota-recovered-data` artifact.
+
+The app bundles **11,989 unambiguous passive DTC meanings** from that data, with source attribution.
+They apply only to a known Toyota/Lexus make in the loaded vehicle profile (or a vehicle explicitly linked
+to that VIN when the make is unknown), **never an unrelated/unknown car or a stale global ECU-list choice**.
+Data-pack v2 `dtcGroups` preserves manufacturer scope and source through import/export; v1 remains supported.
+Conflicts, placeholders and unsupported code forms are excluded, and extended codes are not promoted to
+base codes. No Toyota PIDs, ECU addresses, coding or actuator commands have been enabled from this data.
+
+See [Toyota data, limitations, usage and schema](docs/toyota-data.md) and
+[reproduction tools and static format evidence](tools/thinkdiag/README.md). CI regenerates the bundled
+reference byte-for-byte; no physical adapter/car testing has been performed.
 
 ## Architecture
 

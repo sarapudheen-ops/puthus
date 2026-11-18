@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.bod3.app.datapack.DtcDescriptions
 import com.bod3.app.obd.elm.RawExchange
 import com.bod3.app.obd.scan.ModuleReport
 import com.bod3.app.obd.uds.DidResult
@@ -45,9 +46,15 @@ fun ModuleDetailScreen(
     moduleLogText: () -> String,
     fullLogText: () -> String,
     onClearLog: () -> Unit,
+    descriptions: DtcDescriptions,
+    onSaveDescription: (String, String) -> Unit,
     /** Renames the module for this vehicle; null when no profile is loaded. Blank resets the name. */
     onRename: ((String) -> Unit)? = null,
 ) {
+    var editingDtc by rememberSaveable(module.address.key) { mutableStateOf<String?>(null) }
+    editingDtc?.let { code ->
+        DtcDescriptionDialog(code, descriptions, onSave = { onSaveDescription(code, it); editingDtc = null }, onDismiss = { editingDtc = null })
+    }
     var renaming by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     if (renaming && onRename != null) {
         var text by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(if (module.nameSource == com.bod3.app.profile.NameSource.USER) module.displayName else "") }
@@ -124,7 +131,7 @@ fun ModuleDetailScreen(
                 if (dtcs is DtcReadResult.Read) {
                     dtcs.records.forEach { record ->
                         HorizontalDivider()
-                        InfoRow(record.code, record.statusText)
+                        DtcRow(record.code, descriptions, detail = record.statusText, onEditDescription = { editingDtc = it })
                         Text(
                             record.raw.toHex(),
                             fontFamily = FontFamily.Monospace,

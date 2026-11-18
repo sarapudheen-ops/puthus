@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -65,6 +66,21 @@ class ConvertDtcsTest(unittest.TestCase):
         self.assertEqual(stats["sourceRecords"], stats["acceptedRecords"] + stats["conflictingRecordsExcluded"] + sum(stats["skippedRecords"].values()))
         self.assertEqual(2, stats["acceptedRecords"])
         self.assertEqual(2, stats["conflictingRecordsExcluded"])
+
+    def test_bundled_data_matches_its_provenance_and_has_no_requests(self):
+        root = Path(__file__).resolve().parents[2]
+        manifest = json.loads((root / "tools/thinkdiag/toyota-dtcs.provenance.json").read_text())
+        data = (root / manifest["output"]["file"]).read_bytes()
+        self.assertEqual(manifest["output"]["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(manifest["output"]["bytes"], len(data))
+        pack = json.loads(data)
+        self.assertEqual(2, pack["formatVersion"])
+        group = pack["dtcGroups"][0]
+        self.assertEqual(manifest["output"]["makes"], group["makes"])
+        self.assertEqual(manifest["conversion"]["statistics"]["acceptedCodes"], len(group["dtcs"]))
+        self.assertTrue(group["source"])
+        self.assertFalse(pack.get("pids") or pack.get("vehicles") or pack.get("recipes") or pack.get("dtcs"))
+        self.assertNotIn("B0000", group["dtcs"])
 
     def test_writes_reproducible_pack_and_audit_outside_app(self):
         with tempfile.TemporaryDirectory() as directory:

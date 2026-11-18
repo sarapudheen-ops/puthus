@@ -430,6 +430,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     moduleLogText = { viewModel.rawLogText(module) },
                     fullLogText = { viewModel.rawLogText() },
                     onClearLog = viewModel::clearRawLog,
+                    descriptions = state.data.descriptions,
+                    onSaveDescription = viewModel::setDtcDescription,
                     onRename = if (state.savedProfile != null) ({ name: String -> viewModel.renameModule(module.address.requestHeader, name) }) else null,
                 )
             }

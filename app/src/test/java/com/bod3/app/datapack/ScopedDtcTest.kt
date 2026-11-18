@@ -56,10 +56,12 @@ class ScopedDtcTest {
 
     @Test
     fun scopingCannotBeSilentlyLostThroughALegacyFormat() {
-        val json = DataPackCodec.encode(reference).replace("\"formatVersion\":2", "\"formatVersion\":1")
-        val result = DataPackCodec.decode(json)
-        assertFalse(result.isValid)
-        assertTrue(result.errors.toString(), result.errors.any { "requires formatVersion 2" in it })
+        val encoded = DataPackCodec.encode(reference)
+        for (json in listOf(encoded.replace("\"formatVersion\":2", "\"formatVersion\":1"), encoded.replace("\"formatVersion\":2,", ""))) {
+            val result = DataPackCodec.decode(json)
+            assertFalse(result.isValid)
+            assertTrue(result.errors.toString(), result.errors.any { "requires formatVersion 2" in it })
+        }
     }
 
     @Test

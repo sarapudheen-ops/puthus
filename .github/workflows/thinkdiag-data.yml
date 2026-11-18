@@ -7,6 +7,7 @@ on:
     paths:
       - 'tools/thinkdiag/**'
       - '.github/workflows/thinkdiag-data.yml'
+      - 'app/src/main/assets/datapacks/toyota-lexus-dtcs.json'
 
 permissions:
   contents: read
@@ -48,6 +49,8 @@ jobs:
         run: |
           python3 tools/thinkdiag/convert_dtcs.py .local/thinkdiag/english/TCODE_EN.GAG.json \
             --output .local/thinkdiag/converted --report .local/thinkdiag/report
+      - name: Verify the bundled reference is exactly reproducible
+        run: cmp .local/thinkdiag/converted/toyota-lexus-dtcs.json app/src/main/assets/datapacks/toyota-lexus-dtcs.json
       - name: Publish static-analysis reports
         if: always()
         run: |
@@ -77,6 +80,8 @@ jobs:
             .local/thinkdiag/decoded/
             .local/thinkdiag/english/
             .local/thinkdiag/converted/
+            .local/thinkdiag/report/decoded-manifest.json
+            .local/thinkdiag/report/english-text.json
           retention-days: 14
       - name: Publish inspection as a check
         run: |

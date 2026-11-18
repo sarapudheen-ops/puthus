@@ -9,7 +9,10 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
 }
 
 /**
- * JSON format of data packs:
+ * JSON format of data packs. Legacy v1 is retained for files without scoped fault references.
+ * v2 adds `dtcGroups`: objects with `id`, non-empty `makes`, `dtcs` and optional `source`. These fields
+ * always require formatVersion 2, so an older app refuses rather than silently discarding the scope.
+ * See docs/toyota-data.md for a v2 example. A v1 example:
  * ```
  * {
  *   "format": "bod3-datapack", "formatVersion": 1,
