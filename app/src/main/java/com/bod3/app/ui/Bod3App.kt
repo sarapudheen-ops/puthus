@@ -7,6 +7,8 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.bod3.app.ui.screens.ActuatorRunScreen
+import com.bod3.app.ui.screens.ActuatorsScreen
 import com.bod3.app.ui.screens.ConnectionSettingsScreen
 import com.bod3.app.ui.screens.CustomPidsScreen
 import com.bod3.app.ui.screens.EcuDetailScreen
@@ -32,6 +34,7 @@ import com.bod3.app.ui.screens.TerminalScreen
 fun Bod3App(viewModel: ObdViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val log by viewModel.log.collectAsStateWithLifecycle()
+    val actuatorState by viewModel.actuators.state.collectAsStateWithLifecycle()
 
     // Permission or Bluetooth state may change while we are in the background (system settings).
     LifecycleResumeEffect(Unit) {
@@ -73,6 +76,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     attemptsText = viewModel::attemptsText,
                     writeReport = viewModel::writeReport,
                     onOpenGarage = viewModel::openGarage,
+                    onOpenActuators = viewModel::openActuators,
                 ),
             )
         }
@@ -272,6 +276,41 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onConfirmOverwrite = viewModel::confirmImportOverwrite,
                 onCancelOverwrite = viewModel::cancelImportOverwrite,
                 onDismissMessage = viewModel::dismissGarageMessage,
+            )
+        }
+
+        Screen.ACTUATORS -> {
+            BackHandler(onBack = viewModel::closeActuators)
+            ActuatorsScreen(
+                state = actuatorState,
+                expertMode = state.settings.expertMode,
+                connected = state.isConnected,
+                onBack = viewModel::closeActuators,
+                onOpen = viewModel::openActuator,
+                onImportText = viewModel.actuators::importJson,
+                writeExport = { viewModel.writeActuatorExport(null) },
+                writeAuditLog = viewModel::writeAuditLog,
+                onDismissMessage = viewModel.actuators::dismissMessage,
+                onOpenSettings = viewModel::openSettings,
+            )
+        }
+
+        Screen.ACTUATOR_RUN -> {
+            BackHandler(onBack = viewModel::closeActuator)
+            ActuatorRunScreen(
+                state = actuatorState,
+                expertMode = state.settings.expertMode,
+                connected = state.isConnected,
+                onBack = viewModel::closeActuator,
+                onCheck = viewModel.actuators::checkPreconditions,
+                onStart = viewModel.actuators::requestStart,
+                onConfirm = viewModel.actuators::confirmAndStart,
+                onCancelConfirm = viewModel.actuators::cancelConfirmation,
+                onOverride = viewModel.actuators::setOverrideApplicability,
+                onStop = viewModel.actuators::stop,
+                onDelete = viewModel.actuators::deleteUserRecipe,
+                writeExport = { viewModel.writeActuatorExport(actuatorState.selectedId) },
+                onDismissMessage = viewModel.actuators::dismissMessage,
             )
         }
 

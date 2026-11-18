@@ -12,8 +12,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * The app is read-only: only diagnostic services that read data may be sent. Nothing that clears,
- * writes, actuates, resets, unlocks or changes the diagnostic session.
+ * The default policy is read-only: only diagnostic services that read data may be sent. Nothing that
+ * clears, writes, actuates, resets, unlocks or changes the diagnostic session. The only exceptions are a
+ * confirmed fault-memory clear ([ClearConfirmation]) and the whitelisted services of [WritePolicy],
+ * which need a [WriteGrant] issued in Expert mode for one operation on one module.
  *
  * OBD services are allowed as a whole. UDS services are allowed only with read-only sub-functions.
  */
@@ -143,11 +145,13 @@ class Session(
         request: List<Int>,
         timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
         confirmation: ClearConfirmation? = null,
+        grant: WriteGrant? = null,
     ): ObdResponse {
-        if (confirmation != null && ReadOnlyPolicy.isClearRequest(request)) {
-            confirmation.consume(request, target)
-        } else {
-            ReadOnlyPolicy.check(request)
+        when {
+            confirmation != null && ReadOnlyPolicy.isClearRequest(request) -> confirmation.consume(request, target)
+            // Whitelisted non-read requests (actuator tests, coding) only with an Expert-mode grant.
+            grant != null && !ReadOnlyPolicy.isAllowed(request) -> grant.check(request, target)
+            else -> ReadOnlyPolicy.check(request)
         }
         require(request.all { it in 0..0xFF }) { "Request bytes must be 0..255" }
 
@@ -260,9 +264,12 @@ class Session(
             // 19 and 3E echo the sub-function without the suppress-positive-response bit.
             service in SUB_FUNCTION_SERVICES && request.size >= 2 ->
                 payload.size >= 2 && payload[1] == (request[1] and 0x7F)
-            // 22 echoes the first data identifier.
-            service == ReadOnlyPolicy.READ_DATA_BY_IDENTIFIER && request.size >= 3 ->
+            // 22, 2E and 2F echo the (first) data identifier.
+            service in DID_ECHO_SERVICES && request.size >= 3 ->
                 payload.size >= 3 && payload[1] == request[1] && payload[2] == request[2]
+            // 31 echoes the sub-function and the routine identifier.
+            service == WritePolicy.ROUTINE_CONTROL && request.size >= 4 ->
+                payload.size >= 4 && payload[1] == (request[1] and 0x7F) && payload[2] == request[2] && payload[3] == request[3]
             else -> true
         }
     }
@@ -271,6 +278,9 @@ class Session(
         const val DEFAULT_REQUEST_TIMEOUT_MS = 5_000L
         const val HEADER_COMMAND_TIMEOUT_MS = 2_000L
         private val PID_ECHO_SERVICES = setOf(0x01, 0x02, 0x09)
-        private val SUB_FUNCTION_SERVICES = setOf(ReadOnlyPolicy.READ_DTC_INFORMATION, ReadOnlyPolicy.TESTER_PRESENT)
+        private val SUB_FUNCTION_SERVICES = setOf(
+            ReadOnlyPolicy.READ_DTC_INFORMATION, ReadOnlyPolicy.TESTER_PRESENT, WritePolicy.SESSION_CONTROL, WritePolicy.SECURITY_ACCESS,
+        )
+        private val DID_ECHO_SERVICES = setOf(ReadOnlyPolicy.READ_DATA_BY_IDENTIFIER, WritePolicy.WRITE_DATA_BY_IDENTIFIER, WritePolicy.IO_CONTROL)
     }
 }

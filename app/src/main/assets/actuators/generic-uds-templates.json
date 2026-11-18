@@ -1,0 +1,50 @@
+{
+  "format": "bod3-actuators",
+  "formatVersion": 1,
+  "id": "generic-uds-templates",
+  "name": "Generic UDS templates",
+  "version": 1,
+  "author": "bod3",
+  "description": "Starting points for your own tests. Identifiers are placeholders: copy a template, replace the DID/routine with the one from your module's documentation and import it as your own recipe.",
+  "recipes": [
+    {
+      "id": "template-io-control",
+      "name": "Output control (template)",
+      "description": "Short-term adjustment of one output through InputOutputControlByIdentifier, returned to the ECU afterwards.",
+      "module": { "name": "Engine control module", "address": "01", "requestId": "7E0", "responseId": "7E8" },
+      "session": "03",
+      "start": "2F 01 00 03 01",
+      "stop": "2F 01 00 00",
+      "status": "22 01 00",
+      "durationSeconds": 5,
+      "pollIntervalMs": 1000,
+      "preconditions": { "minVoltage": 12.0, "engine": "off", "ignitionOn": true, "speedZero": true },
+      "safety": [
+        "Template: DID 0100 is a placeholder and does nothing useful on most modules.",
+        "Only run tests whose effect you know; keep hands and tools away from moving parts."
+      ],
+      "source": "ISO 14229-1 service 0x2F",
+      "notes": "Most modules answer NRC 31 (request out of range) to unknown identifiers, which ends the test safely.",
+      "verified": false
+    },
+    {
+      "id": "template-routine",
+      "name": "Routine (template)",
+      "description": "Starts a routine, polls its results and stops it.",
+      "module": { "name": "Engine control module", "address": "01", "requestId": "7E0", "responseId": "7E8" },
+      "session": "03",
+      "start": "31 01 02 00",
+      "stop": "31 02 02 00",
+      "status": "31 03 02 00",
+      "durationSeconds": 10,
+      "pollIntervalMs": 1000,
+      "preconditions": { "minVoltage": 12.0, "engine": "off", "ignitionOn": true, "speedZero": true },
+      "safety": [
+        "Template: routine 0200 is a placeholder.",
+        "Some routines move actuators or run pumps; read the module documentation first."
+      ],
+      "source": "ISO 14229-1 service 0x31",
+      "verified": false
+    }
+  ]
+}
