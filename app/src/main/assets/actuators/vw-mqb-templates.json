@@ -1,0 +1,69 @@
+{
+  "format": "bod3-actuators",
+  "formatVersion": 1,
+  "id": "vw-mqb-templates",
+  "name": "VW group MQB templates",
+  "version": 1,
+  "author": "bod3",
+  "description": "Examples for MQB vehicles (e.g. Tiguan AD1). Module addresses are the usual MQB CAN IDs; the output identifiers are placeholders that must be confirmed against the module's ODX/label data before use.",
+  "recipes": [
+    {
+      "id": "vw-mqb-09-horn-template",
+      "name": "Horn (template)",
+      "description": "Sounds the horn for up to 2 seconds through the central electronics (BCM).",
+      "module": { "name": "Central electronics", "address": "09", "requestId": "70E", "responseId": "778" },
+      "session": "03",
+      "start": "2F 05 10 03 01",
+      "stop": "2F 05 10 00",
+      "durationSeconds": 2,
+      "pollIntervalMs": 1000,
+      "preconditions": { "minVoltage": 12.0, "engine": "off", "ignitionOn": true, "speedZero": true },
+      "safety": [
+        "Unverified template: confirm the identifier for your BCM part number first.",
+        "The horn is loud: warn people nearby and do not run this in closed spaces."
+      ],
+      "applicability": { "makes": ["Volkswagen", "Audi", "Skoda", "SEAT", "Cupra"], "models": [], "partNumbers": [], "softwareVersions": [] },
+      "source": "Template",
+      "verified": false
+    },
+    {
+      "id": "vw-mqb-09-rear-wiper-template",
+      "name": "Rear window wiper (template)",
+      "description": "Runs the rear wiper motor for up to 5 seconds.",
+      "module": { "name": "Central electronics", "address": "09", "requestId": "70E", "responseId": "778" },
+      "session": "03",
+      "start": "2F 05 20 03 01",
+      "stop": "2F 05 20 00",
+      "durationSeconds": 5,
+      "pollIntervalMs": 1000,
+      "preconditions": { "minVoltage": 12.0, "engine": "off", "ignitionOn": true, "speedZero": true },
+      "safety": [
+        "Unverified template: confirm the identifier for your BCM part number first.",
+        "Wet the rear window first and keep hands clear of the wiper arm."
+      ],
+      "applicability": { "makes": ["Volkswagen", "Audi", "Skoda", "SEAT", "Cupra"], "models": ["Tiguan", "Golf", "Passat"], "partNumbers": [], "softwareVersions": [] },
+      "source": "Template",
+      "verified": false
+    },
+    {
+      "id": "vw-mqb-17-gauge-test-template",
+      "name": "Instrument cluster gauge test (template)",
+      "description": "Runs the cluster self-test routine (needles, warning lamps) and polls its result.",
+      "module": { "name": "Dashboard", "address": "17", "requestId": "714", "responseId": "77E" },
+      "session": "03",
+      "start": "31 01 03 10",
+      "stop": "31 02 03 10",
+      "status": "31 03 03 10",
+      "durationSeconds": 15,
+      "pollIntervalMs": 1000,
+      "preconditions": { "minVoltage": 12.0, "engine": "off", "ignitionOn": true, "speedZero": true },
+      "safety": [
+        "Unverified template: confirm the routine identifier for your cluster first.",
+        "Warning lamps light up during the test; this is expected."
+      ],
+      "applicability": { "makes": ["Volkswagen", "Audi", "Skoda", "SEAT", "Cupra"], "models": [], "partNumbers": [], "softwareVersions": [] },
+      "source": "Template",
+      "verified": false
+    }
+  ]
+}

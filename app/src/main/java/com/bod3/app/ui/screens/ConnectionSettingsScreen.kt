@@ -129,7 +129,7 @@ fun ConnectionSettingsScreen(
             SectionCard("Expert mode") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (settings.expertMode) "On – the raw terminal is available" else "Off",
+                        if (settings.expertMode) "On – terminal and bidirectional tests available" else "Off",
                         modifier = Modifier.weight(1f),
                     )
                     Switch(
@@ -138,8 +138,9 @@ fun ConnectionSettingsScreen(
                     )
                 }
                 Text(
-                    "Expert mode unlocks the raw AT/OBD/UDS terminal. The read-only policy still applies: " +
-                        "diagnostic writes, clears and actuator tests stay blocked.",
+                    "Expert mode unlocks the raw AT/OBD/UDS terminal and bidirectional (actuator) tests. The terminal stays " +
+                        "read-only. Tests may only use their whitelisted services (session 01/03, security access, 2F, 31) " +
+                        "on one module, after a confirmation and precondition checks, and every run is audit-logged.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -197,9 +198,11 @@ private fun RiskDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Expert mode sends commands you type straight to the adapter. Wrong adapter settings can make " +
-                        "the connection stop working until the adapter is reset, and requests to control units " +
-                        "are your responsibility. Only use it if you know the ELM327/UDS command set.",
+                    "Expert mode sends commands you type straight to the adapter and lets you run bidirectional tests " +
+                        "that switch outputs and routines in control units. Wrong adapter settings can make the connection " +
+                        "stop working until the adapter is reset; actuator tests move real parts (horn, wipers, pumps, " +
+                        "fans) and are your responsibility. Only use it if you know the ELM327/UDS command set and the " +
+                        "vehicle is parked safely.",
                 )
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { understood = !understood }) {
                     Checkbox(checked = understood, onCheckedChange = { understood = it })

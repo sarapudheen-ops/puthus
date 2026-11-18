@@ -4,6 +4,8 @@ import com.bod3.app.obd.elm.CommandExecutor
 import com.bod3.app.obd.elm.ElmResponse
 import com.bod3.app.obd.elm.ElmResponseParser
 import com.bod3.app.obd.session.ReadOnlyPolicy
+import com.bod3.app.obd.session.WritePolicy
+import com.bod3.app.obd.transport.TransportException
 
 /**
  * A module on the simulated bus.
@@ -46,6 +48,12 @@ class SimulatedCanAdapter(
     /** Fault-memory clear requests (04 / 14) that reached the bus. Only possible with a ClearConfirmation. */
     val clears = mutableListOf<SentRequest>()
 
+    /** Whitelisted non-read requests (session, security, 2F, 31, 2E) that reached the bus; only possible with a WriteGrant. */
+    val writes = mutableListOf<SentRequest>()
+
+    /** When true, every command fails like a dropped Bluetooth link. */
+    var disconnected = false
+
     /** Called before every data request; tests use it to cancel mid-scan or count probes. */
     var onRequest: (SentRequest) -> Unit = {}
 
@@ -72,6 +80,7 @@ class SimulatedCanAdapter(
 
     override suspend fun execute(command: String, timeoutMs: Long): ElmResponse {
         val c = command.filterNot { it.isWhitespace() }.uppercase()
+        if (disconnected) throw TransportException("Bluetooth link lost")
         commands += c
         val raw = if (c.startsWith("AT")) handleAt(c) else handleData(c)
         return ElmResponseParser.parse(command, "$raw\r\r")
@@ -105,8 +114,14 @@ class SimulatedCanAdapter(
         val tx = header ?: if (is29) "18DB33F1" else "7DF"
         val sent = SentRequest(protocolCode, tx, payload)
         requests += sent
-        if (ReadOnlyPolicy.isClearRequest(payload)) clears += sent else if (!ReadOnlyPolicy.isAllowed(payload)) violations += "$tx $c"
+        when {
+            ReadOnlyPolicy.isClearRequest(payload) -> clears += sent
+            ReadOnlyPolicy.isAllowed(payload) -> Unit
+            payload[0] in WritePolicy.allServices -> writes += sent
+            else -> violations += "$tx $c"
+        }
         onRequest(sent)
+        if (disconnected) throw TransportException("Bluetooth link lost")
         failWith?.let { return it }
 
         val functional = tx == "7DF" || tx == "18DB33F1"

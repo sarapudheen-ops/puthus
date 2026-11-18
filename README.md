@@ -171,6 +171,72 @@ that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCS
 - Data packs gain an optional `moduleNames` list (`requestId`, `responseId`, `address`, `name`, `makes`),
   validated like the rest of the pack.
 
+## Features (M4): bidirectional tests
+
+Actuator tests switch an output (`2F` InputOutputControlByIdentifier) or run a routine (`31`
+RoutineControl) in one module for a limited time, then hand control back to the module.
+
+- **Recipes** are JSON (`bod3-actuators`, format version 1). Each recipe names its module (CAN request and
+  response IDs), the diagnostic session (`01` or `03`), optional security access (level and key
+  algorithm), the start request, the stop request, an optional status request, the time limit, the
+  preconditions, safety notes, applicability (makes, models, module part numbers, software versions),
+  source and notes. Bundled templates live in `assets/actuators` and ship as **unverified**, because their
+  identifiers are placeholders. You can import your own recipes from a file, export them through the share
+  sheet, and delete them. Imports are validated, and every problem is listed with its JSON path
+  (`recipes[1].stop: must be "2F 05 10 00" …`).
+- **Validation:** a recipe is rejected unless:
+  - it starts with `2F <DID> <01|02|03>` and stops with `2F <DID> 00`, or starts with `31 01 <id>` and
+    stops with `31 02 <id>`;
+  - its session is `01` or `03` (never programming);
+  - its security level is odd;
+  - its time limit is 120 s or less;
+  - it has at least one safety note.
+- **Run flow:**
+  1. Expert mode check.
+  2. Safety-notes confirmation, which is single-use, bound to the recipe and valid for 60 s.
+  3. Fresh precondition check:
+     - battery at or above the recipe minimum (12.0 V by default);
+     - ignition on (the engine ECU answers);
+     - engine off or running as required (`01 0C`);
+     - vehicle stationary (`01 0D`).
+
+     An unknown value counts as a failure. A make/model or `F187`/`F189` mismatch blocks the run unless
+     you override it explicitly.
+  4. Open the session, then security access (seed and key).
+  5. Start.
+  6. While the test runs, the screen shows live status and a countdown. The session is kept alive with the
+     status request or `3E 00`, at least every 2 s.
+- **Stopping:** STOP is always available. The test also stops automatically:
+  - at the time limit;
+  - when the module stays silent for two polls;
+  - when the Bluetooth link drops;
+  - when you leave the screen;
+  - when the coroutine is cancelled.
+
+  The stop request is always sent (retried once), followed by `10 01`. If the stop is not acknowledged, the
+  app says so and explains that the module hands control back when its session times out.
+- **Audit log:** every run, including refused ones, is stored with timestamps and every request/response
+  pair. The log cannot be edited and can be shared as text.
+- **Write policy:** non-read requests leave the app only with a `WriteGrant`. Grants are issued by
+  `WriteGate`, only in Expert mode, for one module and one purpose, and they expire or are revoked when the
+  operation ends. The actuator whitelist is `10 01/03`, `27`, `3E`, `2F` (parameters 00-03) and
+  `31 01/02/03`. ECU reset, communication control, DTC setting, memory writes and downloads are never
+  sent. Without a grant the read-only policy applies unchanged, and the expert terminal never gets a grant.
+
+Tests (`actuator/`, `obd/session/WritePolicyTest`) run against `testing/SimUdsEcu`, a stateful simulated
+UDS module (sessions, seed/key, IO control, routines, writes, NRCs, response pending, silence) on the
+simulated CAN adapter. They cover:
+- the whitelist and grant scoping;
+- refusal outside Expert mode;
+- every precondition;
+- wrong keys and negative responses to start;
+- response pending;
+- connection loss mid-run;
+- a silent module;
+- cancellation;
+- confirmation reuse;
+- applicability overrides.
+
 ## Architecture
 
 ```
@@ -202,7 +268,13 @@ diagnostics/        EcuWorkbench: per-ECU identification, DTCs, records and clea
 live/               LiveCatalog, LiveReader, LiveRecorder, CsvExporter, LiveHistory
 obd/terminal/       TerminalPolicy, RawTerminal (expert raw terminal)
 report/             DiagnosticReport (shareable text report)
-android/            SharedPreferences store, ReportSharer (FileProvider), AssetDataPacks
+android/            SharedPreferences store, ReportSharer (FileProvider), AssetDataPacks, AssetActuatorPacks
+obd/session/WriteGrant  WritePolicy (per-purpose whitelist), WriteGate (Expert mode only), WriteGrant
+obd/uds/UdsWriteClient  session control, security access (seed/key algorithms), non-read requests as outcomes
+actuator/           recipe model + validation, JSON codec, ActuatorLibrary (bundled + user), PreconditionChecker,
+                    ActuatorRunner (run engine), ActuatorController (screen logic)
+audit/              AuditStore (permanent operation log), AuditFormatter
+recipe/             JsonFields (path-aware JSON reading), Hex
 ```
 
 Everything under `obd/` and `profile/` except `BluetoothSppTransport` and `profile/db/` is plain Kotlin

@@ -3,7 +3,14 @@ package com.bod3.app.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bod3.app.actuator.ActuatorController
+import com.bod3.app.actuator.ActuatorEnvironment
+import com.bod3.app.actuator.ActuatorLibrary
+import com.bod3.app.actuator.SessionStateProbe
+import com.bod3.app.actuator.VehicleContext
+import com.bod3.app.android.AssetActuatorPacks
 import com.bod3.app.android.AssetDataPacks
+import com.bod3.app.audit.AuditStore
 import com.bod3.app.android.ReportSharer
 import com.bod3.app.datapack.CustomPid
 import com.bod3.app.datapack.DataPackStore
@@ -104,6 +111,7 @@ import kotlinx.coroutines.withContext
 enum class Screen {
     DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
     VEHICLES, VEHICLE_EDIT, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
+    ACTUATORS, ACTUATOR_RUN,
 }
 
 sealed interface ConnectionState {
@@ -288,6 +296,21 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private var lastRecording: com.bod3.app.live.Recording? = null
 
     private val extrasStore = ProfileExtrasStore(SharedPrefsKeyValueStore(application))
+
+    // ---- Bidirectional tests (M4) ----
+    private val auditStore = AuditStore(SharedPrefsKeyValueStore(application))
+    private val bundledActuators = AssetActuatorPacks.load(application)
+
+    /** Actuator test screens; every run needs Expert mode, a confirmation and passing preconditions. */
+    val actuators = ActuatorController(
+        scope = viewModelScope,
+        library = ActuatorLibrary(bundledActuators.packs, SharedPrefsKeyValueStore(application)),
+        audit = auditStore,
+        expertMode = { connectionStore.expertModeEnabled },
+        environment = ::actuatorEnvironment,
+        log = ::appendLog,
+        bundledErrors = bundledActuators.errors,
+    )
 
     private val profiles: VehicleProfileService by lazy {
         VehicleProfileService(
@@ -669,6 +692,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             connectionStore.disableExpertMode()
             appendLog("Expert mode disabled")
             if (_state.value.screen == Screen.TERMINAL) closeTerminal()
+            actuators.stop()
         }
         refreshSettings()
     }
@@ -909,7 +933,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         voltageJob?.cancel()
         voltageJob = viewModelScope.launch {
             while (isActive) {
-                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL
+                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL || actuators.state.value.running
                 if (!busy) sampleVoltage()
                 delay(VOLTAGE_INTERVAL_MS)
             }
@@ -1469,6 +1493,63 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun backToDashboard() {
         _state.update { it.copy(screen = if (it.offline) Screen.GARAGE else Screen.DASHBOARD) }
+    }
+
+    // ---- Bidirectional (actuator) tests ------------------------------------------------------------
+
+    private fun actuatorEnvironment(): ActuatorEnvironment? {
+        val current = _state.value
+        val activeSession = session ?: return null
+        val executor = recorder ?: return null
+        if (!current.isConnected || !activeSession.protocol.isCan) return null
+        val description = current.savedProfile?.description
+        val pack = current.data.selectedVehicle?.vehicle
+        return ActuatorEnvironment(
+            session = activeSession,
+            probe = SessionStateProbe(activeSession, executor),
+            vehicle = VehicleContext(
+                make = description?.make ?: pack?.make,
+                model = description?.model ?: pack?.model,
+                vin = (current.vin as? Readout.Value)?.value,
+            ),
+        )
+    }
+
+    fun openActuators() {
+        pauseLiveData()
+        actuators.refresh()
+        _state.update { it.copy(screen = Screen.ACTUATORS) }
+    }
+
+    fun closeActuators() {
+        actuators.close()
+        _state.update { it.copy(screen = if (it.offline) Screen.DEVICES else Screen.DASHBOARD) }
+    }
+
+    fun openActuator(id: String) {
+        actuators.select(id)
+        _state.update { it.copy(screen = Screen.ACTUATOR_RUN) }
+    }
+
+    /** Leaving the run screen stops a running test (the stop request is sent at once). */
+    fun closeActuator() {
+        actuators.close()
+        _state.update { it.copy(screen = Screen.ACTUATORS) }
+    }
+
+    /** Writes recipes (one, or all of the user's) as a JSON pack for the share sheet. */
+    suspend fun writeActuatorExport(recipeId: String?): File {
+        val json = actuators.exportJson(recipeId)
+        val app = getApplication<Application>()
+        val name = "bod3-actuators-${recipeId ?: "mine"}-${System.currentTimeMillis()}.json"
+        return withContext(Dispatchers.IO) { ReportSharer.write(app, name, json) }
+    }
+
+    /** Writes the full audit log (actuator tests and coding writes) as text for the share sheet. */
+    suspend fun writeAuditLog(): File {
+        val text = actuators.auditText()
+        val app = getApplication<Application>()
+        return withContext(Dispatchers.IO) { ReportSharer.write(app, "bod3-audit-${System.currentTimeMillis()}.txt", text) }
     }
 
     // ---- Garage: saved vehicle profiles, export / import, manual ECUs, module names -------------------
