@@ -15,9 +15,9 @@ The source archive SHA-256 is `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0df
 ### Where it appears
 
 - OBD fault codes and freeze frames, per-ECU fault codes, and scanned/saved module fault details use the reference lookup and show the text's source.
-- It applies **only** when the loaded vehicle profile has a known make of `Toyota`, `Lexus` or `Toyota Thailand` (case-insensitive exact match), or, if that make is unknown, a matching data-pack vehicle has been **explicitly linked to that VIN** under *Modules → ECUs*.
-- A known profile make takes precedence over a conflicting linked ECU list. The global *Vehicle & ECUs* choice is **not** evidence of the current vehicle's make: it may be left over from a different car.
-- No profile/make, another make or a loading/failed profile stays generic. Beginning a new protocol/VIN detection clears the previous profile's reference context while the new one loads. Disconnect also clears it.
+- It applies **only** to a known make of `Toyota`, `Lexus` or `Toyota Thailand` (case-insensitive exact match). Make evidence is, in order: the loaded profile, its explicitly saved catalog/legacy link, then the new **manual catalog selection** if neither profile nor link supplies a make.
+- A known profile make takes precedence over a conflicting saved link or stale manual selection. A catalog left on Toyota cannot supply Toyota-only meanings to a profile known to be another manufacturer.
+- Without any known profile/link/manual make, or for an unrelated make, the text stays generic. Beginning a new protocol/VIN read and disconnecting clear the *observed-profile* context; an explicit manual catalog choice stays selected until the user changes it. Passive text lookup never selects a catalog node or applies connection settings, ECU lists or write definitions. See the [manual catalog guide](vehicle-catalog.md).
 - Your manually entered descriptions still override references. A user's exact or base-code note wins; otherwise reference lookup tries the exact code across applicable imported/scoped/generic packs before trying the base code.
 - Imported manufacturer groups retain their makes and source when persisted or re-exported. They do not become global user notes. Removing a manual override restores the scoped reference rather than silently deleting it.
 

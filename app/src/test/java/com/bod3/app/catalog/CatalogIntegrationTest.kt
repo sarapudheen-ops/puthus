@@ -10,6 +10,7 @@ import com.bod3.app.datapack.DataPack
 import com.bod3.app.datapack.DataPackCodec
 import com.bod3.app.datapack.DataPackStore
 import com.bod3.app.datapack.DtcGroup
+import com.bod3.app.datapack.DtcReferenceContext
 import com.bod3.app.datapack.EcuProtocol
 import com.bod3.app.datapack.ModuleNameEntry
 import com.bod3.app.datapack.VehicleDefinition
@@ -206,6 +207,35 @@ class CatalogIntegrationTest {
         val s = Setup(fixture(generationNode.copy(data = CatalogData(moduleNames = listOf(name), ecus = listOf(engine)))))
         assertTrue(s.access.moduleNames().isEmpty())
         assertEquals(listOf(name), s.access.moduleNames(s.repo.tree().resolve("variant")).map { it.first })
+        assertNull(s.repo.selected())
+        assertTrue(s.access.scanEcus().isEmpty())
+    }
+
+    @Test fun knownProfileMakeWinsOverAStaleConflictingCatalogForPassiveFaultTextOnly() {
+        val reference = DtcGroup("toyota-reference", listOf("Toyota", "Lexus"), mapOf("P1234" to "Toyota source text"), "Toyota source")
+        val toyota = makeNode.copy(data = CatalogData(dtcGroups = listOf(reference)))
+        val vw = CatalogNode("vw", null, CatalogLevel.MAKE, "Volkswagen")
+        val vwModel = CatalogNode("vw-model", "vw", CatalogLevel.MODEL, "Test model", data = CatalogData(ecus = listOf(brakes)))
+        val s = Setup(fixture(toyota).copy(nodes = fixture(toyota).nodes + listOf(vw, vwModel)))
+        s.repo.select("generation")
+        assertEquals("Toyota source text", s.access.descriptions().describe("P1234").text)
+        assertNotEquals("Toyota source text", s.access.descriptions("Volkswagen").describe("P1234").text)
+        assertEquals("generation", s.repo.state().selectedId)
+        s.repo.select("vw-model")
+        val before = s.store.values.toMap()
+        assertEquals("Toyota source text", s.access.descriptions("Toyota").describe("P1234").text)
+        assertEquals("Toyota source", s.access.descriptions("Toyota").describe("P1234").source)
+        assertEquals("vw-model", s.repo.state().selectedId)
+        assertEquals(listOf(brakes), s.access.scanEcus())
+        assertEquals(before, s.store.values)
+    }
+
+    @Test fun knownProfileMakeAlsoBeatsAConflictingSavedLinkWithoutActivatingEither() {
+        val reference = DtcGroup("toyota-reference", listOf("Toyota"), mapOf("P1234" to "Toyota source text"), "Toyota source")
+        val s = Setup(fixture(makeNode.copy(data = CatalogData(dtcGroups = listOf(reference)))))
+        val linkedMake = s.repo.tree().resolve("variant")!!.make
+        assertNotEquals("Toyota source text", s.access.descriptions(DtcReferenceContext.make("Volkswagen", linkedMake)).describe("P1234").text)
+        assertEquals("Toyota source text", s.access.descriptions(DtcReferenceContext.make(null, linkedMake)).describe("P1234").text)
         assertNull(s.repo.selected())
         assertTrue(s.access.scanEcus().isEmpty())
     }

@@ -1361,7 +1361,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             make = selected?.make ?: current.savedProfile?.description?.make?.let(CatalogIds::makeName))
         // Old per-VIN links never supply probe targets or connection settings. Manual saved ECUs are retained.
         val listed = runCatching { catalogAccess.scanEcus(extras.manualEcus).map { it.moduleAddress() } }.getOrElse { emptyList() }
-        val referenceMake = selected?.make ?: DtcReferenceContext.make(current.savedProfile?.description?.make, linked?.make)
+        val referenceMake = DtcReferenceContext.make(current.savedProfile?.description?.make, linked?.make) ?: selected?.make
         val descriptions = runCatching { catalogAccess.descriptions(referenceMake) }.getOrElse { com.bod3.app.datapack.DtcDescriptions(emptyMap(), emptyList()) }
         _state.update { it.copy(profileExtras = extras, profileExtrasError = extrasError, moduleNamer = namer, listedModules = listed,
             data = it.data.copy(descriptions = descriptions, dtcReferenceMake = referenceMake)) }

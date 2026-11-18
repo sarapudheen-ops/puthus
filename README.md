@@ -329,8 +329,9 @@ records; 193,589 valid UTF-8). Recovered datasets remain outside Git and are ava
 **Inspect Toyota release data** workflow's `toyota-recovered-data` artifact.
 
 The app bundles **11,989 unambiguous passive DTC meanings** from that data, with source attribution.
-They apply only to a known Toyota/Lexus make in the loaded vehicle profile (or a vehicle explicitly linked
-to that VIN when the make is unknown), **never an unrelated/unknown car or a stale global ECU-list choice**.
+They apply only to a known Toyota/Lexus make: the loaded profile takes priority, then its explicitly saved
+link, then the new manual catalog selection when no profile/link make is known. A stale selection never
+supplies Toyota text to a known unrelated manufacturer, and no such lookup activates vehicle configuration.
 Data-pack v2 `dtcGroups` preserves manufacturer scope and source through import/export; v1 remains supported.
 Conflicts, placeholders and unsupported code forms are excluded, and extended codes are not promoted to
 base codes. No Toyota PIDs, ECU addresses, coding or actuator commands have been enabled from this data.

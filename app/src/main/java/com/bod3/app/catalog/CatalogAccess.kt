@@ -46,12 +46,16 @@ class CatalogAccess(private val catalog: CatalogRepository) {
             catalog.pack().library.moduleNames.map { it to "Legacy module names" }
     }
 
-    /** Passive make-scoped reference text may use a known profile make, but NEVER selects that make. */
+    /** Known profile/link evidence wins for passive text, but NEVER activates that make's configuration. */
     fun descriptions(observedMake: String? = null): DtcDescriptions {
         val selected = catalog.selected()
-        val make = selected?.make ?: observedMake?.let(CatalogIds::makeName)
+        val make = com.bod3.app.datapack.DtcReferenceContext.make(observedMake, selected?.make)?.let(CatalogIds::makeName)
         val tree = catalog.tree()
-        val reference = if (selected != null) selected.data else tree.children(null).firstOrNull {
+        val matchesSelection = selected != null && make != null &&
+            CatalogIds.normalize(CatalogIds.makeName(selected.make)) == CatalogIds.normalize(make)
+        // A stale manual selection must not lend Toyota reference meanings to a known unrelated VIN.
+        // Looking up the observed make's PASSIVE text does not select its nodes, ECUs, recipes or settings.
+        val reference = if (matchesSelection) selected!!.data else tree.children(null).firstOrNull {
             make != null && CatalogIds.normalize(CatalogIds.makeName(it.name)) == CatalogIds.normalize(make)
         }?.let { tree.resolve(it.id)?.data } ?: CatalogData()
         val library = catalog.pack().library
