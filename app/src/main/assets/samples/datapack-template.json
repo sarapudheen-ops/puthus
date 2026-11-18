@@ -1,0 +1,55 @@
+{
+  "format": "bod3-datapack",
+  "formatVersion": 1,
+  "id": "my-datapack",
+  "name": "My data pack (template)",
+  "version": 1,
+  "author": "Your name",
+  "description": "A template showing every field of a bod3 data pack. Change the values, delete what you do not need, and import it from Settings → Data packs. PIDs may only use read services (01, 09, 22). Formulas use A, B, C … for the data bytes after the response header, e.g. (A*256+B)/4.",
+  "pids": [
+    {
+      "id": "example-coolant",
+      "name": "Coolant temperature (example)",
+      "request": "0105",
+      "formula": "A-40",
+      "unit": "°C",
+      "min": -40,
+      "max": 215,
+      "decimals": 0,
+      "notes": "Broadcast request (no header): any ECU may answer."
+    },
+    {
+      "id": "example-uds-did",
+      "name": "Engine ECU identifier F40C (example)",
+      "request": "22F40C",
+      "formula": "(A*256+B)/100",
+      "unit": "bar",
+      "min": 0,
+      "max": 3,
+      "decimals": 2,
+      "header": "7E0",
+      "responseHeader": "7E8",
+      "notes": "UDS read sent to one ECU (11-bit CAN request/response IDs)."
+    }
+  ],
+  "vehicles": [
+    {
+      "make": "Example make",
+      "model": "Example model",
+      "years": "2018-2024",
+      "notes": "ECU list shown on the vehicle screen and used to name and probe modules during a scan.",
+      "ecus": [
+        { "address": "01", "name": "Engine", "requestId": "7E0", "responseId": "7E8", "protocol": "UDS" },
+        { "address": "02", "name": "Transmission", "requestId": "7E1", "responseId": "7E9", "protocol": "OBD" },
+        { "name": "29-bit example", "requestId": "18DA10F1", "responseId": "18DAF110", "protocol": "UDS" }
+      ]
+    }
+  ],
+  "moduleNames": [
+    { "requestId": "70E", "responseId": "778", "address": "09", "name": "Central electronics", "makes": ["Example make"] }
+  ],
+  "dtcs": {
+    "P1234": "Example manufacturer-specific code description",
+    "B1000-13": "Example UDS code with failure type byte"
+  }
+}

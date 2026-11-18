@@ -1,5 +1,11 @@
 package com.bod3.app.ui
 
+import com.bod3.app.errors.ErrorExplainer
+import com.bod3.app.packs.DataExport
+import com.bod3.app.packs.PackKind
+import com.bod3.app.packs.PackTransfer
+import com.bod3.app.settings.AppSettings
+import com.bod3.app.settings.AppSettingsStore
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,6 +15,10 @@ import com.bod3.app.actuator.ActuatorLibrary
 import com.bod3.app.actuator.SessionStateProbe
 import com.bod3.app.actuator.VehicleContext
 import com.bod3.app.android.AssetActuatorPacks
+import com.bod3.app.android.AssetCodingPacks
+import com.bod3.app.coding.CodingBackupStore
+import com.bod3.app.coding.CodingController
+import com.bod3.app.coding.CodingLibrary
 import com.bod3.app.android.AssetDataPacks
 import com.bod3.app.audit.AuditStore
 import com.bod3.app.android.ReportSharer
@@ -111,7 +121,8 @@ import kotlinx.coroutines.withContext
 enum class Screen {
     DEVICES, DASHBOARD, LIVE, LIVE_SELECT, SCAN, MODULES, MODULE_DETAIL, DTCS, SETTINGS, PROFILE_EDIT, TERMINAL,
     VEHICLES, VEHICLE_EDIT, ECU_DETAIL, CUSTOM_PIDS, PID_EDIT, GARAGE, PROFILE_ECUS,
-    ACTUATORS, ACTUATOR_RUN,
+    ACTUATORS, ACTUATOR_RUN, CODING, CODING_RUN, CODING_EDITOR,
+    APP_SETTINGS, DATA_PACKS,
 }
 
 sealed interface ConnectionState {
@@ -179,6 +190,17 @@ sealed interface ProfileState {
     data class Loaded(val profile: VehicleProfile, val isNew: Boolean) : ProfileState
     data class Failed(val message: String) : ProfileState
 }
+
+/** Data packs screen: the user's counts, bundled packs and samples, and a pending import. */
+data class PacksState(
+    val counts: com.bod3.app.packs.UserCounts = com.bod3.app.packs.UserCounts(),
+    val bundled: List<com.bod3.app.packs.BundledPack> = emptyList(),
+    val samples: List<String> = emptyList(),
+    /** What the chosen file would import; nothing is saved until it is confirmed. */
+    val preview: com.bod3.app.packs.ImportPreview? = null,
+    val importing: Boolean = false,
+    val message: String? = null,
+)
 
 data class UiState(
     val screen: Screen = Screen.DEVICES,
@@ -300,17 +322,47 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Bidirectional tests (M4) ----
     private val auditStore = AuditStore(SharedPrefsKeyValueStore(application))
     private val bundledActuators = AssetActuatorPacks.load(application)
+    private val actuatorLibrary = ActuatorLibrary(bundledActuators.packs, SharedPrefsKeyValueStore(application))
 
     /** Actuator test screens; every run needs Expert mode, a confirmation and passing preconditions. */
     val actuators = ActuatorController(
         scope = viewModelScope,
-        library = ActuatorLibrary(bundledActuators.packs, SharedPrefsKeyValueStore(application)),
+        library = actuatorLibrary,
         audit = auditStore,
         expertMode = { connectionStore.expertModeEnabled },
         environment = ::actuatorEnvironment,
         log = ::appendLog,
         bundledErrors = bundledActuators.errors,
     )
+
+    // ---- Coding (M5) ----
+    private val bundledCoding = AssetCodingPacks.load(application)
+    private val codingLibrary = CodingLibrary(bundledCoding.packs, SharedPrefsKeyValueStore(application))
+
+    /** Coding screens; writes need Expert mode, a backup, a confirmed diff and passing safety checks. */
+    val coding = CodingController(
+        scope = viewModelScope,
+        library = codingLibrary,
+        audit = auditStore,
+        backups = CodingBackupStore(SharedPrefsKeyValueStore(application)),
+        expertMode = { connectionStore.expertModeEnabled },
+        environment = ::actuatorEnvironment,
+        log = ::appendLog,
+        bundledErrors = bundledCoding.errors,
+    )
+
+    // ---- App settings, data packs (M6) ----
+    private val appSettingsStore = AppSettingsStore(SharedPrefsKeyValueStore(application))
+    private val _appSettings = MutableStateFlow(appSettingsStore.load())
+
+    /** Theme, units, keep-screen-on and onboarding state. */
+    val appSettings: StateFlow<AppSettings> = _appSettings.asStateFlow()
+
+    private val packTransfer = PackTransfer(bundledPacks.packs, dataStore, actuatorLibrary, codingLibrary)
+    private val _packs = MutableStateFlow(PacksState())
+    val packs: StateFlow<PacksState> = _packs.asStateFlow()
+    private var appSettingsReturn: Screen = Screen.DEVICES
+    private var packsReturn: Screen = Screen.DEVICES
 
     private val profiles: VehicleProfileService by lazy {
         VehicleProfileService(
@@ -359,7 +411,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 appendLog("Connection failed: ${e.message}")
                 _state.update {
-                    it.copy(connection = ConnectionState.Failed(device, e.message ?: e.javaClass.simpleName))
+                    it.copy(connection = ConnectionState.Failed(device, (e.message ?: e.javaClass.simpleName) + explanation(e)))
                 }
             }
         }
@@ -701,7 +753,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openTerminal() {
         val currentDriver = driver ?: return
-        if (!connectionStore.expertModeEnabled || scanJob?.isActive == true) return
+        if (!connectionStore.expertModeEnabled || scanJob?.isActive == true || coding.state.value.busy || actuators.state.value.running) return
         pauseLiveData()
         // The terminal talks to the adapter directly (not through the session's routing) and every
         // diagnostic request still passes the read-only policy.
@@ -810,7 +862,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             reader = null
             _state.update {
                 it.copy(
-                    protocol = Readout.Unavailable("No protocol answered (tried $tried)"),
+                    protocol = Readout.Unavailable("No protocol answered (tried $tried)" + explanation("UNABLE TO CONNECT")),
                     vin = Readout.Unavailable("Vehicle not detected"),
                     ecus = emptyMap(),
                 )
@@ -912,8 +964,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                         screen = Screen.DEVICES,
                         connection = ConnectionState.Failed(
                             device,
-                            "Connection lost ($reason) and ${reconnectPolicy.maxAttempts} reconnect attempts failed. " +
-                                "Check the adapter is plugged in and powered, then connect again.",
+                            "Connection lost ($reason) and ${reconnectPolicy.maxAttempts} reconnect attempts failed." +
+                                (explanation(e).takeIf { x -> x.isNotEmpty() } ?: explanation(reason)),
                         ),
                     )
                 }
@@ -933,7 +985,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         voltageJob?.cancel()
         voltageJob = viewModelScope.launch {
             while (isActive) {
-                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL || actuators.state.value.running
+                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL || actuators.state.value.running || coding.state.value.busy
                 if (!busy) sampleVoltage()
                 delay(VOLTAGE_INTERVAL_MS)
             }
@@ -986,8 +1038,16 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         throw e
     } catch (e: Exception) {
         appendLog("$what: ${e.message}")
-        Readout.Unavailable(e.message ?: "Read failed")
+        Readout.Unavailable((e.message ?: "Read failed") + (ErrorExplainer.explain(e)?.let { x -> " – ${x.fix}" } ?: ""))
     }
+
+    /** Likely cause and fix of [e], formatted to follow its message; empty when unknown. */
+    private fun explanation(e: Throwable): String = ErrorExplainer.explain(e)?.let(::formatExplanation).orEmpty()
+
+    private fun explanation(message: String): String = ErrorExplainer.explain(message)?.let(::formatExplanation).orEmpty()
+
+    private fun formatExplanation(x: com.bod3.app.errors.Explanation): String =
+        "\n\n${x.title}.\nLikely cause: ${x.cause}\nWhat to do: ${x.fix}"
 
     /**
      * Clears emission-related fault codes (service 04) on all OBD ECUs. Called only from the confirmation
@@ -1340,7 +1400,9 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { s -> s.ecuDetail?.let { s.copy(ecuDetail = change(it)) } ?: s }
     }
 
-    private fun canUseBus(): Boolean = session != null && scanJob?.isActive != true && ecuJob?.isActive != true
+    /** Only one bus user at a time: scans, ECU reads, actuator tests and coding writes exclude each other. */
+    private fun canUseBus(): Boolean =
+        session != null && scanJob?.isActive != true && ecuJob?.isActive != true && !actuators.state.value.running && !coding.state.value.busy
 
     fun readEcu() {
         val currentSession = session ?: return
@@ -1491,6 +1553,138 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(screen = Screen.MODULES, selectedModuleKey = null) }
     }
 
+    // ---- App settings and onboarding --------------------------------------------------------------
+
+    fun openAppSettings() {
+        pauseLiveData()
+        _state.update {
+            if (it.screen != Screen.APP_SETTINGS) appSettingsReturn = it.screen
+            it.copy(screen = Screen.APP_SETTINGS)
+        }
+    }
+
+    fun closeAppSettings() {
+        _state.update { it.copy(screen = appSettingsReturn) }
+    }
+
+    fun updateAppSettings(change: (AppSettings) -> AppSettings) {
+        _appSettings.value = runCatching { appSettingsStore.update(change) }
+            .getOrElse { e -> appendLog("Settings: ${e.message}"); change(_appSettings.value) }
+    }
+
+    fun finishOnboarding() = updateAppSettings { it.copy(onboardingDone = true) }
+
+    fun showOnboarding() = updateAppSettings { it.copy(onboardingDone = false) }
+
+    // ---- Data packs: import / export --------------------------------------------------------------
+
+    fun openDataPacks() {
+        pauseLiveData()
+        _state.update {
+            if (it.screen != Screen.DATA_PACKS) packsReturn = it.screen
+            it.copy(screen = Screen.DATA_PACKS)
+        }
+        _packs.update { it.copy(message = null, preview = null) }
+        refreshPacks()
+    }
+
+    fun closeDataPacks() {
+        _packs.update { it.copy(preview = null, message = null) }
+        _state.update { it.copy(screen = packsReturn) }
+    }
+
+    private fun refreshPacks() {
+        val app = getApplication<Application>()
+        val samples = runCatching { app.assets.list(SAMPLES_DIR).orEmpty().filter { it.endsWith(".json") }.sorted() }.getOrElse { emptyList() }
+        _packs.update {
+            it.copy(
+                counts = runCatching { packTransfer.userCounts() }.getOrElse { _ -> it.counts },
+                bundled = packTransfer.bundled(),
+                samples = samples,
+            )
+        }
+    }
+
+    /** Checks a chosen file completely and shows what it would import. Profiles go to Saved vehicles. */
+    fun previewImport(text: String) {
+        viewModelScope.launch {
+            _packs.update { it.copy(importing = true, message = null) }
+            val preview = withContext(Dispatchers.Default) { packTransfer.preview(text) }
+            if (preview.kind == PackKind.PROFILE) {
+                _packs.update { it.copy(importing = false, preview = null) }
+                openGarage()
+                importProfile(text)
+                return@launch
+            }
+            _packs.update { it.copy(importing = false, preview = preview) }
+        }
+    }
+
+    fun importFailed(message: String) {
+        _packs.update { it.copy(importing = false, preview = com.bod3.app.packs.ImportPreview(null, "Cannot import this file", errors = listOf(message))) }
+    }
+
+    fun confirmImport() {
+        val preview = _packs.value.preview ?: return
+        if (!preview.canImport) return
+        viewModelScope.launch {
+            _packs.update { it.copy(importing = true) }
+            val message = try {
+                withContext(Dispatchers.IO) { packTransfer.apply(preview) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "Import failed: ${e.message}"
+            }
+            appendLog("Import ${preview.title}: $message")
+            refreshData()
+            actuators.refresh()
+            coding.refresh()
+            _packs.update { it.copy(importing = false, preview = null, message = message) }
+            refreshPacks()
+        }
+    }
+
+    fun cancelImport() {
+        _packs.update { it.copy(preview = null) }
+    }
+
+    fun dismissPacksMessage() {
+        _packs.update { it.copy(message = null) }
+    }
+
+    private suspend fun shareJson(name: String, json: String?, empty: String): File {
+        val text = json ?: throw IllegalStateException(empty)
+        val app = getApplication<Application>()
+        return withContext(Dispatchers.IO) { ReportSharer.write(app, name, text) }
+    }
+
+    suspend fun writeDataExport(scope: DataExport): File =
+        shareJson("bod3-${scope.fileName}-${System.currentTimeMillis()}.json", packTransfer.exportData(scope), "Nothing to export yet: you have no ${scope.label.lowercase(Locale.ROOT)}.")
+
+    suspend fun writeVehicleExport(key: String): File {
+        val vehicle = repository.vehicles().firstOrNull { it.vehicle.key == key }?.vehicle ?: throw IllegalStateException("Vehicle not found")
+        return shareJson("bod3-ecus-${System.currentTimeMillis()}.json", packTransfer.exportVehicle(vehicle), "Nothing to export")
+    }
+
+    suspend fun writeMyActuatorsExport(): File =
+        shareJson("bod3-actuators-mine-${System.currentTimeMillis()}.json", packTransfer.exportActuators(), "You have no own test recipes yet.")
+
+    suspend fun writeMyCodingExport(): File =
+        shareJson("bod3-coding-mine-${System.currentTimeMillis()}.json", packTransfer.exportCoding(), "You have no own coding recipes yet.")
+
+    suspend fun writeBundledExport(id: String, kind: PackKind): File {
+        val pack = packTransfer.bundled().firstOrNull { it.id == id && it.kind == kind } ?: throw IllegalStateException("Pack not found")
+        return shareJson(pack.fileName, packTransfer.exportBundled(pack), "This pack cannot be exported")
+    }
+
+    suspend fun writeSampleExport(name: String): File {
+        require(name.endsWith(".json") && '/' !in name) { "Invalid sample" }
+        val app = getApplication<Application>()
+        val text = withContext(Dispatchers.IO) { app.assets.open("$SAMPLES_DIR/$name").bufferedReader().use { it.readText() } }
+        return shareJson("bod3-$name", text, "Empty sample")
+    }
+
     fun backToDashboard() {
         _state.update { it.copy(screen = if (it.offline) Screen.GARAGE else Screen.DASHBOARD) }
     }
@@ -1516,6 +1710,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openActuators() {
+        if (coding.state.value.busy) return
         pauseLiveData()
         actuators.refresh()
         _state.update { it.copy(screen = Screen.ACTUATORS) }
@@ -1542,6 +1737,68 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val json = actuators.exportJson(recipeId)
         val app = getApplication<Application>()
         val name = "bod3-actuators-${recipeId ?: "mine"}-${System.currentTimeMillis()}.json"
+        return withContext(Dispatchers.IO) { ReportSharer.write(app, name, json) }
+    }
+
+    // ---- Coding ------------------------------------------------------------------------------------
+
+    fun openCoding() {
+        if (actuators.state.value.running || scanJob?.isActive == true) return
+        pauseLiveData()
+        coding.refresh()
+        _state.update { it.copy(screen = Screen.CODING) }
+    }
+
+    /** Leaving is blocked while a read or write is running, so it always finishes cleanly. */
+    fun closeCoding() {
+        if (coding.state.value.busy) return
+        coding.select(null)
+        _state.update { it.copy(screen = if (it.offline) Screen.DEVICES else Screen.DASHBOARD) }
+    }
+
+    fun openCodingRecipe(id: String) {
+        coding.select(id)
+        _state.update { it.copy(screen = Screen.CODING_RUN) }
+    }
+
+    fun closeCodingRecipe() {
+        if (coding.state.value.busy) return
+        coding.select(null)
+        coding.refresh()
+        _state.update { it.copy(screen = Screen.CODING) }
+    }
+
+    fun openCodingEditor(id: String?) {
+        if (coding.state.value.busy) return
+        coding.openEditor(id)
+        _state.update { it.copy(screen = Screen.CODING_EDITOR) }
+    }
+
+    fun codingEditorTemplate() {
+        coding.openEditor(null)
+    }
+
+    fun saveCodingEditor() {
+        val id = coding.saveEditor() ?: return
+        coding.select(id)
+        _state.update { it.copy(screen = Screen.CODING_RUN) }
+    }
+
+    fun closeCodingEditor() {
+        val back = if (coding.state.value.selectedId != null) Screen.CODING_RUN else Screen.CODING
+        coding.closeEditor()
+        _state.update { it.copy(screen = back) }
+    }
+
+    fun deleteCodingRecipe(id: String) {
+        coding.deleteUserRecipe(id)
+        if (coding.state.value.selectedId == null) _state.update { it.copy(screen = Screen.CODING) }
+    }
+
+    suspend fun writeCodingExport(recipeId: String?): File {
+        val json = coding.exportJson(recipeId)
+        val app = getApplication<Application>()
+        val name = "bod3-coding-${recipeId ?: "mine"}-${System.currentTimeMillis()}.json"
         return withContext(Dispatchers.IO) { ReportSharer.write(app, name, json) }
     }
 
@@ -1812,5 +2069,6 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         const val ENGINE_RUNNING_RPM = 300.0
         const val VOLTAGE_INTERVAL_MS = 5_000L
         const val MAX_LOG_LINES = 300
+        const val SAMPLES_DIR = "samples"
     }
 }

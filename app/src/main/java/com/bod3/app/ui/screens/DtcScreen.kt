@@ -1,5 +1,7 @@
 package com.bod3.app.ui.screens
 
+import com.bod3.app.settings.UnitPreferences
+import com.bod3.app.settings.Units
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +43,7 @@ fun DtcScreen(
     onClear: () -> Unit,
     onDismissClear: () -> Unit,
     onSaveDescription: (code: String, text: String) -> Unit,
+    units: UnitPreferences = UnitPreferences(),
 ) {
     var confirmClear by rememberSaveable { mutableStateOf(false) }
     var editing by rememberSaveable { mutableStateOf<String?>(null) }
@@ -110,7 +113,7 @@ fun DtcScreen(
                     is Readout.Value -> if (readout.value.isEmpty()) Text("No freeze frame stored") else readout.value.forEach { frame ->
                         InfoRow("ECU ${frame.ecu}", "Frame ${frame.frame}")
                         frame.dtc?.let { DtcRow(it, descriptions, detail = "Stored the freeze frame", onEditDescription = { c -> editing = c }) }
-                        frame.values.forEach { v -> InfoRow(v.definition.name, "${v.formatted} ${v.definition.unit}".trim()) }
+                        frame.values.forEach { v -> InfoRow(v.definition.name, Units.format(v.value, v.definition.unit, v.definition.decimals, units)) }
                         HorizontalDivider()
                     }
                 }

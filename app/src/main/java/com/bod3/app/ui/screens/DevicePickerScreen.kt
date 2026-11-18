@@ -1,5 +1,14 @@
 package com.bod3.app.ui.screens
 
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import android.bluetooth.BluetoothAdapter
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -63,8 +72,12 @@ fun DevicePickerScreen(
     onOpenSettings: () -> Unit,
     onOpenVehicles: () -> Unit = {},
     onOpenGarage: () -> Unit = {},
+    onOpenAppSettings: () -> Unit = {},
+    onOpenDataPacks: () -> Unit = {},
+    onShowIntro: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    var menu by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         onPermissionResult(results.values.all { it })
     }
@@ -84,6 +97,14 @@ fun DevicePickerScreen(
                     TextButton(onClick = onOpenVehicles) { Text("Vehicles") }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Connection settings")
+                    }
+                    Box {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("App settings") }, onClick = { menu = false; onOpenAppSettings() })
+                            DropdownMenuItem(text = { Text("Data packs (import / export)") }, onClick = { menu = false; onOpenDataPacks() })
+                            DropdownMenuItem(text = { Text("Introduction") }, onClick = { menu = false; onShowIntro() })
+                        }
                     }
                 },
             )
@@ -122,7 +143,7 @@ fun DevicePickerScreen(
         AlertDialog(
             onDismissRequest = onDismissError,
             title = { Text("Could not connect to ${failed.device.name}") },
-            text = { Text(failed.message) },
+            text = { Text(failed.message, modifier = Modifier.verticalScroll(rememberScrollState())) },
             confirmButton = { TextButton(onClick = { onDismissError(); onConnect(failed.device) }) { Text("Retry") } },
             dismissButton = { TextButton(onClick = onDismissError) { Text("Close") } },
         )

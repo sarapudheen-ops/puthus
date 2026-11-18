@@ -1,0 +1,71 @@
+{
+  "format": "bod3-coding",
+  "formatVersion": 1,
+  "id": "vw-mqb-coding",
+  "name": "VW group MQB coding templates",
+  "version": 1,
+  "author": "bod3",
+  "description": "Coding examples for MQB vehicles (e.g. Tiguan AD1/BJ). Module addresses use the usual MQB CAN IDs. Long-coding byte/bit positions differ between part numbers and software versions, so every recipe is unverified: confirm the position against the long-coding helper or label file for your module, and fill in the part numbers before relying on it.",
+  "recipes": [
+    {
+      "id": "vw-mqb-09-comfort-closing",
+      "name": "Comfort closing via remote (Tiguan BCM)",
+      "description": "Close the windows (and sunroof) by holding the lock button on the key. Long-coding bit in the central electronics (BCM, address 09).",
+      "module": { "name": "Central electronics", "address": "09", "requestId": "70E", "responseId": "778" },
+      "method": "long_coding",
+      "did": "0600",
+      "byte": 3,
+      "mask": "04",
+      "values": [
+        { "value": 0, "label": "Off" },
+        { "value": 1, "label": "On" }
+      ],
+      "session": "03",
+      "preconditions": { "minVoltage": 12.0, "allowEngineRunning": false },
+      "applicability": { "makes": ["Volkswagen"], "models": ["Tiguan"], "partNumbers": [], "softwareVersions": [] },
+      "source": "Community long-coding notes for MQB BCMs (unverified template)",
+      "notes": "Byte 3 bit 2 is the commonly quoted position for 5Q0937084 BCMs; check it in your module's long-coding helper before writing. Close all doors, keep the key nearby, and test with a window you can stop.",
+      "verified": false
+    },
+    {
+      "id": "vw-mqb-09-comfort-opening",
+      "name": "Comfort opening via remote (Tiguan BCM)",
+      "description": "Open the windows by holding the unlock button on the key.",
+      "module": { "name": "Central electronics", "address": "09", "requestId": "70E", "responseId": "778" },
+      "method": "long_coding",
+      "did": "0600",
+      "byte": 3,
+      "mask": "08",
+      "values": [
+        { "value": 0, "label": "Off" },
+        { "value": 1, "label": "On" }
+      ],
+      "session": "03",
+      "preconditions": { "minVoltage": 12.0, "allowEngineRunning": false },
+      "applicability": { "makes": ["Volkswagen"], "models": ["Tiguan"], "partNumbers": [], "softwareVersions": [] },
+      "source": "Community long-coding notes for MQB BCMs (unverified template)",
+      "notes": "Placeholder position next to comfort closing; confirm it for your part number.",
+      "verified": false
+    },
+    {
+      "id": "vw-mqb-17-needle-sweep",
+      "name": "Needle sweep on start (instrument cluster)",
+      "description": "Gauge needles sweep to full scale when the ignition is switched on.",
+      "module": { "name": "Dashboard", "address": "17", "requestId": "714", "responseId": "77E" },
+      "method": "long_coding",
+      "did": "0600",
+      "byte": 1,
+      "mask": "01",
+      "values": [
+        { "value": 0, "label": "Off" },
+        { "value": 1, "label": "On" }
+      ],
+      "session": "03",
+      "preconditions": { "minVoltage": 12.0, "allowEngineRunning": false },
+      "applicability": { "makes": ["Volkswagen", "Audi", "Skoda", "SEAT", "Cupra"], "models": [], "partNumbers": [], "softwareVersions": [] },
+      "source": "Template",
+      "notes": "Analogue clusters only; the bit position differs between cluster generations.",
+      "verified": false
+    }
+  ]
+}

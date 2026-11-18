@@ -2,13 +2,22 @@ package com.bod3.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bod3.app.ui.screens.ActuatorRunScreen
+import com.bod3.app.ui.screens.AppSettingsScreen
+import com.bod3.app.ui.screens.DataPacksActions
+import com.bod3.app.ui.screens.DataPacksScreen
+import com.bod3.app.ui.screens.OnboardingScreen
 import com.bod3.app.ui.screens.ActuatorsScreen
+import com.bod3.app.ui.screens.CodingEditorScreen
+import com.bod3.app.ui.screens.CodingRunScreen
+import com.bod3.app.ui.screens.CodingScreen
 import com.bod3.app.ui.screens.ConnectionSettingsScreen
 import com.bod3.app.ui.screens.CustomPidsScreen
 import com.bod3.app.ui.screens.EcuDetailScreen
@@ -35,6 +44,20 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val log by viewModel.log.collectAsStateWithLifecycle()
     val actuatorState by viewModel.actuators.state.collectAsStateWithLifecycle()
+    val codingState by viewModel.coding.state.collectAsStateWithLifecycle()
+    val appSettings by viewModel.appSettings.collectAsStateWithLifecycle()
+    val packsState by viewModel.packs.collectAsStateWithLifecycle()
+
+    val view = LocalView.current
+    DisposableEffect(appSettings.keepScreenOn) {
+        view.keepScreenOn = appSettings.keepScreenOn
+        onDispose { view.keepScreenOn = false }
+    }
+
+    if (!appSettings.onboardingDone) {
+        OnboardingScreen(onFinish = viewModel::finishOnboarding)
+        return
+    }
 
     // Permission or Bluetooth state may change while we are in the background (system settings).
     LifecycleResumeEffect(Unit) {
@@ -52,6 +75,9 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             onOpenSettings = viewModel::openSettings,
             onOpenVehicles = viewModel::openVehicles,
             onOpenGarage = viewModel::openGarage,
+            onOpenAppSettings = viewModel::openAppSettings,
+            onOpenDataPacks = viewModel::openDataPacks,
+            onShowIntro = viewModel::showOnboarding,
         )
 
         Screen.DASHBOARD -> {
@@ -77,6 +103,9 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     writeReport = viewModel::writeReport,
                     onOpenGarage = viewModel::openGarage,
                     onOpenActuators = viewModel::openActuators,
+                    onOpenCoding = viewModel::openCoding,
+                    onOpenDataPacks = viewModel::openDataPacks,
+                    onOpenAppSettings = viewModel::openAppSettings,
                 ),
             )
         }
@@ -90,6 +119,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onClear = viewModel::clearObdDtcs,
                 onDismissClear = viewModel::dismissClearResult,
                 onSaveDescription = viewModel::setDtcDescription,
+                units = appSettings.units,
             )
         }
 
@@ -143,6 +173,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onStopRecording = { viewModel.stopRecording() },
                     writeCsv = viewModel::writeRecordingCsv,
                 ),
+                units = appSettings.units,
             )
         }
 
@@ -314,6 +345,66 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             )
         }
 
+        Screen.CODING -> {
+            BackHandler(onBack = viewModel::closeCoding)
+            CodingScreen(
+                state = codingState,
+                expertMode = state.settings.expertMode,
+                connected = state.isConnected,
+                onBack = viewModel::closeCoding,
+                onOpen = viewModel::openCodingRecipe,
+                onNewRecipe = { viewModel.openCodingEditor(null) },
+                onImportText = viewModel.coding::importJson,
+                writeExport = { viewModel.writeCodingExport(null) },
+                writeAuditLog = viewModel::writeAuditLog,
+                onRequestRollback = viewModel.coding::requestRollback,
+                onConfirmRollback = viewModel.coding::confirmRollback,
+                onCancelRollback = viewModel.coding::cancelRollback,
+                onDismissMessage = viewModel.coding::dismissMessage,
+                onOpenSettings = viewModel::openSettings,
+            )
+        }
+
+        Screen.CODING_RUN -> {
+            BackHandler(onBack = viewModel::closeCodingRecipe)
+            CodingRunScreen(
+                state = codingState,
+                expertMode = state.settings.expertMode,
+                connected = state.isConnected,
+                onBack = viewModel::closeCodingRecipe,
+                onRead = viewModel.coding::read,
+                onOverride = viewModel.coding::setOverrideVersion,
+                onValue = viewModel.coding::setNewValue,
+                onWrite = viewModel.coding::requestWrite,
+                onConfirm = viewModel.coding::confirmWrite,
+                onCancelConfirm = viewModel.coding::cancelConfirmation,
+                onRollbackLast = viewModel.coding::rollbackLast,
+                onRequestRollback = viewModel.coding::requestRollback,
+                onConfirmRollback = viewModel.coding::confirmRollback,
+                onCancelRollback = viewModel.coding::cancelRollback,
+                onEdit = { id -> viewModel.openCodingEditor(id) },
+                onDelete = viewModel::deleteCodingRecipe,
+                writeExport = { viewModel.writeCodingExport(codingState.selectedId) },
+                onDismissMessage = viewModel.coding::dismissMessage,
+            )
+        }
+
+        Screen.CODING_EDITOR -> {
+            BackHandler(onBack = viewModel::closeCodingEditor)
+            val editor = codingState.editor
+            if (editor == null) {
+                LaunchedEffect(Unit) { viewModel.closeCodingEditor() }
+            } else {
+                CodingEditorScreen(
+                    editor = editor,
+                    onChange = viewModel.coding::updateEditor,
+                    onSave = viewModel::saveCodingEditor,
+                    onTemplate = viewModel::codingEditorTemplate,
+                    onBack = viewModel::closeCodingEditor,
+                )
+            }
+        }
+
         Screen.PROFILE_ECUS -> {
             BackHandler(onBack = viewModel::closeProfileEcus)
             ProfileEcusScreen(
@@ -342,6 +433,37 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onRename = if (state.savedProfile != null) ({ name: String -> viewModel.renameModule(module.address.requestHeader, name) }) else null,
                 )
             }
+        }
+
+        Screen.APP_SETTINGS -> {
+            BackHandler(onBack = viewModel::closeAppSettings)
+            AppSettingsScreen(
+                settings = appSettings,
+                onBack = viewModel::closeAppSettings,
+                onChange = viewModel::updateAppSettings,
+                onOpenDataPacks = viewModel::openDataPacks,
+                onOpenConnectionSettings = viewModel::openSettings,
+                onShowIntro = viewModel::showOnboarding,
+            )
+        }
+
+        Screen.DATA_PACKS -> {
+            BackHandler(onBack = viewModel::closeDataPacks)
+            DataPacksScreen(
+                state = packsState,
+                actions = DataPacksActions(
+                    onBack = viewModel::closeDataPacks,
+                    onImportText = viewModel::previewImport,
+                    onConfirmImport = viewModel::confirmImport,
+                    onCancelImport = viewModel::cancelImport,
+                    onDismissMessage = viewModel::dismissPacksMessage,
+                    writeData = viewModel::writeDataExport,
+                    writeMyActuators = viewModel::writeMyActuatorsExport,
+                    writeMyCoding = viewModel::writeMyCodingExport,
+                    writeBundled = viewModel::writeBundledExport,
+                    writeSample = viewModel::writeSampleExport,
+                ),
+            )
         }
     }
 }
