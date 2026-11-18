@@ -23,18 +23,21 @@ from toyota_structure import (ECU_FILE, audit_command_pool, function_index, menu
                               system_fields, system_lists, typed_table, uint)
 
 FOCUSED_READERS = {
-    "libTOYOTA_FILE.so": ["GetAllToyotaTblData", "GetToyotaTblData", "GetInfoFromAddrPart",
+    "libTOYOTA_FILE.so": ["GetVehicleInfoData", "GetSystemListData", "GetAllToyotaTblData", "GetToyotaTblData", "GetInfoFromAddrPart",
         "GetSystemEnterInfoData", "GetSysFuncInfoData", "GetRDtcDataFromRDTCPart",
         "GetDsSubMenuInfoData", "GetDsSubMenuItemList", "GetSFDataFromSFList", "GetCustomizeFuncData",
         "GetEcuTblData", "GetDsDataFromDSPart", "GetActDataFromACTPart", "GetCDtcDataFromCDTCPart",
-        "GetSFDataFromSFPart", "GetRoBDataFromRoBPart"],
+        "GetSFDataFromSFPart", "GetRoBDataFromRoBPart", "GetCustItemInfoData"],
     "libTOYOTA_FDATA.so": ["AnalyzeDsCmdDataP3", "GetDSCmdDataInfoP3", "GetDSCmdDataInfoP4",
         "GetExistDataIdList", "GetDsValue", "GetActCmdDataInfoP3", "GetActCmdDataInfoP4",
-        "SetCmdToSndFrameFunc_1", "SetCmdToSndFrameFunc_2", "SetCmdToSndFrameFunc_3"],
-    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex"],
+        "SetCmdToSndFrameFunc_1", "SetCmdToSndFrameFunc_2", "SetCmdToSndFrameFunc_3",
+        "GetShowDsItem", "GetShowDsItem_P4", "GetShowDsItem_P5", "GetCmdDataIndex"],
+    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex"],
     "libTOYOTA_CALC.so": ["ResultCalcFromCalcID", "Calc_C"],
     "libDIAG.so": ["InitMenuTree", "MenuTreeDispose_Ex", "GetMenuSubItemTextID_Ex",
-        "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID"],
+        "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID",
+        "GetMenuID_Ex", "GetCurrentMenuSaveData"],
+    "libTOYOTA_SCAN.so": ["GetSysListNo", "TransferVehicleInfo", "InitTopSystemList"],
 }
 SEARCHES = {
     "innova": r"\binnova\b|\ban40\b|\ban140\b|\bag10\b",
@@ -171,7 +174,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     section_counts, header_shapes, unparsed = Counter(), Counter(), []
     section_strides, section_row_totals, typed_errors = Counter(), Counter(), []
     section_files = []
-    samples = []
+    samples, p5_sampled = [], set()
     section_records = output / "ecu-sections.jsonl"
     with section_records.open("w", encoding="utf-8") as rows:
         for name, path in sorted(paths.items()):
@@ -201,9 +204,13 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                         typed_errors.append({"file": name, "section": section.identity, "error": str(error)})
                     section_counts[section.identity] += 1
                     rows.write(json.dumps(item, sort_keys=True) + "\n")
-                if name.endswith("Ecu_Data_0001.BIN"):
+                region = name.split("/")[0]
+                p5_sample = region not in p5_sampled and any(s.identity == 23 for s in sections) and len(data) < 128000
+                if name.endswith("Ecu_Data_0001.BIN") or p5_sample:
                     samples.append({"file": name, "sha256": hashlib.sha256(data).hexdigest(),
                                     "bytes": len(data), "base64": base64.b64encode(data).decode("ascii")})
+                    if p5_sample:
+                        p5_sampled.add(region)
             except ValueError as error:
                 unparsed.append({"file": name, "error": str(error)})
     findings["families"]["ecuTables"] = {"candidates": sum(bool(re.fullmatch(ECU_FILE, name)) for name in paths),
@@ -212,7 +219,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         "typedTableErrors": typed_errors, "strides": [{"section": k[0], "stride": k[1], "tables": v} for k, v in sorted(section_strides.items())],
         "embeddedSchemaTags": [{"directorySection": key[0], "embeddedTag": key[1], "count": value}
                                for key, value in sorted(header_shapes.items())]}
-    # These three small source excerpts let an offline reviewer reproduce the
+    # A few bounded legacy/P5 excerpts let an offline reviewer reproduce the
     # structural work without committing vendor data or executable libraries.
     (output / "structural-excerpts.json").write_text(json_text(samples))
     emit_report("structural-excerpts", "SHA-pinned ECU structural excerpts", json_text(samples))
@@ -229,7 +236,9 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
         try:
             table = typed_table(data)
             item.update({"tag": table.identity, "rows": table.count, "payloadBytes": len(table.body),
-                         "stride": table.stride, "paddingBytes": len(table.padding)})
+                         "stride": table.stride, "paddingBytes": len(table.padding),
+                         "firstRowsHex": [table.body[i * table.stride:(i + 1) * table.stride].hex(" ")
+                                          for i in range(min(table.count, 3))] if table.stride and table.stride <= 256 else []})
             parsed_other.add(name)
         except ValueError as error:
             item["unparsed"] = str(error)
@@ -249,6 +258,10 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     findings["families"]["sharedTypedTables"] = shared_tables
     findings["families"]["opaqueCommandPools"] = pools
     (output / "shared-tables.json").write_text(json_text(shared_tables))
+    open_prefixes = [{"file": name, "bytes": path.stat().st_size, "prefixHex": path.read_bytes()[:256].hex(" ")}
+                     for name, path in paths.items() if "/" not in name and name not in ("MENU.BIN",)
+                     and not name.startswith(("SYSLIST_", "FUNCDATA_"))]
+    emit_report("open-formats", "Uninterpreted top-level format prefixes", json_text(open_prefixes))
     (output / "command-pool-excerpts.json").write_text(json_text(pool_samples))
     emit_report("command-pool-excerpts", "Source command-pool excerpts (not executable recipes)", json_text(pool_samples))
 
@@ -259,7 +272,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             with (output / "menu-nodes.jsonl").open("w", encoding="utf-8") as dest:
                 for node in nodes.values():
                     dest.write(json.dumps(node, sort_keys=True) + "\n")
-            evidence, leaf_examples, leaf_count, visited, queue = [], [], 0, set(), deque([(0, [])])
+            evidence, leaf_examples, manual_leaf_examples, leaf_count, visited, queue = [], [], [], 0, set(), deque([(0, [])])
             while queue:
                 offset, trail = queue.popleft()
                 if offset in visited:
@@ -273,13 +286,17 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                                      "edges": node["edges"]})
                 if not node["edges"] and any(re.search(SEARCHES["innova"], part, re.I) for part in trail):
                     leaf_count += 1
+                    example = {"node": offset, "path": trail, "headerWords": node["headerWords"]}
                     if len(leaf_examples) < 30:
-                        leaf_examples.append({"node": offset, "path": trail, "headerWords": node["headerWords"]})
+                        leaf_examples.append(example)
+                    if "Manual Select" in trail and len(manual_leaf_examples) < 30:
+                        manual_leaf_examples.append(example)
                 if len(trail) < 32:
                     queue.extend((edge["target"], trail) for edge in node["edges"] if edge["target"] in nodes)
             findings["families"]["MENU.BIN"] = {"nodes": len(nodes), "edges": sum(len(n["edges"]) for n in nodes.values()),
                 "titleIdsResolved": title_matches, "reachableNodesWithinDepth32": len(visited), "innovaPaths": evidence,
-                "innovaDescendantLeaves": leaf_count, "innovaLeafPathExamples": leaf_examples}
+                "innovaDescendantLeaves": leaf_count, "innovaLeafPathExamples": leaf_examples,
+                "innovaManualLeafPathExamples": manual_leaf_examples}
             parsed_other.add("MENU.BIN")
         except ValueError as error:
             findings["families"]["MENU.BIN"] = {"unparsed": str(error)}
