@@ -19,7 +19,7 @@ import re
 from analyze_toyota import TOYOTA_SHA256
 
 CODE = re.compile(r"[PCBU][0-3][0-9A-F]{3}(?:[0-9A-F]{2})?")
-SEPARATOR = "\\^@"
+SEPARATOR = "\0"
 
 
 def convert(records: dict[str, str]):
