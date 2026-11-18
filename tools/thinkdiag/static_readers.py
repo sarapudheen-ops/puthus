@@ -16,7 +16,7 @@ from elftools.elf.elffile import ELFFile
 
 READERS = {
     "libDEVICEID.so": ["@0x8dc4:0x254"],
-    "libSTD.so": ["OpenFileIssueSearchID", "EncryptNumber", "ggp_Open", "IdSearch"],
+    "libSTD.so": ["@0x21b68:0x230", "IdSearch"],
     "libTOYOTA_FILE.so": ["GetVehicleInfoData", "GetSystemListData"],
     "libDIAG.so": ["FOPEN", "FOPEN_Ex", "OpenDiagReadFileDll", "OpenSearchIDDLL"],
 }

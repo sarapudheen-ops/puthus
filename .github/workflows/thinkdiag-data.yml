@@ -35,9 +35,13 @@ jobs:
           python3 -m pip install pyelftools==0.32 capstone==5.0.6
           python3 tools/thinkdiag/analyze_toyota.py .local/thinkdiag/TOYOTA.zip --output .local/thinkdiag/report
           python3 tools/thinkdiag/static_readers.py .local/thinkdiag/TOYOTA.zip --output .local/thinkdiag/report
+      - name: Decode the identified YZJM table wrapper
+        run: |
+          python3 tools/thinkdiag/decode_toyota.py .local/thinkdiag/TOYOTA.zip \
+            --output .local/thinkdiag/decoded --report .local/thinkdiag/report
       - name: Publish static-analysis reports
         run: |
-          for report in native-symbols binary-containers reader-libDEVICEID.so reader-libSTD.so reader-libTOYOTA_FILE.so reader-libDIAG.so; do
+          for report in native-symbols binary-containers decoded-tables reader-libDEVICEID.so reader-libSTD.so reader-libTOYOTA_FILE.so reader-libDIAG.so; do
             gh api --method POST "repos/$GH_REPO/check-runs" \
               -f name="Toyota $report" -f head_sha="$GITHUB_SHA" \
               -f status=completed -f conclusion=success \
