@@ -33,8 +33,12 @@ FOCUSED_READERS = {
         "GetExistDataIdList", "GetDsValue", "GetActCmdDataInfoP3", "GetActCmdDataInfoP4",
         "SetCmdToSndFrameFunc_1", "SetCmdToSndFrameFunc_2", "SetCmdToSndFrameFunc_3",
         "GetShowDsItem", "GetShowDsItem_P4", "GetShowDsItem_P5", "GetCmdDataIndex", "GetSystemEnterIndex",
-        "GetEcuDataP4", "CalDataFromSignalLSB", "GetDIDReceiveData", "AnalyzeDataFunc_1", "AnalyzeDataFunc_2", "GetECUDataP3", "GetDataIdList", "GetDSDataP3"],
-    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex", "InitSetEnterFrame", "SendCmdAndGetReceive", "SendCmdAndGetReceive_EX", "SendCmdAndGetReceive_GN", "InitKWPISOMode", "InitCanBusMode", "MenuEnterCommunicationSet"],
+        "GetEcuDataP4", "CalDataFromSignalLSB", "GetDIDReceiveData", "AnalyzeDataFunc_1", "AnalyzeDataFunc_2",
+        "GetDataMonitorListP3", "GetDataMonitorListP4", "GetDataMonitorListP5", "GetEnablePidListP3",
+        "GetDSCmdDataInfoP3_21", "GetDtcListInfo_P3P4", "GetDtcListInfo_P5", "ChangeSignalLSB"],
+    "libTOYOTA_CDSF.so": ["ReadDStreamFunc"],
+    "libTOYOTA_DTCF.so": ["ReadDtcModeP3P4", "GetDTCCodeFromAnsP3P4", "GetDTCAskCmdResult"],
+    "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex", "InitSetEnterFrame", "SendCmdAndGetReceive", "SendCmdAndGetReceive_EX", "SendCmdAndGetReceive_GN", "InitKWPISOMode", "InitCanBusMode", "MenuEnterCommunicationSet", "GetKwpRecDataWithFrame", "GetKwpRecData", "GetBaseCanBusRecData"],
     "libTOYOTA_CALC.so": ["ResultCalcFromCalcID", "Calc_C"],
     "libDIAG.so": ["InitMenuTree", "MenuTreeDispose_Ex", "GetMenuSubItemTextID_Ex",
         "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID",
@@ -427,7 +431,17 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             raw = source.read_bytes()
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                   "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
-    for name in ("TEXT_EN.GAG.json", "DSTREAM_EN.GAG.json"):
+    # Bounded representative ECU inputs for reproducing exact byte/bit/formula joins locally.
+    # The complete corpus is still converted in Actions, not shipped in Git or the APK.
+    ecu_samples = {"0006", "000b", "0024", "0028", "002d", "006e", "0070", "0081", "0085", "00c1", "00c2", "00d4"}
+    for name, source in sorted(paths.items()):
+        if name == "SYSTEMENTER.BIN" or (name.startswith("EU/") and (
+                re.fullmatch(r"EU/Toyota_bin_[0-9a-fA-F]+\.BIN", name)
+                or any(name.casefold() == f"eu/ecu_data_{identity}.bin" for identity in ecu_samples))):
+            raw = source.read_bytes()
+            applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                                  "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
+    for name in ("TEXT_EN.GAG.json", "DSTREAM_EN.GAG.json", "TCODE_EN.GAG.json", "RCODE_EN.GAG.json"):
         if name in libraries:
             raw = json_text(libraries[name]).encode("utf-8")
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
