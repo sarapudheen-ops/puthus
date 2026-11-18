@@ -229,6 +229,49 @@ object VehiclePackScenarios {
         check(access.customPids().isEmpty()) // no stale selected-system/legacy fallback
     }
 
+    fun connectionUsesOnlyTheManualPathAndCurrentSystemWithSparseOverrides() {
+        val fixture = Fixture()
+        fun connection(vararg pairs: Pair<String, Any?>) = com.bod3.app.catalog.CatalogConnection(mapOf(*pairs))
+        val base = CatalogPack("base", "Base", nodes = fixture.path.nodes.mapIndexed { i, node ->
+            node.copy(data = CatalogData(connection = when (i) {
+                0 -> connection("requestTimeoutMs" to 6000)
+                1 -> connection("searchTimeoutMs" to 21000)
+                2 -> connection("requestTimeoutMs" to 7000, "forcedProtocol" to "ISO_14230_4_KWP_FAST")
+                else -> connection("requestTimeoutMs" to 8000, "extendedAddress" to null)
+            }))
+        }, library = CatalogData(connection = connection("requestTimeoutMs" to 30000, "extraInitCommands" to listOf("ATSH 7E1"))))
+        val repo = CatalogRepository(base, MemoryStore())
+        val adapter = com.bod3.app.obd.connection.ConnectionProfile("adapter", "My adapter", extendedAddress = "F1")
+        var scope: CatalogData? = null
+        val access = CatalogAccess(repo) { scope }
+        check(access.connection(adapter) == adapter) // No selection: never use the legacy library.
+        repo.select("variant", adapter)
+        val normal = access.connection(adapter)
+        check(normal.requestTimeoutMs == 8000L && normal.searchTimeoutMs == 21000L)
+        check(normal.extendedAddress == null && normal.extraInitCommands.isEmpty())
+        check(normal.forcedProtocol == com.bod3.app.obd.protocol.ObdProtocol.ISO_14230_4_KWP_FAST)
+        scope = CatalogData() // Downloaded selection unloaded/disabled: CLOSED, not a local fallback.
+        check(access.connection(adapter).copy(id = adapter.id, name = adapter.name) == adapter)
+        val source = CatalogData(connection = connection("requestTimeoutMs" to 9000, "searchTimeoutMs" to 23000,
+            "useVtTimeout" to true, "extendedAddress" to "A1", "forcedProtocol" to "ISO_9141_2"))
+        scope = source.overlay(repo.selected()!!.data)
+        val first = access.connection(adapter)
+        check(first.requestTimeoutMs == 8000L && first.searchTimeoutMs == 21000L && first.useVtTimeout)
+        check(first.extendedAddress == null) // An explicit child null clears the source/base setting.
+        check(first.forcedProtocol == normal.forcedProtocol)
+        check(first.id == "catalog-variant" && first.extraInitCommands.isEmpty())
+        scope = source.copy(connection = connection("requestTimeoutMs" to 10000, "useVtTimeout" to false))
+        check(access.connection(adapter).requestTimeoutMs == 10000L && !access.connection(adapter).useVtTimeout)
+        scope = CatalogData()
+        check(access.connection(adapter).copy(id = adapter.id, name = adapter.name) == adapter) // No stale ECU settings.
+        repo.select(null)
+        scope = source
+        check(access.connection(adapter) == adapter) // A cached pack may not select configuration.
+        scope = null
+        check(access.connection(adapter) == adapter)
+        check(adapter.requestTimeoutMs == 5000L && adapter.extendedAddress == "F1") // Adapter profile unchanged.
+    }
+
     fun controllerDownloadsNeverSelectWithoutExplicitManualConfirmation() = runBlocking {
         temporary { cache ->
             val fixture = Fixture(enabled = true); val client = fixture.client(cache)

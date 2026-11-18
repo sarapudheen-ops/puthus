@@ -59,6 +59,22 @@ use the actual APK's index, production HTTPS loader and private cache, and then 
 explicitly denied. Publication/network/device-test success must be checked on the current revision; a
 successful format/fixture test alone is not proof that delivery is live.
 
+### Observed delivery evidence and TLS boundary
+
+For `059ff398`, push run [44371455414](https://github.com/sarapudheen-ops/puthus/actions/runs/44371455414)
+published the immutable **466,298,841-byte** container
+`toyota-f63ee61ba2b0117cd2e8dafee28284b7eb4fa814ba2946d86902d1acc30d0bc4.bin`
+and passed the real hosted range checker. Both push and PR APK/lint builds passed; the PR run reported
+**481 JVM tests, zero failures**. The device APK/index-exclusion test passed, but its network/cache test
+failed at TLS chain validation (`Trust anchor for certification path not found`), before fetching any
+object. That failed device run is not offline-cache or stock-Android-24 network proof.
+
+CI now synchronizes only the disposable emulator's system CA store with the runner's existing trusted
+CA bundle and records verified host issuers/fingerprints. It does **not** change the app's TLS configuration,
+ship a CI/proxy CA, disable hostname/certificate verification, or trust a downloaded leaf. The rerun must
+still pass. Even a pass with current CAs is not proof that an unmaintained 2016 device CA store trusts the
+current release service; that compatibility boundary remains explicit.
+
 ## Build and reproduce
 
 Heavy conversion is intended for GitHub Actions (`.github/actions/prepare-vehicle-packs`). Large generated

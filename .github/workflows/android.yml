@@ -124,6 +124,7 @@ jobs:
       contents: read
       checks: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: app-debug-apk
@@ -145,8 +146,10 @@ jobs:
           arch: x86_64
           disk-size: 2048M
           disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -writable-system
           script: |
             mkdir -p .local/device/reports
+            bash .github/scripts/sync-emulator-ca.sh
             adb install -r -t .local/device/app/app-debug.apk
             adb install -r -t .local/device/tests/app-debug-androidTest.apk
             adb shell am instrument -w -r -e class com.bod3.app.vehiclepack.VehiclePackInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
@@ -162,7 +165,9 @@ jobs:
           from pathlib import Path
           source = Path('.local/device/reports/instrumentation.txt').read_bytes()
           text = source[:48000].decode('utf-8', errors='replace')
-          Path('.local/device/reports/summary.md').write_text('Android 24 actual-APK, pinned range delivery and private offline-cache smoke tests. No ECU requests.\n\n```text\n' + text + '\n```\n')
+          trust = Path('.local/device/reports/tls-trust.md')
+          tls = trust.read_text() if trust.exists() else 'Emulator trust setup did not complete; inspect the failing setup step.\n'
+          Path('.local/device/reports/summary.md').write_text('Android 24 actual-APK, pinned range delivery and private offline-cache smoke tests. No ECU requests.\n\n' + tls + '\n```text\n' + text + '\n```\n')
           PY
           gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
             -f name='Toyota Android 24 on-demand pack evidence' -f head_sha="$GITHUB_SHA" \
