@@ -4,7 +4,7 @@ Data-only research/conversion for this repository's [`assets-v1/TOYOTA.zip`](htt
 
 ## Reproduce
 
-Requires Python 3.10+ and GitHub CLI access to this repository's release. Work from the repository root:
+Requires Python 3.10+ and GitHub CLI access to this repository's release. Work from the repository root. The root `fetch-assets.sh` helper downloads **all 73 brands** into ignored `/assets/`; it is not needed for this Toyota-only pipeline. The commands below fetch only Toyota into `.local/thinkdiag/`, keeping raw data separate from the app's tracked `app/src/main/assets/`.
 
 ```sh
 mkdir -p .local/thinkdiag

@@ -42,3 +42,6 @@ google-services.json
 .local/
 __pycache__/
 *.pyc
+
+# External ThinkDiag data from fetch-assets.sh; keep app/src/main/assets trackable.
+/assets/
