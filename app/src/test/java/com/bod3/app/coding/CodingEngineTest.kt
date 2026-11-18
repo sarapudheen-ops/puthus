@@ -22,7 +22,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 
 class CodingEngineTest {
@@ -70,7 +69,7 @@ class CodingEngineTest {
         fun read(recipe: CodingRecipe = comfort, override: Boolean = false): CodingReading =
             when (val r = runBlocking { engine.read(recipe, vehicle, override) }) {
                 is ReadResult.Ready -> r.reading
-                is ReadResult.Refused -> fail("read refused: ${r.message}")
+                is ReadResult.Refused -> throw AssertionError("read refused: ${r.message}")
             }
 
         fun write(reading: CodingReading, value: Long, confirmation: CodingConfirmation = CodingConfirmation.forWrite(reading, value) { now }): CodingResult =
