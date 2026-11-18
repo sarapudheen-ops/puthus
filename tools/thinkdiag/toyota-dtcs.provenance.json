@@ -1,0 +1,45 @@
+{
+  "format": "bod3-reference-provenance",
+  "formatVersion": 1,
+  "source": {
+    "release": "https://github.com/sarapudheen-ops/puthus/releases/tag/assets-v1",
+    "asset": "TOYOTA.zip",
+    "archiveSha256": "26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a",
+    "vendorVersion": "TOYOTA/V10.62",
+    "textMember": "TOYOTA_EN.GGP/TCODE_EN.GAG",
+    "indexedRecords": 27035
+  },
+  "output": {
+    "file": "app/src/main/assets/datapacks/toyota-lexus-dtcs.json",
+    "sha256": "00c23401fcadca510317bc7230c5b3a34eee4cc10976bbc85ee69b20b1ed9682",
+    "bytes": 897993,
+    "makes": [
+      "Toyota",
+      "Lexus",
+      "Toyota Thailand"
+    ],
+    "referenceOnly": true
+  },
+  "conversion": {
+    "tool": "tools/thinkdiag/convert_dtcs.py",
+    "statistics": {
+      "sourceRecords": 27035,
+      "acceptedCodes": 11989,
+      "conflictingCodesExcluded": 3522,
+      "acceptedRecords": 12006,
+      "conflictingRecordsExcluded": 10717,
+      "skippedRecords": {
+        "placeholder_or_empty": 3776,
+        "unsupported_code_or_blink_code": 536
+      },
+      "baseCodes": 4538,
+      "extendedCodes": 7451
+    },
+    "rules": [
+      "Parse only explicit NUL-delimited code/description pairs.",
+      "Keep only P/C/B/U SAE-shaped codes; format seven-character codes as Pxxxx-yy without promoting them to a base code.",
+      "Normalize whitespace only; exclude placeholders, blink codes, and any code with multiple remaining wordings.",
+      "Preserve the accepted source text, including vendor spelling. Never derive vehicle requests or execute expressions."
+    ]
+  }
+}

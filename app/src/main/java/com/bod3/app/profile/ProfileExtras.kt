@@ -15,11 +15,13 @@ data class ProfileExtras(
     val manualEcus: List<EcuDefinition> = emptyList(),
     /** Request ID (upper case) → the user's name for that module. */
     val moduleNames: Map<String, String> = emptyMap(),
-    /** Data-pack vehicle (make|model key) chosen for this VIN, or null to use the global selection. */
+    /** Legacy make|model link explicitly chosen for this VIN; retained for non-destructive migration. */
     val vehicleKey: String? = null,
     val notes: String? = null,
+    /** An explicitly saved catalog link. Loading a VIN never activates this configuration. */
+    val catalogNodeId: String? = null,
 ) {
-    val isEmpty: Boolean get() = manualEcus.isEmpty() && moduleNames.isEmpty() && vehicleKey == null && notes.isNullOrBlank()
+    val isEmpty: Boolean get() = manualEcus.isEmpty() && moduleNames.isEmpty() && vehicleKey == null && catalogNodeId == null && notes.isNullOrBlank()
 
     fun problems(): List<String> = buildList {
         manualEcus.forEachIndexed { i, ecu -> ecu.problems().forEach { add("manualEcus[$i].$it") } }
@@ -50,6 +52,7 @@ object ProfileExtrasCodec {
         "manualEcus" to extras.manualEcus.map(DataPackCodec::encodeEcu),
         "moduleNames" to extras.moduleNames.toSortedMap(),
         "vehicleKey" to extras.vehicleKey,
+        "catalogNodeId" to extras.catalogNodeId,
         "notes" to extras.notes,
     ).filterValues { it != null }
 
@@ -70,21 +73,35 @@ object ProfileExtrasCodec {
             }.toMap()
             else -> { errors += "$path.moduleNames: must be an object"; emptyMap() }
         }
-        val extras = ProfileExtras(ecus, names, map["vehicleKey"] as? String, map["notes"] as? String)
+        fun text(key: String): String? = when (val v = map[key]) {
+            null -> null
+            is String -> v
+            else -> { errors += "$path.$key: must be text"; null }
+        }
+        val extras = ProfileExtras(ecus, names, text("vehicleKey"), text("notes"), text("catalogNodeId"))
         extras.problems().forEach { errors += "$path.$it" }
         return extras
     }
 }
 
 /** Per-VIN [ProfileExtras] in a key-value store. Every save is validated. */
-class ProfileExtrasStore(private val store: KeyValueStore) {
+class ProfileExtrasStore(private val store: KeyValueStore, private val migrate: (ProfileExtras) -> ProfileExtras = { it }) {
 
     fun get(vin: String): ProfileExtras {
         val json = store.get(key(vin)) ?: return ProfileExtras()
-        val parsed = runCatching { MiniJson.parse(json) }.getOrNull()
+        val parsed = runCatching {
+            MiniJson.parse(json) as? Map<*, *> ?: throw IllegalArgumentException("Saved profile extras must be an object")
+        }.getOrElse {
+            store.put("${key(vin)}.unreadable", json)
+            throw IllegalArgumentException("Saved profile extras were unreadable; the original was preserved", it)
+        }
         val errors = mutableListOf<String>()
         val extras = ProfileExtrasCodec.decode(parsed, "extras", errors)
-        return extras
+        if (errors.isNotEmpty()) {
+            store.put("${key(vin)}.unreadable", json)
+            throw IllegalArgumentException(errors.joinToString("\n"))
+        }
+        return migrate(extras).also { if (it != extras) save(vin, it) }
     }
 
     fun save(vin: String, extras: ProfileExtras) {

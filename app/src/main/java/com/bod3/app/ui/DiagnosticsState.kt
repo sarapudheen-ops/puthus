@@ -4,8 +4,6 @@ import com.bod3.app.datapack.CustomPid
 import com.bod3.app.datapack.DtcDescriptions
 import com.bod3.app.datapack.EcuDefinition
 import com.bod3.app.datapack.LiveDisplay
-import com.bod3.app.datapack.VehicleDefinition
-import com.bod3.app.datapack.VehicleEntry
 import com.bod3.app.diagnostics.DtcRecords
 import com.bod3.app.live.LiveValueDef
 import com.bod3.app.obd.uds.DidReading
@@ -44,12 +42,7 @@ data class EcuDetailState(
 
 /** Vehicle and ECU definitions, custom PIDs and DTC descriptions from data packs (bundled + user). */
 data class DataState(
-    val vehicles: List<VehicleEntry> = emptyList(),
-    val selectedVehicle: VehicleEntry? = null,
-    val editingVehicle: VehicleDefinition? = null,
-    /** Key of the vehicle being edited before the edit (null for a new vehicle). */
-    val editingVehicleKey: String? = null,
-    val vehicleError: String? = null,
+    val pidScopeTitle: String = "Unscoped legacy library",
     val customPids: List<CustomPid> = emptyList(),
     val userPidIds: Set<String> = emptySet(),
     val editingPid: CustomPid? = null,
@@ -57,6 +50,8 @@ data class DataState(
     val pidError: String? = null,
     val pidTest: String? = null,
     val descriptions: DtcDescriptions = DtcDescriptions(emptyMap(), emptyList()),
+    /** Known make of the loaded/linked profile; null means generic references only. */
+    val dtcReferenceMake: String? = null,
     /** Problems found in bundled or saved data packs. */
     val packErrors: List<String> = emptyList(),
 )

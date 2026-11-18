@@ -26,7 +26,9 @@ import com.bod3.app.ui.screens.ProfileEcusScreen
 import com.bod3.app.ui.screens.LiveActions
 import com.bod3.app.ui.screens.LiveSelectScreen
 import com.bod3.app.ui.screens.PidEditorScreen
-import com.bod3.app.ui.screens.VehicleEditorScreen
+import com.bod3.app.ui.screens.CatalogActions
+import com.bod3.app.ui.screens.CatalogEditorScreen
+import com.bod3.app.ui.screens.CatalogDefinitionsScreen
 import com.bod3.app.ui.screens.VehiclesScreen
 import com.bod3.app.ui.screens.DashboardActions
 import com.bod3.app.ui.screens.DashboardScreen
@@ -135,6 +137,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onDelete = viewModel::deleteProfile,
                 onForgetProtocol = viewModel::forgetProtocol,
                 onExpertMode = viewModel::setExpertMode,
+                catalogTitle = state.catalog.selected?.title,
+                catalogConnection = state.catalog.selected?.data?.connection?.values.orEmpty(),
             )
         }
 
@@ -189,31 +193,31 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
 
         Screen.VEHICLES -> {
             BackHandler(onBack = viewModel::closeVehicles)
-            VehiclesScreen(
-                state = state,
-                onBack = viewModel::closeVehicles,
-                onSelect = viewModel::selectVehicle,
-                onEdit = viewModel::editVehicle,
-                onOpenEcu = viewModel::openEcu,
-            )
+            VehiclesScreen(state, CatalogActions(
+                onBack = viewModel::closeVehicles, onBrowse = viewModel::browseCatalog, onSelect = viewModel::selectVehicle,
+                onFavorite = viewModel::favoriteCatalog, onNew = viewModel::newCatalogNode, onEdit = viewModel::editCatalogNode,
+                onDuplicate = viewModel::duplicateCatalogNode, onDelete = viewModel::deleteCatalogNode,
+                onData = viewModel::editCatalogData, onPids = viewModel::openCatalogPids,
+                onOpenEcu = viewModel::openEcu, onImport = viewModel::openDataPacks, writeExport = viewModel::writeCatalogExport,
+                onLinkProfile = viewModel::setProfileVehicle, onDismissMessage = viewModel::dismissCatalogMessage,
+            ))
         }
 
-        Screen.VEHICLE_EDIT -> {
-            BackHandler(onBack = viewModel::cancelVehicleEdit)
-            val vehicle = state.data.editingVehicle
-            if (vehicle == null) {
-                LaunchedEffect(Unit) { viewModel.cancelVehicleEdit() }
-            } else {
-                val key = state.data.editingVehicleKey
-                VehicleEditorScreen(
-                    vehicle = vehicle,
-                    source = key?.let { k -> state.data.vehicles.firstOrNull { it.vehicle.key == k }?.source },
-                    error = state.data.vehicleError,
-                    onSave = viewModel::saveVehicle,
-                    onDelete = { key?.let(viewModel::deleteVehicle) },
-                    onCancel = viewModel::cancelVehicleEdit,
-                )
-            }
+        Screen.CATALOG_EDIT -> {
+            BackHandler(onBack = viewModel::cancelCatalogEdit)
+            val node = state.catalog.editingNode
+            if (node == null) LaunchedEffect(Unit) { viewModel.cancelCatalogEdit() }
+            else CatalogEditorScreen(node = node, isNew = state.catalog.editingIsNew,
+                parentTitle = state.catalog.tree.path(node.parentId).joinToString(" / ") { it.label },
+                platforms = state.catalog.pack.platforms, onSave = viewModel::saveCatalogNode, onCancel = viewModel::cancelCatalogEdit)
+        }
+
+        Screen.CATALOG_DATA -> {
+            BackHandler(onBack = viewModel::cancelCatalogEdit)
+            val target = state.catalog.editingData
+            if (target == null) LaunchedEffect(Unit) { viewModel.cancelCatalogEdit() }
+            else CatalogDefinitionsScreen(target, state.catalog.pack, state.settings.activeProfile,
+                onSave = viewModel::saveCatalogData, onCancel = viewModel::cancelCatalogEdit)
         }
 
         Screen.ECU_DETAIL -> {
@@ -259,6 +263,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onTest = viewModel::testPid,
                     onDelete = { originalId?.let(viewModel::deletePid) },
                     onCancel = viewModel::cancelPidEdit,
+                    onDuplicate = originalId?.let { id -> { viewModel.duplicatePid(id) } },
                 )
             }
         }
@@ -318,7 +323,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 connected = state.isConnected,
                 onBack = viewModel::closeActuators,
                 onOpen = viewModel::openActuator,
-                onImportText = viewModel.actuators::importJson,
+                onImportText = viewModel::previewRecipeImport,
                 writeExport = { viewModel.writeActuatorExport(null) },
                 writeAuditLog = viewModel::writeAuditLog,
                 onDismissMessage = viewModel.actuators::dismissMessage,
@@ -354,7 +359,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onBack = viewModel::closeCoding,
                 onOpen = viewModel::openCodingRecipe,
                 onNewRecipe = { viewModel.openCodingEditor(null) },
-                onImportText = viewModel.coding::importJson,
+                onImportText = viewModel::previewRecipeImport,
                 writeExport = { viewModel.writeCodingExport(null) },
                 writeAuditLog = viewModel::writeAuditLog,
                 onRequestRollback = viewModel.coding::requestRollback,
@@ -414,6 +419,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onDelete = viewModel::deleteManualEcu,
                 onCopyFromPack = viewModel::copyPackEcusToProfile,
                 onSelectVehicle = viewModel::setProfileVehicle,
+                onOpenCatalog = viewModel::openCatalogForProfile,
             )
         }
 
@@ -430,6 +436,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     moduleLogText = { viewModel.rawLogText(module) },
                     fullLogText = { viewModel.rawLogText() },
                     onClearLog = viewModel::clearRawLog,
+                    descriptions = state.data.descriptions,
+                    onSaveDescription = viewModel::setDtcDescription,
                     onRename = if (state.savedProfile != null) ({ name: String -> viewModel.renameModule(module.address.requestHeader, name) }) else null,
                 )
             }

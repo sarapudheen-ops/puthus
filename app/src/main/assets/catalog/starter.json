@@ -1,0 +1,1709 @@
+{
+  "format": "bod3-vehicle-catalog",
+  "formatVersion": 1,
+  "id": "starter-catalog",
+  "name": "Starter vehicle names and generations",
+  "version": 1,
+  "description": "Names and broad generation/model-year ranges only; markets and model years vary. Open end dates are not a coverage promise. No ECU, PID, coding or test definitions. Manual selection is always required.",
+  "nodes": [
+    {
+      "id": "make-67336a6fdee431883a1a",
+      "level": "make",
+      "name": "Toyota"
+    },
+    {
+      "id": "model-e1830dd7e4c1bd8b05eb",
+      "parentId": "make-67336a6fdee431883a1a",
+      "level": "model",
+      "name": "Innova"
+    },
+    {
+      "id": "generation-4d60b188ed09f152cbab",
+      "parentId": "model-e1830dd7e4c1bd8b05eb",
+      "level": "generation",
+      "name": "AN40",
+      "yearFrom": 2004,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-b23842afdb1827aabdbb",
+      "parentId": "model-e1830dd7e4c1bd8b05eb",
+      "level": "generation",
+      "name": "AN140 (Crysta)",
+      "yearFrom": 2015
+    },
+    {
+      "id": "generation-9f1a20aa1a437cd53396",
+      "parentId": "model-e1830dd7e4c1bd8b05eb",
+      "level": "generation",
+      "name": "AG10 (Hycross / Zenix)",
+      "yearFrom": 2022
+    },
+    {
+      "id": "model-61317f6b0eacdab69f3e",
+      "parentId": "make-67336a6fdee431883a1a",
+      "level": "model",
+      "name": "Corolla"
+    },
+    {
+      "id": "generation-7359d6285d5dfdc4f6b6",
+      "parentId": "model-61317f6b0eacdab69f3e",
+      "level": "generation",
+      "name": "E140 / E150",
+      "yearFrom": 2006,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-15cd7b534fda7bc7844a",
+      "parentId": "model-61317f6b0eacdab69f3e",
+      "level": "generation",
+      "name": "E170 / E180",
+      "yearFrom": 2013,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-8683b01264ba9be49b5e",
+      "parentId": "model-61317f6b0eacdab69f3e",
+      "level": "generation",
+      "name": "E210",
+      "yearFrom": 2018
+    },
+    {
+      "id": "model-eefa560272d038c24f04",
+      "parentId": "make-67336a6fdee431883a1a",
+      "level": "model",
+      "name": "Camry"
+    },
+    {
+      "id": "generation-623d1377a1752f1a9fd0",
+      "parentId": "model-eefa560272d038c24f04",
+      "level": "generation",
+      "name": "XV40",
+      "yearFrom": 2006,
+      "yearTo": 2011
+    },
+    {
+      "id": "generation-b690eefbdc87e1a1c95d",
+      "parentId": "model-eefa560272d038c24f04",
+      "level": "generation",
+      "name": "XV50",
+      "yearFrom": 2011,
+      "yearTo": 2017
+    },
+    {
+      "id": "generation-9b1431bdef2a2d13817e",
+      "parentId": "model-eefa560272d038c24f04",
+      "level": "generation",
+      "name": "XV70",
+      "yearFrom": 2017,
+      "yearTo": 2024
+    },
+    {
+      "id": "generation-8a934b1cfa4267cab2c0",
+      "parentId": "model-eefa560272d038c24f04",
+      "level": "generation",
+      "name": "XV80",
+      "yearFrom": 2024
+    },
+    {
+      "id": "model-9ede574e06a1593dc56b",
+      "parentId": "make-67336a6fdee431883a1a",
+      "level": "model",
+      "name": "Hilux"
+    },
+    {
+      "id": "generation-b849ca12a560754a455d",
+      "parentId": "model-9ede574e06a1593dc56b",
+      "level": "generation",
+      "name": "AN10 / AN20 / AN30",
+      "yearFrom": 2004,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-9da253cedcc2c85b8cab",
+      "parentId": "model-9ede574e06a1593dc56b",
+      "level": "generation",
+      "name": "AN120 / AN130",
+      "yearFrom": 2015
+    },
+    {
+      "id": "model-68d117c5dcdda4bc5a4d",
+      "parentId": "make-67336a6fdee431883a1a",
+      "level": "model",
+      "name": "Fortuner"
+    },
+    {
+      "id": "generation-6e2f6b8d805de1a7c72e",
+      "parentId": "model-68d117c5dcdda4bc5a4d",
+      "level": "generation",
+      "name": "AN50 / AN60",
+      "yearFrom": 2004,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-da7fb78d1e0cfc55f2d2",
+      "parentId": "model-68d117c5dcdda4bc5a4d",
+      "level": "generation",
+      "name": "AN150 / AN160",
+      "yearFrom": 2015
+    },
+    {
+      "id": "make-d4042ea14cc0d3ff8d27",
+      "level": "make",
+      "name": "Lexus"
+    },
+    {
+      "id": "model-264b66ebe985c646904d",
+      "parentId": "make-d4042ea14cc0d3ff8d27",
+      "level": "model",
+      "name": "IS"
+    },
+    {
+      "id": "generation-c6a592dc7e7e92b2b8ef",
+      "parentId": "model-264b66ebe985c646904d",
+      "level": "generation",
+      "name": "XE20",
+      "yearFrom": 2005,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-bba19c1fbed6a51f83da",
+      "parentId": "model-264b66ebe985c646904d",
+      "level": "generation",
+      "name": "XE30",
+      "yearFrom": 2013
+    },
+    {
+      "id": "model-2318c0647af09832949b",
+      "parentId": "make-d4042ea14cc0d3ff8d27",
+      "level": "model",
+      "name": "RX"
+    },
+    {
+      "id": "generation-276acb9612b341dc4ed6",
+      "parentId": "model-2318c0647af09832949b",
+      "level": "generation",
+      "name": "AL10",
+      "yearFrom": 2008,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-7ef69687f25d5c11d3ec",
+      "parentId": "model-2318c0647af09832949b",
+      "level": "generation",
+      "name": "AL20",
+      "yearFrom": 2015,
+      "yearTo": 2022
+    },
+    {
+      "id": "generation-68f3b330a116d745d36c",
+      "parentId": "model-2318c0647af09832949b",
+      "level": "generation",
+      "name": "ALA10 / ALH10",
+      "yearFrom": 2022
+    },
+    {
+      "id": "make-b020889a0ac036f328c2",
+      "level": "make",
+      "name": "Hyundai"
+    },
+    {
+      "id": "model-7b72d5164c64b5af3cb7",
+      "parentId": "make-b020889a0ac036f328c2",
+      "level": "model",
+      "name": "i10"
+    },
+    {
+      "id": "generation-0fd19e650417a1851394",
+      "parentId": "model-7b72d5164c64b5af3cb7",
+      "level": "generation",
+      "name": "PA",
+      "yearFrom": 2007,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-1a5a8e09c8470b22642b",
+      "parentId": "model-7b72d5164c64b5af3cb7",
+      "level": "generation",
+      "name": "IA",
+      "yearFrom": 2013,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-64afb1a419f62a2529cc",
+      "parentId": "model-7b72d5164c64b5af3cb7",
+      "level": "generation",
+      "name": "AC3",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-9f53a87f76491edeb4c6",
+      "parentId": "make-b020889a0ac036f328c2",
+      "level": "model",
+      "name": "Elantra"
+    },
+    {
+      "id": "generation-c6aaaa92d9f30a4036e7",
+      "parentId": "model-9f53a87f76491edeb4c6",
+      "level": "generation",
+      "name": "AD",
+      "yearFrom": 2015,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-d36761fa92df8d2ce909",
+      "parentId": "model-9f53a87f76491edeb4c6",
+      "level": "generation",
+      "name": "CN7",
+      "yearFrom": 2020
+    },
+    {
+      "id": "model-ac18e710de41b0195c42",
+      "parentId": "make-b020889a0ac036f328c2",
+      "level": "model",
+      "name": "Tucson"
+    },
+    {
+      "id": "generation-0d17b2c61859424589f2",
+      "parentId": "model-ac18e710de41b0195c42",
+      "level": "generation",
+      "name": "TL",
+      "yearFrom": 2015,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-8272612a9f65c2bba290",
+      "parentId": "model-ac18e710de41b0195c42",
+      "level": "generation",
+      "name": "NX4",
+      "yearFrom": 2020
+    },
+    {
+      "id": "make-fd090e041ef6084b2183",
+      "level": "make",
+      "name": "Kia"
+    },
+    {
+      "id": "model-6b4ada54e8eb31304b58",
+      "parentId": "make-fd090e041ef6084b2183",
+      "level": "model",
+      "name": "Sportage"
+    },
+    {
+      "id": "generation-78522e26280c7777b3cc",
+      "parentId": "model-6b4ada54e8eb31304b58",
+      "level": "generation",
+      "name": "SL",
+      "yearFrom": 2010,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-16e9a44f5078ce8e6809",
+      "parentId": "model-6b4ada54e8eb31304b58",
+      "level": "generation",
+      "name": "QL",
+      "yearFrom": 2015,
+      "yearTo": 2021
+    },
+    {
+      "id": "generation-3f6c7636c0bd7a359584",
+      "parentId": "model-6b4ada54e8eb31304b58",
+      "level": "generation",
+      "name": "NQ5",
+      "yearFrom": 2021
+    },
+    {
+      "id": "model-7bed146d99186fa51cef",
+      "parentId": "make-fd090e041ef6084b2183",
+      "level": "model",
+      "name": "Seltos"
+    },
+    {
+      "id": "generation-8ddd053792b42e882279",
+      "parentId": "model-7bed146d99186fa51cef",
+      "level": "generation",
+      "name": "SP2",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-cee73798c8afe428d601",
+      "parentId": "make-fd090e041ef6084b2183",
+      "level": "model",
+      "name": "Sorento"
+    },
+    {
+      "id": "generation-09390c47af71e2f89acd",
+      "parentId": "model-cee73798c8afe428d601",
+      "level": "generation",
+      "name": "UM",
+      "yearFrom": 2014,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-2dfb69e41a8e30df75b3",
+      "parentId": "model-cee73798c8afe428d601",
+      "level": "generation",
+      "name": "MQ4",
+      "yearFrom": 2020
+    },
+    {
+      "id": "make-83bb7672198bb39132bd",
+      "level": "make",
+      "name": "Suzuki"
+    },
+    {
+      "id": "model-bbdf43f75f84023b0265",
+      "parentId": "make-83bb7672198bb39132bd",
+      "level": "model",
+      "name": "Swift"
+    },
+    {
+      "id": "generation-1d618ed04ed09d071798",
+      "parentId": "model-bbdf43f75f84023b0265",
+      "level": "generation",
+      "name": "ZC72 / ZD72",
+      "yearFrom": 2010,
+      "yearTo": 2017
+    },
+    {
+      "id": "generation-e8249272ced0cd81c4ef",
+      "parentId": "model-bbdf43f75f84023b0265",
+      "level": "generation",
+      "name": "AZ",
+      "yearFrom": 2017,
+      "yearTo": 2023
+    },
+    {
+      "id": "generation-a755cd4fff394957403b",
+      "parentId": "model-bbdf43f75f84023b0265",
+      "level": "generation",
+      "name": "ZC / ZD 2023",
+      "yearFrom": 2023
+    },
+    {
+      "id": "model-ca64b3a8058e675e104f",
+      "parentId": "make-83bb7672198bb39132bd",
+      "level": "model",
+      "name": "Ertiga"
+    },
+    {
+      "id": "generation-074960aecfe18adc77b1",
+      "parentId": "model-ca64b3a8058e675e104f",
+      "level": "generation",
+      "name": "ZE",
+      "yearFrom": 2012,
+      "yearTo": 2018
+    },
+    {
+      "id": "generation-13c0b6c5ed1646dd1608",
+      "parentId": "model-ca64b3a8058e675e104f",
+      "level": "generation",
+      "name": "NC",
+      "yearFrom": 2018
+    },
+    {
+      "id": "model-b64e2fd9c547658b19e4",
+      "parentId": "make-83bb7672198bb39132bd",
+      "level": "model",
+      "name": "Dzire"
+    },
+    {
+      "id": "generation-1297d2178e5f5a02a0f7",
+      "parentId": "model-b64e2fd9c547658b19e4",
+      "level": "generation",
+      "name": "Third generation",
+      "yearFrom": 2017,
+      "yearTo": 2024
+    },
+    {
+      "id": "generation-9a33405a96e6b653a7d4",
+      "parentId": "model-b64e2fd9c547658b19e4",
+      "level": "generation",
+      "name": "Fourth generation",
+      "yearFrom": 2024
+    },
+    {
+      "id": "make-e15bdb6ba93171da5678",
+      "level": "make",
+      "name": "Tata"
+    },
+    {
+      "id": "model-bce24d1dfa34195780eb",
+      "parentId": "make-e15bdb6ba93171da5678",
+      "level": "model",
+      "name": "Nexon"
+    },
+    {
+      "id": "generation-2302294251719b398312",
+      "parentId": "model-bce24d1dfa34195780eb",
+      "level": "generation",
+      "name": "First generation",
+      "yearFrom": 2017
+    },
+    {
+      "id": "model-bc4e3d4d1f0c063cfa73",
+      "parentId": "make-e15bdb6ba93171da5678",
+      "level": "model",
+      "name": "Harrier"
+    },
+    {
+      "id": "generation-ce76d9417352f39f6901",
+      "parentId": "model-bc4e3d4d1f0c063cfa73",
+      "level": "generation",
+      "name": "First generation",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-e294b85a49aeebea9cfa",
+      "parentId": "make-e15bdb6ba93171da5678",
+      "level": "model",
+      "name": "Safari"
+    },
+    {
+      "id": "generation-c4b31c2175716ce187a4",
+      "parentId": "model-e294b85a49aeebea9cfa",
+      "level": "generation",
+      "name": "Body-on-frame",
+      "yearFrom": 1998,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-5f35e92f7cb914f32c12",
+      "parentId": "model-e294b85a49aeebea9cfa",
+      "level": "generation",
+      "name": "Monocoque",
+      "yearFrom": 2021
+    },
+    {
+      "id": "make-e92d87c4d4f196e4479f",
+      "level": "make",
+      "name": "Mahindra"
+    },
+    {
+      "id": "model-e8890ae198aff30fb48f",
+      "parentId": "make-e92d87c4d4f196e4479f",
+      "level": "model",
+      "name": "Scorpio"
+    },
+    {
+      "id": "generation-5b2c5d3a7920272a0239",
+      "parentId": "model-e8890ae198aff30fb48f",
+      "level": "generation",
+      "name": "First generation",
+      "yearFrom": 2002,
+      "yearTo": 2022
+    },
+    {
+      "id": "generation-4f03397db22bfd270ff7",
+      "parentId": "model-e8890ae198aff30fb48f",
+      "level": "generation",
+      "name": "Scorpio-N",
+      "yearFrom": 2022
+    },
+    {
+      "id": "model-807993ff6c9b02f84ad3",
+      "parentId": "make-e92d87c4d4f196e4479f",
+      "level": "model",
+      "name": "Thar"
+    },
+    {
+      "id": "generation-a051f7464e7c86883c10",
+      "parentId": "model-807993ff6c9b02f84ad3",
+      "level": "generation",
+      "name": "First generation",
+      "yearFrom": 2010,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-56f1029c02eebc75535c",
+      "parentId": "model-807993ff6c9b02f84ad3",
+      "level": "generation",
+      "name": "Second generation",
+      "yearFrom": 2020
+    },
+    {
+      "id": "model-58442d7bbc807d384836",
+      "parentId": "make-e92d87c4d4f196e4479f",
+      "level": "model",
+      "name": "XUV700"
+    },
+    {
+      "id": "generation-14b8839840129b822557",
+      "parentId": "model-58442d7bbc807d384836",
+      "level": "generation",
+      "name": "First generation",
+      "yearFrom": 2021
+    },
+    {
+      "id": "make-b03e54ef29176da0b9c8",
+      "level": "make",
+      "name": "Honda"
+    },
+    {
+      "id": "model-d313172d087074041f2f",
+      "parentId": "make-b03e54ef29176da0b9c8",
+      "level": "model",
+      "name": "Civic"
+    },
+    {
+      "id": "generation-03a87b24918e7c227102",
+      "parentId": "model-d313172d087074041f2f",
+      "level": "generation",
+      "name": "FB / FG",
+      "yearFrom": 2011,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-6d3b4de02cc527397e2a",
+      "parentId": "model-d313172d087074041f2f",
+      "level": "generation",
+      "name": "FC / FK",
+      "yearFrom": 2015,
+      "yearTo": 2021
+    },
+    {
+      "id": "generation-827dcd21f03e45195192",
+      "parentId": "model-d313172d087074041f2f",
+      "level": "generation",
+      "name": "FE / FL",
+      "yearFrom": 2021
+    },
+    {
+      "id": "model-b0baa57a87f5a57982a2",
+      "parentId": "make-b03e54ef29176da0b9c8",
+      "level": "model",
+      "name": "City"
+    },
+    {
+      "id": "generation-71296d0fa4efd97eb61d",
+      "parentId": "model-b0baa57a87f5a57982a2",
+      "level": "generation",
+      "name": "GM2 / GM3",
+      "yearFrom": 2008,
+      "yearTo": 2014
+    },
+    {
+      "id": "generation-1e2193deb31195f43a9e",
+      "parentId": "model-b0baa57a87f5a57982a2",
+      "level": "generation",
+      "name": "GM4 / GM5 / GM6 / GM9",
+      "yearFrom": 2014,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-697f27a88a01046ba234",
+      "parentId": "model-b0baa57a87f5a57982a2",
+      "level": "generation",
+      "name": "GN",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-c14a7648d950920b6286",
+      "parentId": "make-b03e54ef29176da0b9c8",
+      "level": "model",
+      "name": "CR-V"
+    },
+    {
+      "id": "generation-a50c2f34adda908f8479",
+      "parentId": "model-c14a7648d950920b6286",
+      "level": "generation",
+      "name": "RM",
+      "yearFrom": 2011,
+      "yearTo": 2016
+    },
+    {
+      "id": "generation-1836e60f067e65ff9147",
+      "parentId": "model-c14a7648d950920b6286",
+      "level": "generation",
+      "name": "RW / RT",
+      "yearFrom": 2016,
+      "yearTo": 2022
+    },
+    {
+      "id": "generation-58eff4579bcbe16b4bca",
+      "parentId": "model-c14a7648d950920b6286",
+      "level": "generation",
+      "name": "RS",
+      "yearFrom": 2022
+    },
+    {
+      "id": "make-d34435cb018e258ed205",
+      "level": "make",
+      "name": "Nissan"
+    },
+    {
+      "id": "model-0bba08955ed3ca4769e8",
+      "parentId": "make-d34435cb018e258ed205",
+      "level": "model",
+      "name": "Patrol"
+    },
+    {
+      "id": "generation-bbb92c7e8e2a74988651",
+      "parentId": "model-0bba08955ed3ca4769e8",
+      "level": "generation",
+      "name": "Y61",
+      "yearFrom": 1997,
+      "yearTo": 2024
+    },
+    {
+      "id": "generation-1ee7f1f521d6d45e1fed",
+      "parentId": "model-0bba08955ed3ca4769e8",
+      "level": "generation",
+      "name": "Y62",
+      "yearFrom": 2010,
+      "yearTo": 2024
+    },
+    {
+      "id": "generation-ce63195d37b454d4095e",
+      "parentId": "model-0bba08955ed3ca4769e8",
+      "level": "generation",
+      "name": "Y63",
+      "yearFrom": 2024
+    },
+    {
+      "id": "model-8683ff4dc7e6c7eac554",
+      "parentId": "make-d34435cb018e258ed205",
+      "level": "model",
+      "name": "X-Trail"
+    },
+    {
+      "id": "generation-cd87ec40c18025324e1f",
+      "parentId": "model-8683ff4dc7e6c7eac554",
+      "level": "generation",
+      "name": "T31",
+      "yearFrom": 2007,
+      "yearTo": 2014
+    },
+    {
+      "id": "generation-59b0c7ea54437f5eedeb",
+      "parentId": "model-8683ff4dc7e6c7eac554",
+      "level": "generation",
+      "name": "T32",
+      "yearFrom": 2013,
+      "yearTo": 2022
+    },
+    {
+      "id": "generation-eeac05ecb58d8f37f9f3",
+      "parentId": "model-8683ff4dc7e6c7eac554",
+      "level": "generation",
+      "name": "T33",
+      "yearFrom": 2021
+    },
+    {
+      "id": "model-eb09877c9a0ec012f875",
+      "parentId": "make-d34435cb018e258ed205",
+      "level": "model",
+      "name": "Almera"
+    },
+    {
+      "id": "generation-c61d81ae7aff34060ed5",
+      "parentId": "model-eb09877c9a0ec012f875",
+      "level": "generation",
+      "name": "N17",
+      "yearFrom": 2011,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-16174ba8c4fc1ea62fcd",
+      "parentId": "model-eb09877c9a0ec012f875",
+      "level": "generation",
+      "name": "N18",
+      "yearFrom": 2019
+    },
+    {
+      "id": "make-7afec32be4c8b41e4f06",
+      "level": "make",
+      "name": "Ford"
+    },
+    {
+      "id": "model-56b70c33b7403580ca7a",
+      "parentId": "make-7afec32be4c8b41e4f06",
+      "level": "model",
+      "name": "Focus"
+    },
+    {
+      "id": "generation-b14448b1ec179d43ed95",
+      "parentId": "model-56b70c33b7403580ca7a",
+      "level": "generation",
+      "name": "Mk3",
+      "yearFrom": 2010,
+      "yearTo": 2018
+    },
+    {
+      "id": "generation-4801ab3b6592235dd991",
+      "parentId": "model-56b70c33b7403580ca7a",
+      "level": "generation",
+      "name": "Mk4",
+      "yearFrom": 2018,
+      "yearTo": 2025
+    },
+    {
+      "id": "model-51b9fd3591ad13888ca7",
+      "parentId": "make-7afec32be4c8b41e4f06",
+      "level": "model",
+      "name": "Fiesta"
+    },
+    {
+      "id": "generation-4bdd3f0112d6cf910ca1",
+      "parentId": "model-51b9fd3591ad13888ca7",
+      "level": "generation",
+      "name": "Mk7",
+      "yearFrom": 2008,
+      "yearTo": 2017
+    },
+    {
+      "id": "generation-c3ca81c4564d681637bf",
+      "parentId": "model-51b9fd3591ad13888ca7",
+      "level": "generation",
+      "name": "Mk8",
+      "yearFrom": 2017,
+      "yearTo": 2023
+    },
+    {
+      "id": "model-ef8cc5ec554a107c48ab",
+      "parentId": "make-7afec32be4c8b41e4f06",
+      "level": "model",
+      "name": "Ranger"
+    },
+    {
+      "id": "generation-4c6ebb5bd026b4a4160a",
+      "parentId": "model-ef8cc5ec554a107c48ab",
+      "level": "generation",
+      "name": "T6 / P375",
+      "yearFrom": 2011,
+      "yearTo": 2022
+    },
+    {
+      "id": "generation-3564509167c58b2b83b6",
+      "parentId": "model-ef8cc5ec554a107c48ab",
+      "level": "generation",
+      "name": "P703",
+      "yearFrom": 2022
+    },
+    {
+      "id": "make-af4f6f13d23ecfc3d9ec",
+      "level": "make",
+      "name": "Chevrolet"
+    },
+    {
+      "id": "model-2313f6a0c47975be3682",
+      "parentId": "make-af4f6f13d23ecfc3d9ec",
+      "level": "model",
+      "name": "Cruze"
+    },
+    {
+      "id": "generation-2f870d231305079cd701",
+      "parentId": "model-2313f6a0c47975be3682",
+      "level": "generation",
+      "name": "J300",
+      "yearFrom": 2008,
+      "yearTo": 2016
+    },
+    {
+      "id": "generation-ce7018063593acba18a2",
+      "parentId": "model-2313f6a0c47975be3682",
+      "level": "generation",
+      "name": "J400",
+      "yearFrom": 2016,
+      "yearTo": 2023
+    },
+    {
+      "id": "model-bbf696e7e804c0caeebf",
+      "parentId": "make-af4f6f13d23ecfc3d9ec",
+      "level": "model",
+      "name": "Spark"
+    },
+    {
+      "id": "generation-914394dcad8dddd3051a",
+      "parentId": "model-bbf696e7e804c0caeebf",
+      "level": "generation",
+      "name": "M300",
+      "yearFrom": 2009,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-2b20ddc48a0bf0c1a159",
+      "parentId": "model-bbf696e7e804c0caeebf",
+      "level": "generation",
+      "name": "M400",
+      "yearFrom": 2015,
+      "yearTo": 2022
+    },
+    {
+      "id": "make-c328c5c9d78d06cba6a7",
+      "level": "make",
+      "name": "Volkswagen"
+    },
+    {
+      "id": "model-ffbf24b38a2c96a36d39",
+      "parentId": "make-c328c5c9d78d06cba6a7",
+      "level": "model",
+      "name": "Tiguan"
+    },
+    {
+      "id": "generation-ab09c98e17a72aa785a0",
+      "parentId": "model-ffbf24b38a2c96a36d39",
+      "level": "generation",
+      "name": "5N",
+      "yearFrom": 2007,
+      "yearTo": 2016
+    },
+    {
+      "id": "generation-57fe437d12f7fb69778f",
+      "parentId": "model-ffbf24b38a2c96a36d39",
+      "level": "generation",
+      "name": "AD1",
+      "yearFrom": 2016,
+      "yearTo": 2024
+    },
+    {
+      "id": "model-c690b9df48156b4be426",
+      "parentId": "make-c328c5c9d78d06cba6a7",
+      "level": "model",
+      "name": "Golf"
+    },
+    {
+      "id": "generation-bbf6d100ef85eb54bfcf",
+      "parentId": "model-c690b9df48156b4be426",
+      "level": "generation",
+      "name": "5G / Mk7",
+      "yearFrom": 2013,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-542ff1f6886af28a34ed",
+      "parentId": "model-c690b9df48156b4be426",
+      "level": "generation",
+      "name": "CD / Mk8",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-ec25e35cf59694374516",
+      "parentId": "make-c328c5c9d78d06cba6a7",
+      "level": "model",
+      "name": "Passat"
+    },
+    {
+      "id": "generation-cd850c74835504e0bff5",
+      "parentId": "model-ec25e35cf59694374516",
+      "level": "generation",
+      "name": "B7",
+      "yearFrom": 2010,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-c303acc168070bc36f01",
+      "parentId": "model-ec25e35cf59694374516",
+      "level": "generation",
+      "name": "B8",
+      "yearFrom": 2015,
+      "yearTo": 2023
+    },
+    {
+      "id": "make-1d1d7fbaa012809328a8",
+      "level": "make",
+      "name": "Audi"
+    },
+    {
+      "id": "model-8bbc4d3cf51a3c2b7ba6",
+      "parentId": "make-1d1d7fbaa012809328a8",
+      "level": "model",
+      "name": "A3"
+    },
+    {
+      "id": "generation-2a4f19664712fbeb8ac7",
+      "parentId": "model-8bbc4d3cf51a3c2b7ba6",
+      "level": "generation",
+      "name": "8P",
+      "yearFrom": 2003,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-bbcb7d44b1605bdb4e17",
+      "parentId": "model-8bbc4d3cf51a3c2b7ba6",
+      "level": "generation",
+      "name": "8V",
+      "yearFrom": 2013,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-64a9434fc552dfab28f1",
+      "parentId": "model-8bbc4d3cf51a3c2b7ba6",
+      "level": "generation",
+      "name": "8Y",
+      "yearFrom": 2020
+    },
+    {
+      "id": "model-2ebbb99d5f05e6e72319",
+      "parentId": "make-1d1d7fbaa012809328a8",
+      "level": "model",
+      "name": "A4"
+    },
+    {
+      "id": "generation-edf516633dd9e72f0a43",
+      "parentId": "model-2ebbb99d5f05e6e72319",
+      "level": "generation",
+      "name": "B8 / 8K",
+      "yearFrom": 2007,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-980b804f8409f8060e89",
+      "parentId": "model-2ebbb99d5f05e6e72319",
+      "level": "generation",
+      "name": "B9 / 8W",
+      "yearFrom": 2015,
+      "yearTo": 2024
+    },
+    {
+      "id": "make-5c360b769ed329ab454a",
+      "level": "make",
+      "name": "Škoda"
+    },
+    {
+      "id": "model-91a08a5feebb98a3c484",
+      "parentId": "make-5c360b769ed329ab454a",
+      "level": "model",
+      "name": "Octavia"
+    },
+    {
+      "id": "generation-4c208781f3e218d3af3c",
+      "parentId": "model-91a08a5feebb98a3c484",
+      "level": "generation",
+      "name": "5E / Mk3",
+      "yearFrom": 2013,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-bf0d77eadc62b3ba137c",
+      "parentId": "model-91a08a5feebb98a3c484",
+      "level": "generation",
+      "name": "NX / Mk4",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-bc97f87818500e05a21c",
+      "parentId": "make-5c360b769ed329ab454a",
+      "level": "model",
+      "name": "Superb"
+    },
+    {
+      "id": "generation-520a94c2f9e042fd7d77",
+      "parentId": "model-bc97f87818500e05a21c",
+      "level": "generation",
+      "name": "3T / Mk2",
+      "yearFrom": 2008,
+      "yearTo": 2015
+    },
+    {
+      "id": "generation-e38f58f9ad18b8b4f5d4",
+      "parentId": "model-bc97f87818500e05a21c",
+      "level": "generation",
+      "name": "3V / Mk3",
+      "yearFrom": 2015,
+      "yearTo": 2023
+    },
+    {
+      "id": "make-dbc2f5068809b3b57e38",
+      "level": "make",
+      "name": "SEAT"
+    },
+    {
+      "id": "model-6750938eea7246273268",
+      "parentId": "make-dbc2f5068809b3b57e38",
+      "level": "model",
+      "name": "Leon"
+    },
+    {
+      "id": "generation-73aef8d38021056a9f3b",
+      "parentId": "model-6750938eea7246273268",
+      "level": "generation",
+      "name": "5F / Mk3",
+      "yearFrom": 2013,
+      "yearTo": 2020
+    },
+    {
+      "id": "generation-b45b03e347fed1f317a5",
+      "parentId": "model-6750938eea7246273268",
+      "level": "generation",
+      "name": "KL / Mk4",
+      "yearFrom": 2020
+    },
+    {
+      "id": "model-f5ce9ea68c890c78d45c",
+      "parentId": "make-dbc2f5068809b3b57e38",
+      "level": "model",
+      "name": "Ibiza"
+    },
+    {
+      "id": "generation-7157acf1e9ccd8b542af",
+      "parentId": "model-f5ce9ea68c890c78d45c",
+      "level": "generation",
+      "name": "6J",
+      "yearFrom": 2008,
+      "yearTo": 2017
+    },
+    {
+      "id": "generation-01cdd9671fe4af3c473e",
+      "parentId": "model-f5ce9ea68c890c78d45c",
+      "level": "generation",
+      "name": "KJ",
+      "yearFrom": 2017
+    },
+    {
+      "id": "make-bbb441dd941ba587d453",
+      "level": "make",
+      "name": "Cupra"
+    },
+    {
+      "id": "model-6ab6e36fa7596211c53f",
+      "parentId": "make-bbb441dd941ba587d453",
+      "level": "model",
+      "name": "Formentor"
+    },
+    {
+      "id": "generation-c21e9c3abcd8ff5547f4",
+      "parentId": "model-6ab6e36fa7596211c53f",
+      "level": "generation",
+      "name": "KM",
+      "yearFrom": 2020
+    },
+    {
+      "id": "model-0ce331abd4080a09bde4",
+      "parentId": "make-bbb441dd941ba587d453",
+      "level": "model",
+      "name": "Leon"
+    },
+    {
+      "id": "generation-a5dc09804de4ed14f6dc",
+      "parentId": "model-0ce331abd4080a09bde4",
+      "level": "generation",
+      "name": "KL",
+      "yearFrom": 2020
+    },
+    {
+      "id": "make-9f9d428f4ae2e1f87db6",
+      "level": "make",
+      "name": "BMW"
+    },
+    {
+      "id": "model-21054fe4e6f370e9aa13",
+      "parentId": "make-9f9d428f4ae2e1f87db6",
+      "level": "model",
+      "name": "3 Series"
+    },
+    {
+      "id": "generation-99306d6f64b8e26a7f0b",
+      "parentId": "model-21054fe4e6f370e9aa13",
+      "level": "generation",
+      "name": "E90 / E91 / E92 / E93",
+      "yearFrom": 2005,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-8e38227ab700ecdf904f",
+      "parentId": "model-21054fe4e6f370e9aa13",
+      "level": "generation",
+      "name": "F30 / F31 / F34",
+      "yearFrom": 2011,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-4daf49fe90710017fe6f",
+      "parentId": "model-21054fe4e6f370e9aa13",
+      "level": "generation",
+      "name": "G20 / G21",
+      "yearFrom": 2018
+    },
+    {
+      "id": "model-eb54d10af6cc240f75d0",
+      "parentId": "make-9f9d428f4ae2e1f87db6",
+      "level": "model",
+      "name": "5 Series"
+    },
+    {
+      "id": "generation-60ef57e16f1133c2c180",
+      "parentId": "model-eb54d10af6cc240f75d0",
+      "level": "generation",
+      "name": "F10 / F11",
+      "yearFrom": 2010,
+      "yearTo": 2017
+    },
+    {
+      "id": "generation-bad087b6c113257ccf0a",
+      "parentId": "model-eb54d10af6cc240f75d0",
+      "level": "generation",
+      "name": "G30 / G31",
+      "yearFrom": 2016,
+      "yearTo": 2024
+    },
+    {
+      "id": "generation-4e07640984df81ca03c0",
+      "parentId": "model-eb54d10af6cc240f75d0",
+      "level": "generation",
+      "name": "G60 / G61",
+      "yearFrom": 2023
+    },
+    {
+      "id": "make-cd9bc430aa81e8d70c80",
+      "level": "make",
+      "name": "Mercedes-Benz"
+    },
+    {
+      "id": "model-a58f3487efa2b533bda0",
+      "parentId": "make-cd9bc430aa81e8d70c80",
+      "level": "model",
+      "name": "C-Class"
+    },
+    {
+      "id": "generation-b0ee6cff74d0f60d2358",
+      "parentId": "model-a58f3487efa2b533bda0",
+      "level": "generation",
+      "name": "W204",
+      "yearFrom": 2007,
+      "yearTo": 2014
+    },
+    {
+      "id": "generation-91cc40de55ac0228975c",
+      "parentId": "model-a58f3487efa2b533bda0",
+      "level": "generation",
+      "name": "W205",
+      "yearFrom": 2014,
+      "yearTo": 2021
+    },
+    {
+      "id": "generation-d73f3573c76844d4db5a",
+      "parentId": "model-a58f3487efa2b533bda0",
+      "level": "generation",
+      "name": "W206",
+      "yearFrom": 2021
+    },
+    {
+      "id": "model-d0387a30ca1e226b87f9",
+      "parentId": "make-cd9bc430aa81e8d70c80",
+      "level": "model",
+      "name": "E-Class"
+    },
+    {
+      "id": "generation-6e30c2d976e9de5e8a1a",
+      "parentId": "model-d0387a30ca1e226b87f9",
+      "level": "generation",
+      "name": "W212",
+      "yearFrom": 2009,
+      "yearTo": 2016
+    },
+    {
+      "id": "generation-b5f10dd7815826376c9a",
+      "parentId": "model-d0387a30ca1e226b87f9",
+      "level": "generation",
+      "name": "W213",
+      "yearFrom": 2016,
+      "yearTo": 2023
+    },
+    {
+      "id": "generation-f166671f91d0da289d63",
+      "parentId": "model-d0387a30ca1e226b87f9",
+      "level": "generation",
+      "name": "W214",
+      "yearFrom": 2023
+    },
+    {
+      "id": "make-28e5f78e0039f5cb08e4",
+      "level": "make",
+      "name": "Renault"
+    },
+    {
+      "id": "model-064d5db77e780b61143f",
+      "parentId": "make-28e5f78e0039f5cb08e4",
+      "level": "model",
+      "name": "Clio"
+    },
+    {
+      "id": "generation-684876b2179675e40edf",
+      "parentId": "model-064d5db77e780b61143f",
+      "level": "generation",
+      "name": "III",
+      "yearFrom": 2005,
+      "yearTo": 2014
+    },
+    {
+      "id": "generation-ee3e09c8af1f4b16f7c8",
+      "parentId": "model-064d5db77e780b61143f",
+      "level": "generation",
+      "name": "IV",
+      "yearFrom": 2012,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-bf454d7a1c3cd3e9b84b",
+      "parentId": "model-064d5db77e780b61143f",
+      "level": "generation",
+      "name": "V",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-12f5eaf84452ff17a5e5",
+      "parentId": "make-28e5f78e0039f5cb08e4",
+      "level": "model",
+      "name": "Megane"
+    },
+    {
+      "id": "generation-ba969c71ad71b513bc87",
+      "parentId": "model-12f5eaf84452ff17a5e5",
+      "level": "generation",
+      "name": "II",
+      "yearFrom": 2002,
+      "yearTo": 2009
+    },
+    {
+      "id": "generation-11b9cf4cabb10b9eb56b",
+      "parentId": "model-12f5eaf84452ff17a5e5",
+      "level": "generation",
+      "name": "III",
+      "yearFrom": 2008,
+      "yearTo": 2016
+    },
+    {
+      "id": "make-95f8eb1e29cf5d3479a0",
+      "level": "make",
+      "name": "Peugeot"
+    },
+    {
+      "id": "model-92bb1eb214cb09776d85",
+      "parentId": "make-95f8eb1e29cf5d3479a0",
+      "level": "model",
+      "name": "208"
+    },
+    {
+      "id": "generation-68306051884c924fe912",
+      "parentId": "model-92bb1eb214cb09776d85",
+      "level": "generation",
+      "name": "A9",
+      "yearFrom": 2012,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-dcbcbf4367ad3259aa60",
+      "parentId": "model-92bb1eb214cb09776d85",
+      "level": "generation",
+      "name": "P21",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-886685e90bf40b65788a",
+      "parentId": "make-95f8eb1e29cf5d3479a0",
+      "level": "model",
+      "name": "308"
+    },
+    {
+      "id": "generation-0eed742b00fd98f06c10",
+      "parentId": "model-886685e90bf40b65788a",
+      "level": "generation",
+      "name": "T7",
+      "yearFrom": 2007,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-9d44a681b257937e5ae0",
+      "parentId": "model-886685e90bf40b65788a",
+      "level": "generation",
+      "name": "T9",
+      "yearFrom": 2013,
+      "yearTo": 2021
+    },
+    {
+      "id": "generation-6fb424eaf993284f6800",
+      "parentId": "model-886685e90bf40b65788a",
+      "level": "generation",
+      "name": "P5",
+      "yearFrom": 2021
+    },
+    {
+      "id": "make-9bdbc71ddd5b256dc7e6",
+      "level": "make",
+      "name": "Citroën"
+    },
+    {
+      "id": "model-05721697d48c70b6e249",
+      "parentId": "make-9bdbc71ddd5b256dc7e6",
+      "level": "model",
+      "name": "C3"
+    },
+    {
+      "id": "generation-c3cce89e64b797221db0",
+      "parentId": "model-05721697d48c70b6e249",
+      "level": "generation",
+      "name": "II (Europe)",
+      "yearFrom": 2009,
+      "yearTo": 2016
+    },
+    {
+      "id": "generation-52956334c1aab180889b",
+      "parentId": "model-05721697d48c70b6e249",
+      "level": "generation",
+      "name": "III (Europe)",
+      "yearFrom": 2016,
+      "yearTo": 2024
+    },
+    {
+      "id": "generation-6a005b5ba25a93cb5510",
+      "parentId": "model-05721697d48c70b6e249",
+      "level": "generation",
+      "name": "IV (Europe)",
+      "yearFrom": 2024
+    },
+    {
+      "id": "model-f4c94ba0f5d40f598168",
+      "parentId": "make-9bdbc71ddd5b256dc7e6",
+      "level": "model",
+      "name": "C4"
+    },
+    {
+      "id": "generation-e5bc4cdcf11efe4c33b5",
+      "parentId": "model-f4c94ba0f5d40f598168",
+      "level": "generation",
+      "name": "I",
+      "yearFrom": 2004,
+      "yearTo": 2010
+    },
+    {
+      "id": "generation-09760436af2812551375",
+      "parentId": "model-f4c94ba0f5d40f598168",
+      "level": "generation",
+      "name": "II",
+      "yearFrom": 2010,
+      "yearTo": 2018
+    },
+    {
+      "id": "generation-ab1650c7bf1c4c8854fc",
+      "parentId": "model-f4c94ba0f5d40f598168",
+      "level": "generation",
+      "name": "III",
+      "yearFrom": 2020
+    },
+    {
+      "id": "make-f6c6c7ce261c32e28de0",
+      "level": "make",
+      "name": "Mazda"
+    },
+    {
+      "id": "model-f77ab6be5728560d5717",
+      "parentId": "make-f6c6c7ce261c32e28de0",
+      "level": "model",
+      "name": "3"
+    },
+    {
+      "id": "generation-52cbda51b64fa6343659",
+      "parentId": "model-f77ab6be5728560d5717",
+      "level": "generation",
+      "name": "BL",
+      "yearFrom": 2008,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-79466617a33fdc3d0d7d",
+      "parentId": "model-f77ab6be5728560d5717",
+      "level": "generation",
+      "name": "BM / BN",
+      "yearFrom": 2013,
+      "yearTo": 2019
+    },
+    {
+      "id": "generation-665960d86d24a61f8c1a",
+      "parentId": "model-f77ab6be5728560d5717",
+      "level": "generation",
+      "name": "BP",
+      "yearFrom": 2019
+    },
+    {
+      "id": "model-c02feb6c79201acaa243",
+      "parentId": "make-f6c6c7ce261c32e28de0",
+      "level": "model",
+      "name": "6"
+    },
+    {
+      "id": "generation-7ab8583df122522d333b",
+      "parentId": "model-c02feb6c79201acaa243",
+      "level": "generation",
+      "name": "GH",
+      "yearFrom": 2007,
+      "yearTo": 2012
+    },
+    {
+      "id": "generation-4ce6e481416f728cda1c",
+      "parentId": "model-c02feb6c79201acaa243",
+      "level": "generation",
+      "name": "GJ / GL",
+      "yearFrom": 2012,
+      "yearTo": 2024
+    },
+    {
+      "id": "make-9ca64faf5a7b0a490034",
+      "level": "make",
+      "name": "Mitsubishi"
+    },
+    {
+      "id": "model-951f4127e9be00cfd0ab",
+      "parentId": "make-9ca64faf5a7b0a490034",
+      "level": "model",
+      "name": "Pajero"
+    },
+    {
+      "id": "generation-4e74a4008ca54b52724c",
+      "parentId": "model-951f4127e9be00cfd0ab",
+      "level": "generation",
+      "name": "V60 / V70",
+      "yearFrom": 1999,
+      "yearTo": 2006
+    },
+    {
+      "id": "generation-79da5bb6ca36b7ae83bc",
+      "parentId": "model-951f4127e9be00cfd0ab",
+      "level": "generation",
+      "name": "V80 / V90",
+      "yearFrom": 2006,
+      "yearTo": 2021
+    },
+    {
+      "id": "model-7fc97fd23269a712ca75",
+      "parentId": "make-9ca64faf5a7b0a490034",
+      "level": "model",
+      "name": "Outlander"
+    },
+    {
+      "id": "generation-6c86c82fc793dc422f97",
+      "parentId": "model-7fc97fd23269a712ca75",
+      "level": "generation",
+      "name": "CW",
+      "yearFrom": 2005,
+      "yearTo": 2012
+    },
+    {
+      "id": "generation-4cdc7c6c525fdbafec72",
+      "parentId": "model-7fc97fd23269a712ca75",
+      "level": "generation",
+      "name": "GF / GG",
+      "yearFrom": 2012,
+      "yearTo": 2021
+    },
+    {
+      "id": "generation-38e63da225c1b4126c75",
+      "parentId": "model-7fc97fd23269a712ca75",
+      "level": "generation",
+      "name": "GN",
+      "yearFrom": 2021
+    },
+    {
+      "id": "make-da58606f397e4ddaaa60",
+      "level": "make",
+      "name": "Subaru"
+    },
+    {
+      "id": "model-eec837a6f29b5d5ebc7d",
+      "parentId": "make-da58606f397e4ddaaa60",
+      "level": "model",
+      "name": "Forester"
+    },
+    {
+      "id": "generation-414e587656f5d44f9c39",
+      "parentId": "model-eec837a6f29b5d5ebc7d",
+      "level": "generation",
+      "name": "SJ",
+      "yearFrom": 2012,
+      "yearTo": 2018
+    },
+    {
+      "id": "generation-c58b7ab702d34831d658",
+      "parentId": "model-eec837a6f29b5d5ebc7d",
+      "level": "generation",
+      "name": "SK",
+      "yearFrom": 2018,
+      "yearTo": 2024
+    },
+    {
+      "id": "generation-4f0534fc27203aa08e7f",
+      "parentId": "model-eec837a6f29b5d5ebc7d",
+      "level": "generation",
+      "name": "SL",
+      "yearFrom": 2024
+    },
+    {
+      "id": "model-85ce82210b1be7685c19",
+      "parentId": "make-da58606f397e4ddaaa60",
+      "level": "model",
+      "name": "Impreza"
+    },
+    {
+      "id": "generation-d23e7c51470cd9657280",
+      "parentId": "model-85ce82210b1be7685c19",
+      "level": "generation",
+      "name": "GJ / GP",
+      "yearFrom": 2011,
+      "yearTo": 2016
+    },
+    {
+      "id": "generation-085e1432ff98874fc83d",
+      "parentId": "model-85ce82210b1be7685c19",
+      "level": "generation",
+      "name": "GK / GT",
+      "yearFrom": 2016,
+      "yearTo": 2023
+    },
+    {
+      "id": "generation-16f065316847b01d04c5",
+      "parentId": "model-85ce82210b1be7685c19",
+      "level": "generation",
+      "name": "GU",
+      "yearFrom": 2023
+    },
+    {
+      "id": "make-8382e4db20f034505c18",
+      "level": "make",
+      "name": "Volvo"
+    },
+    {
+      "id": "model-2c87a12e6e987689fd8f",
+      "parentId": "make-8382e4db20f034505c18",
+      "level": "model",
+      "name": "XC60"
+    },
+    {
+      "id": "generation-e773fd93be4e04c6a975",
+      "parentId": "model-2c87a12e6e987689fd8f",
+      "level": "generation",
+      "name": "I",
+      "yearFrom": 2008,
+      "yearTo": 2017
+    },
+    {
+      "id": "generation-4af9c20f6d8d6a9b3d31",
+      "parentId": "model-2c87a12e6e987689fd8f",
+      "level": "generation",
+      "name": "II",
+      "yearFrom": 2017
+    },
+    {
+      "id": "model-87bcb011e8e0c8f1376e",
+      "parentId": "make-8382e4db20f034505c18",
+      "level": "model",
+      "name": "XC90"
+    },
+    {
+      "id": "generation-b2dac83bb3677e4dfc18",
+      "parentId": "model-87bcb011e8e0c8f1376e",
+      "level": "generation",
+      "name": "I",
+      "yearFrom": 2002,
+      "yearTo": 2014
+    },
+    {
+      "id": "generation-760e6e20400084d8c2b3",
+      "parentId": "model-87bcb011e8e0c8f1376e",
+      "level": "generation",
+      "name": "II",
+      "yearFrom": 2014
+    },
+    {
+      "id": "make-bdbb936a3a646776cd8b",
+      "level": "make",
+      "name": "Land Rover"
+    },
+    {
+      "id": "model-823a4baea514853e6b30",
+      "parentId": "make-bdbb936a3a646776cd8b",
+      "level": "model",
+      "name": "Discovery"
+    },
+    {
+      "id": "generation-0bbc797a0d3522b64619",
+      "parentId": "model-823a4baea514853e6b30",
+      "level": "generation",
+      "name": "4 / L319",
+      "yearFrom": 2009,
+      "yearTo": 2016
+    },
+    {
+      "id": "generation-17bb134d2627eb2c41c0",
+      "parentId": "model-823a4baea514853e6b30",
+      "level": "generation",
+      "name": "5 / L462",
+      "yearFrom": 2017
+    },
+    {
+      "id": "model-56faf98ff1f040fffd23",
+      "parentId": "make-bdbb936a3a646776cd8b",
+      "level": "model",
+      "name": "Range Rover Sport"
+    },
+    {
+      "id": "generation-b8277146336e4ad9d3df",
+      "parentId": "model-56faf98ff1f040fffd23",
+      "level": "generation",
+      "name": "L320",
+      "yearFrom": 2005,
+      "yearTo": 2013
+    },
+    {
+      "id": "generation-fa29fed34446279dcf61",
+      "parentId": "model-56faf98ff1f040fffd23",
+      "level": "generation",
+      "name": "L494",
+      "yearFrom": 2013,
+      "yearTo": 2022
+    },
+    {
+      "id": "generation-197bbd070ab257fd977a",
+      "parentId": "model-56faf98ff1f040fffd23",
+      "level": "generation",
+      "name": "L461",
+      "yearFrom": 2022
+    },
+    {
+      "id": "make-a25edc2c04766e920340",
+      "level": "make",
+      "name": "Jeep"
+    },
+    {
+      "id": "model-cacfc83126dc677e6ae5",
+      "parentId": "make-a25edc2c04766e920340",
+      "level": "model",
+      "name": "Grand Cherokee"
+    },
+    {
+      "id": "generation-6e88a426005edb8c96b1",
+      "parentId": "model-cacfc83126dc677e6ae5",
+      "level": "generation",
+      "name": "WK2",
+      "yearFrom": 2010,
+      "yearTo": 2022
+    },
+    {
+      "id": "generation-2237414bc0ed8152dcf4",
+      "parentId": "model-cacfc83126dc677e6ae5",
+      "level": "generation",
+      "name": "WL",
+      "yearFrom": 2021
+    },
+    {
+      "id": "model-732633a946c82e7c09a6",
+      "parentId": "make-a25edc2c04766e920340",
+      "level": "model",
+      "name": "Wrangler"
+    },
+    {
+      "id": "generation-62022099b99346977b8a",
+      "parentId": "model-732633a946c82e7c09a6",
+      "level": "generation",
+      "name": "JK",
+      "yearFrom": 2006,
+      "yearTo": 2018
+    },
+    {
+      "id": "generation-9cfc5192b2085438441d",
+      "parentId": "model-732633a946c82e7c09a6",
+      "level": "generation",
+      "name": "JL",
+      "yearFrom": 2017
+    }
+  ]
+}

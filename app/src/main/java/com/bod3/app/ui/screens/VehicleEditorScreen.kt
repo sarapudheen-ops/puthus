@@ -119,7 +119,7 @@ fun VehicleEditorScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EcuEditor(ecu: EcuDefinition, onChange: (EcuDefinition) -> Unit, onDelete: () -> Unit) {
+internal fun EcuEditor(ecu: EcuDefinition, onChange: (EcuDefinition) -> Unit, onDelete: () -> Unit) {
     val hex = KeyboardOptions(capitalization = KeyboardCapitalization.Characters)
     SectionCard(ecu.display.ifBlank { "New ECU" }) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

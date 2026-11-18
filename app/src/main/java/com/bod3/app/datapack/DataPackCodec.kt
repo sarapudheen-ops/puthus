@@ -9,7 +9,10 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
 }
 
 /**
- * JSON format of data packs:
+ * JSON format of data packs. Legacy v1 is retained for files without scoped fault references.
+ * v2 adds `dtcGroups`: objects with `id`, non-empty `makes`, `dtcs` and optional `source`. These fields
+ * always require formatVersion 2, so an older app refuses rather than silently discarding the scope.
+ * See docs/toyota-data.md for a v2 example. A v1 example:
  * ```
  * {
  *   "format": "bod3-datapack", "formatVersion": 1,
@@ -27,12 +30,12 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
  */
 object DataPackCodec {
     const val FORMAT = "bod3-datapack"
-    const val FORMAT_VERSION = 1
+    const val FORMAT_VERSION = 2
 
     fun encode(pack: DataPack): String = JsonWriter.write(
         linkedMapOf(
             "format" to FORMAT,
-            "formatVersion" to FORMAT_VERSION,
+            "formatVersion" to if (pack.dtcGroups.isEmpty()) 1 else FORMAT_VERSION,
             "id" to pack.id,
             "name" to pack.name,
             "version" to pack.version,
@@ -42,6 +45,9 @@ object DataPackCodec {
             "vehicles" to pack.vehicles.map(::encodeVehicle),
             "dtcs" to pack.dtcs.toSortedMap(),
             "moduleNames" to pack.moduleNames.takeIf { it.isNotEmpty() }?.map(::encodeModuleName),
+            "dtcGroups" to pack.dtcGroups.takeIf { it.isNotEmpty() }?.map { group ->
+                linkedMapOf("id" to group.id, "makes" to group.makes, "dtcs" to group.dtcs.toSortedMap(), "source" to group.source).filterValues { it != null }
+            },
         ).filterValues { it != null },
     )
 
@@ -66,7 +72,7 @@ object DataPackCodec {
 
     fun encodeEcu(e: EcuDefinition): Map<String, Any?> = linkedMapOf(
         "address" to e.address, "name" to e.name, "requestId" to e.requestId, "responseId" to e.responseId,
-        "protocol" to e.protocol.name, "notes" to e.notes,
+        "protocol" to e.protocol.name, "addressing" to if (e.is29Bit) "29" else "11", "notes" to e.notes,
     ).filterValues { it != null }
 
     /** Parses and validates [json]. Never throws for bad input; problems are listed in the result. */
@@ -81,26 +87,15 @@ object DataPackCodec {
         val reader = Reader(errors)
         val format = root["format"]
         if (format != null && format != FORMAT) errors += "format: expected \"$FORMAT\", got \"$format\""
-        val formatVersion = reader.int(root, "formatVersion", "", required = false) ?: FORMAT_VERSION
+        val formatVersion = reader.int(root, "formatVersion", "", required = false) ?: 1
         if (formatVersion > FORMAT_VERSION) errors += "formatVersion: $formatVersion is newer than this app supports ($FORMAT_VERSION); update the app"
 
         val pids = reader.list(root, "pids", "").mapIndexedNotNull { i, item -> reader.pid(item, "pids[$i]") }
         val vehicles = reader.list(root, "vehicles", "").mapIndexedNotNull { i, item -> reader.vehicle(item, "vehicles[$i]") }
         val moduleNames = reader.list(root, "moduleNames", "").mapIndexedNotNull { i, item -> reader.moduleName(item, "moduleNames[$i]") }
-        val dtcs = when (val raw = root["dtcs"]) {
-            null -> emptyMap()
-            is Map<*, *> -> raw.entries.mapNotNull { (k, v) ->
-                val text = v as? String
-                if (k !is String || text == null) {
-                    errors += "dtcs.$k: description must be text"; null
-                } else {
-                    k.trim().uppercase() to text.trim()
-                }
-            }.toMap()
-            else -> {
-                errors += "dtcs: must be an object of code → description"; emptyMap()
-            }
-        }
+        val dtcs = reader.descriptions(root["dtcs"], "dtcs")
+        val dtcGroups = reader.list(root, "dtcGroups", "").mapIndexedNotNull { i, item -> reader.dtcGroup(item, "dtcGroups[$i]") }
+        if (dtcGroups.isNotEmpty() && formatVersion < 2) errors += "dtcGroups: requires formatVersion 2 so older apps cannot silently lose manufacturer scoping"
         val id = reader.string(root, "id", "")
         val name = reader.string(root, "name", "")
         if (id == null || name == null) return DataPackResult(null, errors)
@@ -109,7 +104,7 @@ object DataPackCodec {
             version = reader.int(root, "version", "", required = false) ?: 1,
             author = reader.string(root, "author", "", required = false),
             description = reader.string(root, "description", "", required = false),
-            pids = pids, vehicles = vehicles, dtcs = dtcs, moduleNames = moduleNames,
+            pids = pids, vehicles = vehicles, dtcs = dtcs, moduleNames = moduleNames, dtcGroups = dtcGroups,
         )
         errors += pack.problems()
         return DataPackResult(if (errors.isEmpty()) pack else null, errors.distinct())
@@ -122,6 +117,36 @@ object DataPackCodec {
     }
 
     private class Reader(val errors: MutableList<String>) {
+        fun descriptions(raw: Any?, base: String): Map<String, String> = when (raw) {
+            null -> emptyMap()
+            is Map<*, *> -> {
+                val result = linkedMapOf<String, String>()
+                raw.forEach { (k, v) ->
+                    if (k !is String || v !is String) {
+                        errors += "$base.$k: description must be text"
+                    } else {
+                        val code = k.trim().uppercase(java.util.Locale.ROOT)
+                        if (code in result) errors += "$base.$k: duplicate code after normalisation"
+                        result[code] = v.trim()
+                    }
+                }
+                result
+            }
+            else -> { errors += "$base: must be an object of code → description"; emptyMap() }
+        }
+
+        fun dtcGroup(item: Any?, p: String): DtcGroup? {
+            val m = obj(item, p) ?: return null
+            val before = errors.size
+            val id = string(m, "id", p)
+            val makes = list(m, "makes", p).mapIndexedNotNull { i, v ->
+                (v as? String)?.trim() ?: run { errors += "$p.makes[$i]: must be text"; null }
+            }
+            val dtcs = descriptions(m["dtcs"], "$p.dtcs")
+            val source = string(m, "source", p, required = false)
+            return if (errors.size == before && id != null) DtcGroup(id, makes, dtcs, source) else null
+        }
+
         fun path(base: String, key: String) = if (base.isEmpty()) key else "$base.$key"
 
         fun string(map: Map<*, *>, key: String, base: String, required: Boolean = true): String? = when (val v = map[key]) {
@@ -176,8 +201,18 @@ object DataPackCodec {
             val response = string(m, "responseId", p)
             val protocolName = string(m, "protocol", p, required = false)
             val protocol = protocolName?.let { n -> EcuProtocol.entries.firstOrNull { it.name.equals(n, ignoreCase = true) } ?: run {
-                errors += "$p.protocol: must be UDS or OBD"; null
+                errors += "$p.protocol: must be UDS, OBD or KWP"; null
             } } ?: EcuProtocol.UDS
+            val addressing = m["addressing"]
+            if (addressing != null) {
+                val bits = when (addressing) {
+                    is String -> when (addressing.lowercase()) { "11", "11-bit" -> 11; "29", "29-bit" -> 29; else -> null }
+                    is Number -> addressing.toInt().takeIf { addressing.toDouble() == it.toDouble() && it in listOf(11, 29) }
+                    else -> null
+                }
+                if (bits == null) errors += "$p.addressing: must be 11 or 29"
+                else if (request?.length != (if (bits == 11) 3 else 8) || response?.length != (if (bits == 11) 3 else 8)) errors += "$p.addressing: ID lengths do not match $bits-bit addressing"
+            }
             if (errors.size > before || name == null || request == null || response == null) return null
             return EcuDefinition(
                 address = string(m, "address", p, required = false)?.ifEmpty { null },

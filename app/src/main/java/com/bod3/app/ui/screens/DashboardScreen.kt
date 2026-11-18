@@ -144,12 +144,12 @@ private fun VehicleCard(state: UiState, connected: Boolean, actions: DashboardAc
         }
         if (state.protocol is Readout.Unavailable) {
             Text(
-                "Turn the ignition on (engine may stay off), then tap Detect vehicle. If it still fails, " +
+                "Turn the ignition on (engine may stay off), then tap Detect protocol / read VIN. If it still fails, " +
                     "try a connection profile with a forced protocol or longer search timeout.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            OutlinedButton(onClick = actions.onDetectVehicle, enabled = connected) { Text("Detect vehicle") }
+            OutlinedButton(onClick = actions.onDetectVehicle, enabled = connected) { Text("Detect protocol / read VIN") }
         }
     }
 }
@@ -162,7 +162,7 @@ private fun DiagnosticButtons(state: UiState, connected: Boolean, busy: Boolean,
         Button(onClick = actions.onOpenLiveData, enabled = ready) { Text("Live data") }
         Button(onClick = actions.onOpenDtcs, enabled = ready) { Text("Fault codes") }
         OutlinedButton(onClick = actions.onOpenVehicles, enabled = !busy && !state.scan.running) {
-            Text(state.data.selectedVehicle?.let { "ECUs · ${it.vehicle.model}" } ?: "Vehicle & ECUs")
+            Text(state.catalog.selected?.let { "ECUs · ${it.model ?: it.make}" } ?: "Choose vehicle manually")
         }
         OutlinedButton(onClick = actions.onOpenCustomPids) { Text("Custom PIDs") }
         OutlinedButton(onClick = actions.onOpenGarage, enabled = !state.scan.running) { Text("Saved vehicles") }
@@ -268,13 +268,14 @@ private fun ProfileCard(state: UiState, busy: Boolean, onOpenScan: () -> Unit, o
                 p.lastScanAtMs?.let { InfoRow("Last scan", formatTime(it)) }
             }
         }
+        state.profileExtrasError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onOpenScan, enabled = (state.canScan && !busy) || state.scan.running) {
                 Text(if (state.scan.running) "Scan running…" else "Scan modules")
             }
             OutlinedButton(onClick = onOpenModules, enabled = state.modules.isNotEmpty()) { Text("Modules (${state.modules.size})") }
         }
-        if (state.protocol is Readout.Value && !state.canScan && !state.scan.running) {
+        if (state.protocol is Readout.Value && !state.canScan && !state.scan.running && state.profileExtrasError == null) {
             Text(
                 "Module scan needs a CAN vehicle (ISO 15765-4). K-line vehicles support live data, VIN and fault codes.",
                 style = MaterialTheme.typography.bodySmall,

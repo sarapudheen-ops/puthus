@@ -28,6 +28,7 @@ class EcuWorkbench(session: Session, private val client: UdsClient = UdsClient(s
      * when the ECU does not answer at all, so an absent module costs one timeout, not twenty-five.
      */
     suspend fun readIdentification(ecu: EcuDefinition, onReading: (DidReading) -> Unit = {}): List<DidReading> {
+        if (ecu.protocol != EcuProtocol.UDS) return emptyList()
         val readings = mutableListOf<DidReading>()
         for (definition in KnownDids.identification) {
             val reading = DidReading(definition.id, client.readDid(ecu.target, definition.id))
@@ -41,6 +42,7 @@ class EcuWorkbench(session: Session, private val client: UdsClient = UdsClient(s
     suspend fun readDtcs(ecu: EcuDefinition): DtcReadResult = when (ecu.protocol) {
         EcuProtocol.UDS -> client.readDtcs(ecu.target)
         EcuProtocol.OBD -> client.readObdStoredDtcs(ecu.target)
+        EcuProtocol.KWP -> DtcReadResult.Failed("Enhanced KWP fault reads need a documented definition; no UDS request was sent. Use the OBD fault screen for standard emissions codes.")
     }
 
     suspend fun readRecords(ecu: EcuDefinition, dtc: DtcRecord): DtcRecords {

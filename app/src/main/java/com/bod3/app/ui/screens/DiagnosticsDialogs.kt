@@ -96,7 +96,7 @@ fun DtcDescriptionDialog(code: String, descriptions: DtcDescriptions, onSave: (S
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "Saved on this phone and used for $code${if (code.contains('-')) "" else " and its sub-types"}. Leave empty to use the bundled text.",
+                    "Your note is saved on this phone for all vehicles, for $code${if (code.contains('-')) "" else " and its sub-types"}. Leave empty to restore the applicable reference text.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -118,7 +118,7 @@ fun DtcRow(code: String, descriptions: DtcDescriptions, detail: String? = null, 
             val extra = listOfNotNull(
                 descriptions.failureType(code)?.let { "Failure type: $it" },
                 detail,
-                if (description.isUserDefined) "Your description" else null,
+                if (description.isUserDefined) "Your description" else "Source: ${description.source}",
             )
             if (extra.isNotEmpty()) {
                 Text(extra.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

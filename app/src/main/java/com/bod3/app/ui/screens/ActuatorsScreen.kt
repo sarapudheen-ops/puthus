@@ -43,11 +43,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val MAX_RECIPE_BYTES = 2 * 1024 * 1024
-
 /** Reads a picked file as UTF-8 text (size-limited) and hands it to [onText]; errors become a toast. */
 @Composable
-fun rememberJsonImport(maxBytes: Int = MAX_RECIPE_BYTES, onText: (String) -> Unit): () -> Unit {
+fun rememberJsonImport(maxBytes: Int = com.bod3.app.packs.PackFiles.MAX_BYTES, onText: (String) -> Unit): () -> Unit {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -56,9 +54,7 @@ fun rememberJsonImport(maxBytes: Int = MAX_RECIPE_BYTES, onText: (String) -> Uni
             try {
                 val text = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { input ->
-                        val bytes = input.readBytes()
-                        require(bytes.size <= maxBytes) { "The file is larger than ${maxBytes / 1024 / 1024} MB" }
-                        String(bytes, Charsets.UTF_8)
+                        com.bod3.app.packs.PackTextReader.read(input, maxBytes)
                     } ?: throw IllegalStateException("The file could not be opened")
                 }
                 onText(text)
@@ -69,7 +65,7 @@ fun rememberJsonImport(maxBytes: Int = MAX_RECIPE_BYTES, onText: (String) -> Uni
             }
         }
     }
-    return { launcher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
+    return { launcher.launch(arrayOf("application/json", "text/csv", "text/comma-separated-values", "text/plain", "application/octet-stream", "application/vnd.ms-excel")) }
 }
 
 /** Shares a file produced by [write] through the share sheet; failures become a toast. */

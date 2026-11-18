@@ -51,6 +51,8 @@ fun ConnectionSettingsScreen(
     onDelete: (String) -> Unit,
     onForgetProtocol: (String) -> Unit,
     onExpertMode: (enabled: Boolean, acknowledged: Boolean) -> Unit,
+    catalogTitle: String? = null,
+    catalogConnection: Map<String, Any?> = emptyMap(),
 ) {
     var showRiskDialog by rememberSaveable { mutableStateOf(false) }
     Scaffold(
@@ -65,7 +67,13 @@ fun ConnectionSettingsScreen(
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SectionCard("Connection profile") {
+            SectionCard("Manual catalog selection") {
+                Text(catalogTitle ?: "No vehicle selected")
+                Text("The profiles below configure the adapter transport, not a fallback vehicle. A manually selected catalog adds these inherited overrides on the next connection:", style = MaterialTheme.typography.bodySmall)
+                if (catalogConnection.isEmpty()) Text("No catalog connection overrides", style = MaterialTheme.typography.bodySmall)
+                catalogConnection.forEach { (key, value) -> InfoRow(key, value?.toString() ?: "clear / automatic") }
+            }
+            SectionCard("Adapter connection profile") {
                 if (connected) {
                     Text(
                         "Changes apply to the next connection or reconnect.",

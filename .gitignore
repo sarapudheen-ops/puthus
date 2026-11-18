@@ -38,5 +38,10 @@ google-services.json
 # Kotlin
 .kotlin/
 
-# external ThinkDiag data (fetched, not committed)
-assets/
+# Local external archives, analysis output and tooling (never bundle raw vendor assets)
+.local/
+__pycache__/
+*.pyc
+
+# External ThinkDiag data from fetch-assets.sh; keep app/src/main/assets trackable.
+/assets/

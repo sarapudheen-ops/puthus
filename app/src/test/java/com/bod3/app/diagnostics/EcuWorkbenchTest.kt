@@ -70,6 +70,18 @@ class EcuWorkbenchTest {
     }
 
     @Test
+    fun kwpIsNeverMisroutedThroughUdsServicesOrWritePermissions() = runBlocking<Unit> {
+        val kwp = ecu.copy(protocol = EcuProtocol.KWP)
+        assertTrue(workbench.readIdentification(kwp).isEmpty())
+        val result = workbench.readDtcs(kwp)
+        assertTrue(result is DtcReadResult.Failed)
+        assertTrue((result as DtcReadResult.Failed).message.contains("no UDS request"))
+        assertTrue(adapter.requests.isEmpty())
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { workbench.clear(kwp, ClearConfirmation.udsClear(kwp.target)) } }
+        assertTrue(adapter.requests.isEmpty())
+    }
+
+    @Test
     fun historyKeepsTheNewestSamples() {
         val history = LiveHistory(capacity = 3)
         (1..5).forEach { history.add("010C", it.toDouble()) }
