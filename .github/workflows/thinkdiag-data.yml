@@ -51,6 +51,24 @@ jobs:
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/sweep --report .local/thinkdiag/report
+      - name: Build complete offline app source library
+        run: |
+          python3 tools/thinkdiag/build_app_database.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/app-library
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota app library census' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Complete data-only app library' \
+            -F 'output[summary]=@.local/thinkdiag/app-library/manifest.json'
+      - name: Upload offline app source library (no vendor executables)
+        uses: actions/upload-artifact@v7
+        with:
+          name: toyota-app-library
+          path: .local/thinkdiag/app-library/
+          if-no-files-found: error
+          retention-days: 14
       - name: Convert unambiguous English DTC descriptions (no vehicle commands)
         run: |
           python3 tools/thinkdiag/convert_dtcs.py .local/thinkdiag/english/TCODE_EN.GAG.json \
