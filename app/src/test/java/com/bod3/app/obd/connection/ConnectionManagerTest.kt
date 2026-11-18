@@ -33,7 +33,7 @@ class ConnectionManagerTest {
 
     @Test
     fun automaticSearchOnCanWorksFirstTime() = runBlocking<Unit> {
-        val result = connect(SimulatedVehicleElm(vehicleProtocol = '6'))
+        val result = connect(SimulatedVehicleElm(vehicleProtocol = "6"))
         val protocol = result.negotiation.protocol!!
         assertEquals(ObdProtocol.ISO_15765_4_CAN_11_500, protocol.protocol)
         assertEquals("AUTO, ISO 15765-4 (CAN 11/500)", protocol.description)
@@ -46,7 +46,7 @@ class ConnectionManagerTest {
 
     @Test
     fun failedSearchFallsBackThroughKLineProtocolsAndLogsEachAttempt() = runBlocking<Unit> {
-        val elm = SimulatedVehicleElm(vehicleProtocol = '3', autoSearchWorks = false)
+        val elm = SimulatedVehicleElm(vehicleProtocol = "3", autoSearchWorks = false)
         val result = connect(elm)
         val attempts = result.negotiation.attempts
         assertEquals(listOf("ATSP0", "ATSP5", "ATSP4", "ATSP3"), attempts.map { it.selectCommand })
@@ -61,14 +61,14 @@ class ConnectionManagerTest {
         result.driver.close()
 
         // Next connection tries the remembered protocol first and succeeds immediately.
-        val again = connect(SimulatedVehicleElm(vehicleProtocol = '3', autoSearchWorks = false))
+        val again = connect(SimulatedVehicleElm(vehicleProtocol = "3", autoSearchWorks = false))
         assertEquals(listOf("ATSP3"), again.negotiation.attempts.map { it.selectCommand })
         again.driver.close()
     }
 
     @Test
     fun fallsBackToCan29WhenOnlyExplicitSelectionWorks() = runBlocking<Unit> {
-        val result = connect(SimulatedVehicleElm(vehicleProtocol = '7', autoSearchWorks = false))
+        val result = connect(SimulatedVehicleElm(vehicleProtocol = "7", autoSearchWorks = false))
         assertEquals(listOf("ATSP0", "ATSP5", "ATSP4", "ATSP3", "ATSP6", "ATSP7"), result.negotiation.attempts.map { it.selectCommand })
         assertEquals(ObdProtocol.ISO_15765_4_CAN_29_500, result.negotiation.protocol!!.protocol)
         result.driver.close()
@@ -77,7 +77,7 @@ class ConnectionManagerTest {
     @Test
     fun forcedProtocolWithoutFallbacksTriesOnlyThatOne() = runBlocking<Unit> {
         val profile = ConnectionProfile(id = "p", name = "KWP only", forcedProtocol = ObdProtocol.ISO_14230_4_KWP_FAST, tryFallbacks = false)
-        val result = connect(SimulatedVehicleElm(vehicleProtocol = '6'), profile)
+        val result = connect(SimulatedVehicleElm(vehicleProtocol = "6"), profile)
         assertEquals(listOf("ATSP5"), result.negotiation.attempts.map { it.selectCommand })
         assertFalse(result.negotiation.succeeded)
         // The adapter stays connected even though no protocol answered.
@@ -87,7 +87,7 @@ class ConnectionManagerTest {
     }
 
     @Test
-    fun appliesProfileSettingsAndUsesVtTimeoutOnlyWithVtSupport() = runBlocking<Unit> {
+    fun appliesProfileSettingsAndSendsVtCommandsWithoutGating() = runBlocking<Unit> {
         val profile = ConnectionProfile(id = "p", name = "Tuned", adapterTimeoutMs = 200, adaptiveTiming = 2, useVtTimeout = true, extendedAddress = "F1")
         val vtElm = SimulatedVehicleElm()
         val withVt = connect(vtElm, profile)
@@ -95,10 +95,14 @@ class ConnectionManagerTest {
         assertTrue(withVt.setup.all { it.accepted })
         withVt.driver.close()
 
+        // An adapter without VT firmware gets VTTOST anyway; its "?" is logged and skipped, and the
+        // connection still succeeds.
         val plainElm = SimulatedVehicleElm(vt = false)
         val withoutVt = connect(plainElm, profile)
-        assertEquals("ATST 31", withoutVt.setup[1].command)
-        assertFalse(plainElm.commands.any { it.startsWith("VTTOST") })
+        assertEquals("VTTOST 31", withoutVt.setup[1].command)
+        assertFalse(withoutVt.setup[1].accepted)
+        assertTrue(plainElm.commands.contains("VTTOST31"))
+        assertTrue(withoutVt.negotiation.succeeded)
         withoutVt.driver.close()
     }
 
@@ -153,13 +157,17 @@ class ConnectionManagerTest {
 
     @Test
     fun candidateOrder() {
+        val all = ProtocolNegotiator.candidates(ConnectionProfile.DEFAULT, null)
         assertEquals(
             listOf(null, ObdProtocol.ISO_14230_4_KWP_FAST, ObdProtocol.ISO_14230_4_KWP_SLOW, ObdProtocol.ISO_9141_2, ObdProtocol.ISO_15765_4_CAN_11_500, ObdProtocol.ISO_15765_4_CAN_29_500, ObdProtocol.ISO_15765_4_CAN_11_250, ObdProtocol.ISO_15765_4_CAN_29_250),
-            ProtocolNegotiator.candidates(ConnectionProfile.DEFAULT, null),
+            all.take(8),
         )
+        // Auto-detect covers every protocol the MIC3313 supports.
+        assertEquals(ObdProtocol.entries.toSet(), all.filterNotNull().toSet())
+        assertEquals(ObdProtocol.VT_KWP1281, all.last())
         val remembered = ProtocolNegotiator.candidates(ConnectionProfile.DEFAULT, ObdProtocol.ISO_15765_4_CAN_11_500)
         assertEquals(ObdProtocol.ISO_15765_4_CAN_11_500, remembered.first())
-        assertEquals(8, remembered.size) // no duplicate
+        assertEquals(ObdProtocol.entries.size + 1, remembered.size) // no duplicate
         assertEquals(listOf(null), ProtocolNegotiator.candidates(ConnectionProfile.DEFAULT.copy(tryFallbacks = false), null))
     }
 }

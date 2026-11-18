@@ -3,9 +3,9 @@
  "formatVersion": 1,
  "id": "vw-group-mqb",
  "name": "VW group (MQB platform)",
- "version": 1,
+ "version": 2,
  "author": "bod3",
- "description": "Control units of MQB-platform cars (UDS over 11-bit CAN). Addresses are community-sourced: check them against a module scan and edit the list in the app if your car differs. Modules not listed (doors, parking aid, driver assistance …) vary by equipment — add them from a scan.",
+ "description": "Control units of MQB-platform cars (UDS over 11-bit CAN). Addresses are community-sourced: check them against a module scan and edit the list in the app if your car differs. Modules not listed (doors, parking aid, driver assistance …) vary by equipment — add them from a scan. Address names apply to every VW group make (VW, Audi, Skoda, SEAT, Cupra) to name modules found by a scan.",
  "pids": [],
  "vehicles": [
   {
@@ -513,5 +513,150 @@
    ]
   }
  ],
- "dtcs": {}
+ "dtcs": {},
+ "moduleNames": [
+  {
+   "requestId": "7E0",
+   "responseId": "7E8",
+   "address": "01",
+   "name": "Engine electronics",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "7E1",
+   "responseId": "7E9",
+   "address": "02",
+   "name": "Transmission electronics",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "713",
+   "responseId": "77D",
+   "address": "03",
+   "name": "Brake electronics",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "746",
+   "responseId": "7B0",
+   "address": "08",
+   "name": "Air conditioning",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "70E",
+   "responseId": "778",
+   "address": "09",
+   "name": "Central electronics",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "715",
+   "responseId": "77F",
+   "address": "15",
+   "name": "Airbag",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "70C",
+   "responseId": "776",
+   "address": "16",
+   "name": "Steering column electronics",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "714",
+   "responseId": "77E",
+   "address": "17",
+   "name": "Dashboard",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "710",
+   "responseId": "77A",
+   "address": "19",
+   "name": "Data bus diagnostic interface (gateway)",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "712",
+   "responseId": "77C",
+   "address": "44",
+   "name": "Steering assistance",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  },
+  {
+   "requestId": "773",
+   "responseId": "7DD",
+   "address": "5F",
+   "name": "Information electronics",
+   "makes": [
+    "Volkswagen",
+    "Audi",
+    "Skoda",
+    "SEAT",
+    "Cupra"
+   ]
+  }
+ ]
 }

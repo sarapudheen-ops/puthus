@@ -9,12 +9,49 @@ import com.bod3.app.obd.scan.ModuleReport
  * - [onConnected]: on every connection with a known VIN; returns the saved profile (with its modules)
  *   or creates one. The vehicle is (re)described via vPIC when it was never described or only offline.
  * - [saveScan]: stores the result of a module scan, replacing the previous modules and raw log.
+ * - [export] / [import]: a whole profile (header, modules, raw log, manual ECUs and names) as a
+ *   [ProfileBundle] for [ProfileTransferCodec].
  */
 class VehicleProfileService(
     private val repository: ProfileRepository,
     private val describer: VinDescriber,
     private val clock: () -> Long = System::currentTimeMillis,
+    val extras: ProfileExtrasStore? = null,
 ) {
+
+    class ProfileExistsException(val vin: String) : IllegalStateException("A profile for $vin already exists")
+
+    /** Bundles everything saved for [vin], or null when there is no profile. */
+    suspend fun export(vin: String, includeRawLog: Boolean = true): ProfileBundle? {
+        val stored = repository.getProfile(vin) ?: return null
+        return ProfileBundle(
+            profile = stored,
+            modules = repository.modules(vin),
+            rawLog = if (includeRawLog) repository.rawLog(vin) else emptyList(),
+            extras = extras?.get(vin) ?: ProfileExtras(),
+        )
+    }
+
+    /**
+     * Stores an imported profile. An existing profile with the same VIN is replaced only when
+     * [overwrite] is set; otherwise [ProfileExistsException] is thrown and nothing changes.
+     */
+    suspend fun import(bundle: ProfileBundle, overwrite: Boolean): VehicleProfile {
+        val vin = bundle.profile.vin
+        if (!overwrite && repository.getProfile(vin) != null) throw ProfileExistsException(vin)
+        val problems = bundle.extras.problems()
+        require(problems.isEmpty()) { problems.joinToString("\n") }
+        val modules = bundle.modules.map { it.copy(vin = vin) }
+        repository.saveScan(bundle.profile.copy(updatedAtMs = maxOf(bundle.profile.updatedAtMs, bundle.profile.createdAtMs)), modules, bundle.rawLog)
+        extras?.save(vin, bundle.extras)
+        return assemble(bundle.profile, modules)
+    }
+
+    /** Deletes the profile, its modules, raw log and extras. */
+    suspend fun delete(vin: String) {
+        repository.deleteProfile(vin)
+        extras?.delete(vin)
+    }
 
     data class LoadResult(val profile: VehicleProfile, val isNew: Boolean)
 

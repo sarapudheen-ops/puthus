@@ -124,6 +124,10 @@ class DataRepository(private val bundled: List<DataPack>, private val store: Dat
         return bundled.flatMap { it.pids }.filterNot { it.id in userIds }.distinctBy { it.id } + user
     }
 
+    /** Generic module names: the user pack's first, then bundled packs', each with its pack name. */
+    fun moduleNames(): List<Pair<ModuleNameEntry, String>> =
+        store.userPack().moduleNames.map { it to "My additions" } + bundled.flatMap { pack -> pack.moduleNames.map { it to pack.name } }
+
     fun isUserPid(id: String): Boolean = store.userPack().pids.any { it.id == id }
 
     fun dtcDescriptions(): DtcDescriptions = DtcDescriptions(

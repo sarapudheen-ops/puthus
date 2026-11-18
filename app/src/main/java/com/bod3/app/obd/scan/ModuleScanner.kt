@@ -19,6 +19,9 @@ import kotlinx.coroutines.withContext
  * 1. OBD broadcast `01 00` on `7DF` / `18DB33F1`.
  * 2. The OBD physical addresses `7E0`-`7E7` / `18DA10F1`-`18DA17F1` with `3E 00`, falling back to `01 00`.
  * 3. The UDS address range `700`-`7FF` / `18DA00F1`-`18DAFFF1` with `3E 00`, falling back to `22 F190`.
+ * 4. Listed ECUs ([ScanOptions.listedModules]: the vehicle's manual list and data-pack ECUs) not found
+ *    yet, probed with their exact reply ID, so modules with unusual reply IDs or that only answer on
+ *    their own pair are still found. With [ScanOptions.rangeScan] off only this step runs (quick scan).
  *
  * Any reply, including a negative response (`7F`), marks a module as present. During probing the
  * adapter accepts replies from any ID in the range (`ATCF`/`ATCM`), so modules whose reply ID is not
@@ -37,7 +40,7 @@ class ModuleScanner(
 
     private data class Probe(val request: List<Int>, val method: DetectionMethod)
 
-    private data class Step(val bus: Bus, val phase: ScanPhase, val requestHeader: String?)
+    private data class Step(val bus: Bus, val phase: ScanPhase, val requestHeader: String?, val responseHeader: String? = null)
 
     suspend fun scan(
         options: ScanOptions = ScanOptions(),
@@ -48,11 +51,17 @@ class ModuleScanner(
         val nativeBus = nativeProtocol.bus()
             ?: throw ScanAbortedException("Module scan needs a CAN vehicle (this one uses ${nativeProtocol.displayName})")
 
+        val other = counterpart(nativeProtocol)
         val passes = buildList {
             add(nativeProtocol)
-            if (options.includeOtherBus) counterpart(nativeProtocol)?.let { add(it) }
+            if (other != null && (options.includeOtherBus || options.listedModules.any { it.bus == other.bus() })) add(other)
         }
-        val steps = passes.flatMap { plan(it.bus()!!) }
+        val listed = options.listedModules.distinctBy { it.key }
+        val steps = passes.flatMap { protocol ->
+            val bus = protocol.bus()!!
+            val ranges = if (options.rangeScan && (protocol == nativeProtocol || options.includeOtherBus)) plan(bus) else emptyList()
+            ranges + listed.filter { it.bus == bus }.map { Step(bus, ScanPhase.LISTED_ADDRESSES, it.requestHeader, it.responseHeader) }
+        }
         val found = LinkedHashMap<String, DiscoveredModule>()
         var completed = 0
         var consecutiveFailures = 0
@@ -102,6 +111,22 @@ class ModuleScanner(
                             response?.responders?.forEach { responder ->
                                 val request = EcuTarget.physicalFor(responder, bus.format)?.requestHeader ?: return@forEach
                                 add(module(bus, request, responder, DetectionMethod.OBD_BROADCAST, response))
+                            }
+                        }
+
+                        ScanPhase.LISTED_ADDRESSES -> {
+                            val request = step.requestHeader!!
+                            val response = step.responseHeader!!
+                            val known = found.values.any { it.address.bus == bus && it.address.requestHeader.equals(request, ignoreCase = true) }
+                            if (!known) {
+                                val target = EcuTarget.Physical(request, response, flowControl = false)
+                                for (candidate in listOf(Probe(listOf(0x3E, 0x00), DetectionMethod.MANUAL_LIST), Probe(listOf(0x22, 0xF1, 0x90), DetectionMethod.MANUAL_LIST), Probe(listOf(0x01, 0x00), DetectionMethod.MANUAL_LIST))) {
+                                    val reply = probe(target, candidate) ?: continue
+                                    if (reply.responders.none { it.equals(response, ignoreCase = true) }) continue
+                                    val obd = candidate.request.first() == 0x01
+                                    add(module(bus, request, response, candidate.method, reply).copy(obd = obd))
+                                    break
+                                }
                             }
                         }
 

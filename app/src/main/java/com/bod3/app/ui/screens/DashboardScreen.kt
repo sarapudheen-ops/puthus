@@ -70,6 +70,7 @@ class DashboardActions(
     val onClearLog: () -> Unit,
     val attemptsText: () -> String,
     val writeReport: suspend () -> File,
+    val onOpenGarage: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -160,6 +161,7 @@ private fun DiagnosticButtons(state: UiState, connected: Boolean, busy: Boolean,
             Text(state.data.selectedVehicle?.let { "ECUs · ${it.vehicle.model}" } ?: "Vehicle & ECUs")
         }
         OutlinedButton(onClick = actions.onOpenCustomPids) { Text("Custom PIDs") }
+        OutlinedButton(onClick = actions.onOpenGarage, enabled = !state.scan.running) { Text("Saved vehicles") }
         if (state.settings.expertMode) {
             OutlinedButton(onClick = actions.onOpenTerminal, enabled = connected && !state.scan.running) { Text("Expert terminal") }
         }
@@ -208,7 +210,7 @@ private fun ProtocolCard(state: UiState, attemptsText: () -> String) {
         if (expanded) {
             state.attempts.forEach { a ->
                 Text(
-                    "${if (a.success) "✓" else "✗"} ${a.selectCommand} · ${a.label} · ${a.durationMs} ms\n   0100 → ${a.result}" +
+                    "${if (a.success) "✓" else "✗"} ${a.selectCommand} · ${a.label} · ${a.durationMs} ms\n   ${a.requested?.probe?.request ?: "0100"} → ${a.result}" +
                         (a.atdp?.let { "\n   ATDP → $it" } ?: ""),
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodySmall,
@@ -228,16 +230,9 @@ private fun AdapterCard(state: UiState) {
         } else {
             InfoRow("ATI", adapter.identity.raw.ifBlank { "—" })
             adapter.description?.let { InfoRow("Description (AT@1)", it) }
-            InfoRow("vLinker VT commands", adapter.capabilities.vtVersion ?: "Not supported")
-            InfoRow("OBDLink ST commands", adapter.capabilities.stVersion ?: "Not supported")
-            InfoRow(
-                "Capabilities",
-                buildList {
-                    add("ELM327 AT")
-                    if (adapter.capabilities.supportsVt) add("VT (VTTOST timeout)")
-                    if (adapter.capabilities.supportsSt) add("ST")
-                }.joinToString(", "),
-            )
+            InfoRow("VT firmware (VTVERS)", adapter.capabilities.vtVersion ?: "Not reported")
+            InfoRow("ST firmware (STI)", adapter.capabilities.stVersion ?: "Not reported")
+            InfoRow("Command sets", "ELM AT, STN ST, vLinker VT (unknown commands are logged and skipped)")
             state.connectedProfile?.let { InfoRow("Profile", it.name) }
             if (state.setup.isNotEmpty()) {
                 InfoRow("Setup", state.setup.joinToString("\n") { "${if (it.accepted) "✓" else "✗"} ${it.command}" })

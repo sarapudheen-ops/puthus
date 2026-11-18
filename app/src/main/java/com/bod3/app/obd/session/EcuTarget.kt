@@ -87,6 +87,8 @@ data class SessionOptions(
     val customFlowControl: Boolean = false,
     /** Flow-control data bytes, e.g. `300000`. */
     val flowControlData: String = "300000",
+    /** Bit rate for protocols with a configurable rate (user CAN B/C, STN ISO 15765), or null for the default. */
+    val canBaudKbps: Double? = null,
 ) {
     companion object {
         val DEFAULT = SessionOptions()

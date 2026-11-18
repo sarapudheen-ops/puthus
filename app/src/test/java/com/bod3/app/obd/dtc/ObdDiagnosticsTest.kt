@@ -17,7 +17,7 @@ class ObdDiagnosticsTest {
 
     @Test
     fun freezeFrameOnCanAndKLine() = runBlocking<Unit> {
-        for ((code, protocol) in listOf('6' to ObdProtocol.ISO_15765_4_CAN_11_500, '3' to ObdProtocol.ISO_9141_2)) {
+        for ((code, protocol) in listOf("6" to ObdProtocol.ISO_15765_4_CAN_11_500, "3" to ObdProtocol.ISO_9141_2)) {
             val frames = FreezeFrameReader(session(SimulatedVehicleElm(vehicleProtocol = code), protocol)).read()
             val frame = frames.single()
             assertEquals("P0420", frame.dtc)
@@ -46,7 +46,7 @@ class ObdDiagnosticsTest {
 
     @Test
     fun confirmedClearOnCanAndKLine() = runBlocking<Unit> {
-        for ((code, protocol) in listOf('6' to ObdProtocol.ISO_15765_4_CAN_11_500, '5' to ObdProtocol.ISO_14230_4_KWP_FAST)) {
+        for ((code, protocol) in listOf("6" to ObdProtocol.ISO_15765_4_CAN_11_500, "5" to ObdProtocol.ISO_14230_4_KWP_FAST)) {
             val elm = SimulatedVehicleElm(vehicleProtocol = code)
             val reader = ObdDtcReader(session(elm, protocol))
             assertEquals(4, reader.read(DtcKind.STORED).codes.size)

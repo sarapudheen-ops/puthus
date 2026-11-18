@@ -23,11 +23,14 @@ class RawTerminalTest {
         assertFalse(refused("ati"))
         assertFalse(refused("AT RV"))
         listOf("ATBRD 23", "ATPP 0C SV 23", "ATMA", "ATSD 00", "ATLP", "ATWM 8210F13E").forEach { assertTrue(it, refused(it)) }
-        // Vendor commands only from the identification list
-        assertFalse(refused("VTVERS"))
-        assertFalse(refused("STDI"))
-        assertTrue(refused("STSLCS"))
-        assertTrue(refused("VTSET_BAUD 115200"))
+        // The full ST/VT sets are sent directly, except commands that break the link or reset the adapter
+        listOf("VTVERS", "STDI", "STSLCS", "STPX H:7E0, D:0100", "VTP291", "VTVLCW", "VTISOSI 01,0", "STCSEGT1", "STPBR 1000000").forEach {
+            assertFalse(it, refused(it))
+        }
+        listOf("VTSET_BAUD 115200", "STBR 230400", "STSBR 500000", "STSLP", "STM", "STMA", "STBL").forEach { assertTrue(it, refused(it)) }
+        assertFalse(refused("STMFR"))
+        assertTrue((TerminalPolicy.decide("STP 61", true) as TerminalDecision.Send).affectsRouting)
+        assertFalse((TerminalPolicy.decide("STI", true) as TerminalDecision.Send).affectsRouting)
         // Diagnostic requests: reads only
         assertFalse(refused("01 0C"))
         assertFalse(refused("22F190"))

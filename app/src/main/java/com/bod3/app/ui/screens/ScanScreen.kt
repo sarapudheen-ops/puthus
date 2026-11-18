@@ -40,6 +40,8 @@ fun ScanScreen(
     onCancel: () -> Unit,
     onOtherBusChange: (Boolean) -> Unit,
     onOpenModules: () -> Unit,
+    onListedChange: (Boolean) -> Unit = {},
+    onQuickChange: (Boolean) -> Unit = {},
     rawLogText: () -> String,
     onClearLog: () -> Unit,
 ) {
@@ -75,6 +77,15 @@ fun ScanScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Also scan the other CAN ID length (11/29-bit)", modifier = Modifier.weight(1f))
                         Switch(checked = scan.includeOtherBus, onCheckedChange = onOtherBusChange, enabled = !scan.running)
+                    }
+                    val listed = state.listedModules.size
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Probe listed ECUs directly ($listed from the manual list and data-pack vehicle)", modifier = Modifier.weight(1f))
+                        Switch(checked = scan.includeListed, onCheckedChange = onListedChange, enabled = !scan.running && listed > 0)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Quick scan: listed ECUs only (no address sweep)", modifier = Modifier.weight(1f))
+                        Switch(checked = scan.quickScan && listed > 0, onCheckedChange = onQuickChange, enabled = !scan.running && listed > 0)
                     }
                     if (scan.running) {
                         OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel scan") }

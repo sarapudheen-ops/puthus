@@ -47,7 +47,7 @@ import com.bod3.app.obd.protocol.ObdProtocol
 @Composable
 fun ProfileEditorScreen(profile: ConnectionProfile, onSave: (ConnectionProfile) -> Unit, onCancel: () -> Unit) {
     var name by rememberSaveable(profile.id) { mutableStateOf(profile.name) }
-    var protocolCode by rememberSaveable(profile.id) { mutableStateOf(profile.forcedProtocol?.code?.toString() ?: "") }
+    var protocolCode by rememberSaveable(profile.id) { mutableStateOf(profile.forcedProtocol?.code ?: "") }
     var fallbacks by rememberSaveable(profile.id) { mutableStateOf(profile.tryFallbacks) }
     var requestTimeout by rememberSaveable(profile.id) { mutableStateOf(profile.requestTimeoutMs.toString()) }
     var searchTimeout by rememberSaveable(profile.id) { mutableStateOf(profile.searchTimeoutMs.toString()) }
@@ -59,12 +59,14 @@ fun ProfileEditorScreen(profile: ConnectionProfile, onSave: (ConnectionProfile) 
     var customFc by rememberSaveable(profile.id) { mutableStateOf(profile.flowControlMode == FlowControlMode.CUSTOM_DATA) }
     var fcData by rememberSaveable(profile.id) { mutableStateOf(profile.flowControlData) }
     var extAddress by rememberSaveable(profile.id) { mutableStateOf(profile.extendedAddress ?: "") }
+    var canBaud by rememberSaveable(profile.id) { mutableStateOf(profile.canBaudKbps?.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() } ?: "") }
+    var extraCommands by rememberSaveable(profile.id) { mutableStateOf(profile.extraInitCommands.joinToString("\n")) }
     var error by rememberSaveable(profile.id) { mutableStateOf<String?>(null) }
 
     fun build(): ConnectionProfile = ConnectionProfile(
         id = profile.id,
         name = name.trim(),
-        forcedProtocol = protocolCode.firstOrNull()?.let { code -> ObdProtocol.entries.first { it.code == code } },
+        forcedProtocol = protocolCode.takeIf { it.isNotEmpty() }?.let { code -> ObdProtocol.byCode(code) ?: throw IllegalArgumentException("Unknown protocol $code") },
         tryFallbacks = fallbacks,
         requestTimeoutMs = requestTimeout.trim().toLongOrNull() ?: throw IllegalArgumentException("Request timeout must be a number"),
         searchTimeoutMs = searchTimeout.trim().toLongOrNull() ?: throw IllegalArgumentException("Search timeout must be a number"),
@@ -76,6 +78,8 @@ fun ProfileEditorScreen(profile: ConnectionProfile, onSave: (ConnectionProfile) 
         flowControlMode = if (customFc) FlowControlMode.CUSTOM_DATA else FlowControlMode.AUTO,
         flowControlData = fcData.trim().uppercase().filterNot { it == ' ' },
         extendedAddress = extAddress.trim().uppercase().ifEmpty { null },
+        canBaudKbps = canBaud.trim().takeIf { it.isNotEmpty() }?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("CAN bit rate must be a number") },
+        extraInitCommands = extraCommands.lines().map { it.trim().uppercase() }.filter { it.isNotEmpty() },
     )
 
     Scaffold(
@@ -106,9 +110,22 @@ fun ProfileEditorScreen(profile: ConnectionProfile, onSave: (ConnectionProfile) 
                 ProtocolDropdown(protocolCode) { protocolCode = it }
                 SwitchRow(
                     "Try fallbacks",
-                    if (protocolCode.isEmpty()) "When automatic search fails, try ATSP5, 4, 3, 6, 7, 8, 9" else "Also try the other protocols if this one fails",
+                    if (protocolCode.isEmpty()) {
+                        "When automatic search fails, try every protocol: K-line, CAN, J1850, J1939, user CAN B/C, MS-CAN, SW-CAN, raw CAN, KWP1281"
+                    } else {
+                        "Also try the other protocols if this one fails"
+                    },
                     fallbacks,
                 ) { fallbacks = it }
+                OutlinedTextField(
+                    value = canBaud,
+                    onValueChange = { text -> canBaud = text.filter { it.isDigit() || it == '.' } },
+                    label = { Text("CAN bit rate kbit/s for user CAN B/C and STN CAN (empty = default)") },
+                    supportingText = { Text("10-1000, e.g. 125, 33.3, 95.2, 1000. Uses ATPB/ATPP, or STPBR for rates that are no whole divisor of 500.") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             SectionCard("Timeouts") {
@@ -121,7 +138,7 @@ fun ProfileEditorScreen(profile: ConnectionProfile, onSave: (ConnectionProfile) 
                         FilterChip(selected = adaptive == value, onClick = { adaptive = value }, label = { Text(label) })
                     }
                 }
-                SwitchRow("Use VTTOST", "vLinker only; falls back to ATST when the adapter has no VT commands", vtTimeout) { vtTimeout = it }
+                SwitchRow("Use VTTOST", "Set the reply timeout with the vLinker VTTOST command instead of ATST", vtTimeout) { vtTimeout = it }
             }
 
             SectionCard("CAN options") {
@@ -134,6 +151,17 @@ fun ProfileEditorScreen(profile: ConnectionProfile, onSave: (ConnectionProfile) 
                 if (customFc) HexField("Flow-control data (e.g. 300000)", fcData) { fcData = it }
                 HexField("Extended address (ATCEA, empty = normal addressing)", extAddress) { extAddress = it }
             }
+
+            SectionCard("Extra adapter commands") {
+                OutlinedTextField(
+                    value = extraCommands,
+                    onValueChange = { extraCommands = it },
+                    label = { Text("One AT/ST/VT command per line, sent after setup") },
+                    supportingText = { Text("e.g. STCSEGT1 or VTVLCW. Commands the adapter does not know (?) are logged and skipped.") },
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
@@ -142,8 +170,7 @@ fun ProfileEditorScreen(profile: ConnectionProfile, onSave: (ConnectionProfile) 
 @Composable
 private fun ProtocolDropdown(code: String, onChange: (String) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    val label = code.firstOrNull()?.let { c -> ObdProtocol.entries.firstOrNull { it.code == c }?.let { "${it.code} · ${it.displayName}" } }
-        ?: "Automatic (ATSP0)"
+    val label = code.takeIf { it.isNotEmpty() }?.let { c -> ObdProtocol.byCode(c)?.label } ?: "Automatic (ATSP0)"
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
             value = label,
@@ -155,10 +182,19 @@ private fun ProtocolDropdown(code: String, onChange: (String) -> Unit) {
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("Automatic (ATSP0)") }, onClick = { onChange(""); expanded = false })
-            ObdProtocol.entries.forEach { protocol ->
+            ObdProtocol.all.forEach { protocol ->
                 DropdownMenuItem(
-                    text = { Text("${protocol.code} · ${protocol.displayName}") },
-                    onClick = { onChange(protocol.code.toString()); expanded = false },
+                    text = {
+                        Column {
+                            Text(protocol.label)
+                            Text(
+                                "${protocol.family.label} · ${protocol.bus.label}" + (protocol.defaultBaudKbps?.let { " · custom baud" } ?: ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    onClick = { onChange(protocol.code); expanded = false },
                 )
             }
         }

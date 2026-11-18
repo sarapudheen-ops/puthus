@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.bod3.app.obd.connection.ConnectionProfile
+import com.bod3.app.obd.protocol.ObdProtocol
 import com.bod3.app.ui.ConnectionSettingsState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,6 +101,28 @@ fun ConnectionSettingsScreen(
                         }
                         TextButton(onClick = { onForgetProtocol(remembered.adapterAddress) }) { Text("Forget") }
                     }
+                }
+            }
+
+            SectionCard("Supported protocols (vLinker MC+)") {
+                var showAll by rememberSaveable { mutableStateOf(false) }
+                Text(
+                    "Automatic search tries ATSP0 and then every protocol below. Force one in a profile to skip the search.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                val shown = if (showAll) ObdProtocol.all else ObdProtocol.all.take(6)
+                shown.forEach { protocol ->
+                    Column {
+                        Text(protocol.label, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "${protocol.family.label} · ${protocol.bus.label} · " + protocol.selectCommands().joinToString("; "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                TextButton(onClick = { showAll = !showAll }) {
+                    Text(if (showAll) "Show fewer" else "Show all ${ObdProtocol.all.size} protocols")
                 }
             }
 

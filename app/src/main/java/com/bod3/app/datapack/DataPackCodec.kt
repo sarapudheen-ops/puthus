@@ -19,7 +19,9 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
  *   "vehicles": [ { "make": "Volkswagen", "model": "Tiguan (AD1)", "years": "2016-2024",
  *                   "ecus": [ { "address": "09", "name": "Central electronics", "requestId": "70E",
  *                               "responseId": "778", "protocol": "UDS" } ] } ],
- *   "dtcs": { "P0420": "Catalyst system efficiency below threshold (bank 1)" }
+ *   "dtcs": { "P0420": "Catalyst system efficiency below threshold (bank 1)" },
+ *   "moduleNames": [ { "requestId": "70E", "responseId": "778", "address": "09", "name": "Central electronics",
+ *                      "makes": ["Volkswagen", "Audi", "Skoda", "SEAT", "Cupra"] } ]
  * }
  * ```
  */
@@ -39,8 +41,17 @@ object DataPackCodec {
             "pids" to pack.pids.map(::encodePid),
             "vehicles" to pack.vehicles.map(::encodeVehicle),
             "dtcs" to pack.dtcs.toSortedMap(),
+            "moduleNames" to pack.moduleNames.takeIf { it.isNotEmpty() }?.map(::encodeModuleName),
         ).filterValues { it != null },
     )
+
+    fun encodeModuleName(m: ModuleNameEntry): Map<String, Any?> = linkedMapOf(
+        "requestId" to m.requestId, "responseId" to m.responseId, "address" to m.address, "name" to m.name,
+        "makes" to m.makes.takeIf { it.isNotEmpty() },
+    ).filterValues { it != null }
+
+    /** Decodes one ECU object (as written by [encodeEcu]); problems are added to [errors] with [path]. */
+    fun decodeEcu(item: Any?, path: String, errors: MutableList<String>): EcuDefinition? = Reader(errors).ecu(item, path)
 
     fun encodePid(p: CustomPid): Map<String, Any?> = linkedMapOf(
         "id" to p.id, "name" to p.name, "request" to p.request, "formula" to p.formula, "unit" to p.unit,
@@ -75,6 +86,7 @@ object DataPackCodec {
 
         val pids = reader.list(root, "pids", "").mapIndexedNotNull { i, item -> reader.pid(item, "pids[$i]") }
         val vehicles = reader.list(root, "vehicles", "").mapIndexedNotNull { i, item -> reader.vehicle(item, "vehicles[$i]") }
+        val moduleNames = reader.list(root, "moduleNames", "").mapIndexedNotNull { i, item -> reader.moduleName(item, "moduleNames[$i]") }
         val dtcs = when (val raw = root["dtcs"]) {
             null -> emptyMap()
             is Map<*, *> -> raw.entries.mapNotNull { (k, v) ->
@@ -97,7 +109,7 @@ object DataPackCodec {
             version = reader.int(root, "version", "", required = false) ?: 1,
             author = reader.string(root, "author", "", required = false),
             description = reader.string(root, "description", "", required = false),
-            pids = pids, vehicles = vehicles, dtcs = dtcs,
+            pids = pids, vehicles = vehicles, dtcs = dtcs, moduleNames = moduleNames,
         )
         errors += pack.problems()
         return DataPackResult(if (errors.isEmpty()) pack else null, errors.distinct())
@@ -171,6 +183,23 @@ object DataPackCodec {
                 address = string(m, "address", p, required = false)?.ifEmpty { null },
                 name = name, requestId = request.uppercase(), responseId = response.uppercase(), protocol = protocol,
                 notes = string(m, "notes", p, required = false),
+            )
+        }
+
+        fun moduleName(item: Any?, p: String): ModuleNameEntry? {
+            val m = obj(item, p) ?: return null
+            val before = errors.size
+            val request = string(m, "requestId", p)
+            val name = string(m, "name", p)
+            val makes = list(m, "makes", p).mapIndexedNotNull { i, v ->
+                (v as? String)?.trim() ?: run { errors += "$p.makes[$i]: must be text"; null }
+            }
+            if (errors.size > before || request == null || name == null) return null
+            return ModuleNameEntry(
+                requestId = request.uppercase(), name = name,
+                responseId = string(m, "responseId", p, required = false)?.uppercase()?.ifEmpty { null },
+                address = string(m, "address", p, required = false)?.ifEmpty { null },
+                makes = makes,
             )
         }
 

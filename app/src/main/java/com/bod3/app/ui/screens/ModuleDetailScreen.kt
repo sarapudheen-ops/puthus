@@ -45,7 +45,25 @@ fun ModuleDetailScreen(
     moduleLogText: () -> String,
     fullLogText: () -> String,
     onClearLog: () -> Unit,
+    /** Renames the module for this vehicle; null when no profile is loaded. Blank resets the name. */
+    onRename: ((String) -> Unit)? = null,
 ) {
+    var renaming by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (renaming && onRename != null) {
+        var text by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(if (module.nameSource == com.bod3.app.profile.NameSource.USER) module.displayName else "") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Rename module") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Your name for ${module.address.requestHeader} on this vehicle. Leave empty to use the module's own or data-pack name.", style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.material3.OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true, label = { Text("Name") })
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { renaming = false; onRename(text) }) { Text("Save") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { renaming = false }) { Text("Cancel") } },
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -57,6 +75,9 @@ fun ModuleDetailScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                },
+                actions = {
+                    if (onRename != null) androidx.compose.material3.TextButton(onClick = { renaming = true }) { Text("Rename") }
                 },
             )
         },
@@ -70,6 +91,7 @@ fun ModuleDetailScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SectionCard("Module") {
+                module.nameSource?.let { InfoRow("Name from", it.label) }
                 InfoRow("Request ID", module.address.requestHeader)
                 InfoRow("Response ID", module.address.responseHeader)
                 InfoRow("Bus", module.address.bus.label)
