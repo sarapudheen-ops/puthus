@@ -25,6 +25,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.bod3.app.diagnostics.EcuWorkbench
 import com.bod3.app.vehiclepack.PackView
 import com.bod3.app.vehiclepack.VehiclePacksController
 import com.bod3.app.vehiclepack.VehiclePacksState
@@ -35,6 +36,7 @@ import com.bod3.app.vehiclepack.VehiclePacksState
 fun ToyotaVehiclePacksScreen(
     state: VehiclePacksState, controller: VehiclePacksController, offline: Boolean, connected: Boolean,
     onBack: () -> Unit, onLive: () -> Unit, onTests: () -> Unit, onCoding: () -> Unit,
+    onDiagnostics: () -> Unit,
 ) {
     fun reason(key: String) = state.reasons[key] ?: key
     Scaffold(topBar = {
@@ -121,8 +123,10 @@ fun ToyotaVehiclePacksScreen(
                         }
                         item {
                             SectionCard("Fault codes") {
-                                OutlinedButton(onClick = {}, enabled = false) { Text("Read / clear / freeze frame") }
-                                Text("The selected system's DTC read request, record decoder and freeze-frame mapping have not been converted. No generic UDS or emissions request will be substituted here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val available = system.enabled && system.data.ecus.singleOrNull()?.let(EcuWorkbench::canReadDtcs) == true
+                                OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("Read fault codes") }
+                                if (!available) Text("The selected system's DTC read request and record decoder have not been converted. No generic UDS or emissions request will be substituted here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Clearing requires a documented group and a separate confirmation. Freeze frames remain disabled without an exact record mapping.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         item {
@@ -141,9 +145,11 @@ fun ToyotaVehiclePacksScreen(
                         }
                         item {
                             SectionCard("ECU information & special functions") {
-                                OutlinedButton(onClick = {}, enabled = false) { Text("ECU information") }
+                                val available = system.enabled && system.data.ecus.singleOrNull()?.let(EcuWorkbench::canReadIdentification) == true
+                                OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("ECU information") }
+                                if (!available) Text("The exact identification definitions for this system have not been converted.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 OutlinedButton(onClick = {}, enabled = false) { Text("Special functions") }
-                                Text("The exact identification and special-function definitions for this system have not been converted. Unknown is not zero source support.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Special-function mappings remain unresolved. Unknown is not zero source support.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         if (system.unresolvedPages.isNotEmpty()) {

@@ -112,6 +112,8 @@ data class EcuDefinition(
     val notes: String? = null,
     val link: DiagnosticLink? = null,
     val sourceRecords: List<String> = emptyList(),
+    /** Exact selected-ECU reads; an explicit empty set suppresses legacy generic UDS defaults. */
+    val diagnostics: com.bod3.app.diagnostics.EcuReadDefinitions? = null,
 ) {
     val is29Bit: Boolean get() = requestId.length == 8
 
@@ -135,6 +137,7 @@ data class EcuDefinition(
         }
         if (requestId.length != responseId.length) add("responseId: must use the same ID length as requestId")
         if (requestId.equals(responseId, ignoreCase = true)) add("responseId: must differ from requestId")
+        addAll(diagnostics?.problems(protocol, link).orEmpty().map { "diagnostics.$it" })
     }
 }
 

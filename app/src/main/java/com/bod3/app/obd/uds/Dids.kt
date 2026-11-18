@@ -69,13 +69,14 @@ sealed interface DidResult {
     data class Failed(val message: String) : DidResult
 }
 
-data class DidReading(val did: Int, val result: DidResult) {
-    val label: String get() = KnownDids.label(did)
+data class DidReading(val did: Int, val result: DidResult, val definitionId: String? = null,
+                      val definitionName: String? = null, val request: String? = null, val hexOnly: Boolean = false) {
+    val label: String get() = definitionName ?: KnownDids.label(did)
 
     /** Human-readable value: decoded text, hex, or why it is missing. */
     val display: String
         get() = when (result) {
-            is DidResult.Value -> result.text ?: result.hex.ifEmpty { "(empty)" }
+            is DidResult.Value -> (if (hexOnly) null else result.text) ?: result.hex.ifEmpty { "(empty)" }
             is DidResult.Negative ->
                 if (Nrc.meansNotSupported(result.nrc)) "Not supported" else "Not available: ${Nrc.describe(result.nrc)}"
             DidResult.NoResponse -> "Not supported (no response)"

@@ -31,12 +31,16 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
  */
 object DataPackCodec {
     const val FORMAT = "bod3-datapack"
-    const val FORMAT_VERSION = 2
+    const val FORMAT_VERSION = 3
 
     fun encode(pack: DataPack): String = JsonWriter.write(
         linkedMapOf(
             "format" to FORMAT,
-            "formatVersion" to if (pack.dtcGroups.isEmpty()) 1 else FORMAT_VERSION,
+            "formatVersion" to when {
+                pack.vehicles.any { v -> v.ecus.any { it.diagnostics != null } } -> 3
+                pack.dtcGroups.isNotEmpty() -> 2
+                else -> 1
+            },
             "id" to pack.id,
             "name" to pack.name,
             "version" to pack.version,
@@ -76,6 +80,7 @@ object DataPackCodec {
         "address" to e.address, "name" to e.name, "requestId" to e.requestId, "responseId" to e.responseId,
         "protocol" to e.protocol.name, "addressing" to (if (e.link?.kLine != null) null else if (e.is29Bit) "29" else "11"), "notes" to e.notes,
         "link" to e.link?.let(DiagnosticLinkCodec::encode), "sourceRecords" to e.sourceRecords.takeIf { it.isNotEmpty() },
+        "diagnostics" to e.diagnostics?.let(com.bod3.app.diagnostics.EcuReadDefinitionsCodec::encode),
     ).filterValues { it != null }
 
     /** Parses and validates [json]. Never throws for bad input; problems are listed in the result. */
@@ -99,6 +104,7 @@ object DataPackCodec {
         val dtcs = reader.descriptions(root["dtcs"], "dtcs")
         val dtcGroups = reader.list(root, "dtcGroups", "").mapIndexedNotNull { i, item -> reader.dtcGroup(item, "dtcGroups[$i]") }
         if (dtcGroups.isNotEmpty() && formatVersion < 2) errors += "dtcGroups: requires formatVersion 2 so older apps cannot silently lose manufacturer scoping"
+        if (vehicles.any { v -> v.ecus.any { it.diagnostics != null } } && formatVersion < 3) errors += "diagnostics: requires formatVersion 3 so older apps cannot silently substitute generic ECU reads"
         val id = reader.string(root, "id", "")
         val name = reader.string(root, "name", "")
         if (id == null || name == null) return DataPackResult(null, errors)
@@ -226,6 +232,7 @@ object DataPackCodec {
                 notes = string(m, "notes", p, required = false),
                 link = DiagnosticLinkCodec.decode(m["link"], "$p.link", errors),
                 sourceRecords = com.bod3.app.recipe.JsonFields(errors).strings(m, "sourceRecords", p),
+                diagnostics = com.bod3.app.diagnostics.EcuReadDefinitionsCodec.decode(m["diagnostics"], "$p.diagnostics", errors),
             )
         }
 

@@ -18,12 +18,12 @@ data class CatalogResult(val pack: CatalogPack?, val errors: List<String>) {
 /** One invalid object rejects the entire document. There is no forgiving/partial catalog decoder. */
 object CatalogCodec {
     const val FORMAT = "bod3-vehicle-catalog"
-    const val VERSION = 1
+    const val VERSION = 2
     const val MAX_BYTES = 16 * 1024 * 1024
 
     fun encode(pack: CatalogPack): String = JsonWriter.write(packMap(pack))
     fun packMap(p: CatalogPack): Map<String, Any?> = linkedMapOf(
-        "format" to FORMAT, "formatVersion" to VERSION, "id" to p.id, "name" to p.name, "version" to p.version,
+        "format" to FORMAT, "formatVersion" to if (hasReadDefinitions(p)) 2 else 1, "id" to p.id, "name" to p.name, "version" to p.version,
         "description" to p.description, "nodes" to p.nodes.map(::nodeMap),
         "platforms" to p.platforms.map { linkedMapOf("id" to it.id, "name" to it.name, "notes" to it.notes, "data" to dataMap(it.data)) },
         "library" to dataMap(p.library),
@@ -56,7 +56,8 @@ object CatalogCodec {
         val m = f.asObject(root, "catalog") ?: return CatalogResult(null, errors)
         unknown(m, setOf("format", "formatVersion", "id", "name", "version", "description", "nodes", "platforms", "library"), "catalog", errors)
         if (m["format"] != FORMAT) errors += "format: expected $FORMAT"
-        if (f.int(m, "formatVersion", "") != VERSION) errors += "formatVersion: only catalog version $VERSION is supported"
+        val formatVersion = f.int(m, "formatVersion", "")
+        if (formatVersion !in 1..VERSION) errors += "formatVersion: supported catalog versions are 1-$VERSION"
         val id = f.string(m, "id", ""); val name = f.string(m, "name", "")
         val nodes = f.list(m, "nodes", "").mapIndexedNotNull { i, raw ->
             val p = "nodes[$i]"; val n = f.asObject(raw, p) ?: return@mapIndexedNotNull null
@@ -84,6 +85,7 @@ object CatalogCodec {
         val description = f.string(m, "description", "", false)
         if (id == null || name == null) return CatalogResult(null, errors.distinct())
         var pack = CatalogPack(id, name, version, nodes, platforms, library, description)
+        if (hasReadDefinitions(pack) && formatVersion != 2) errors += "diagnostics: requires catalog formatVersion 2 so older apps cannot silently substitute generic ECU reads"
         if (context != null) {
             for ((kind, ids) in listOf("nodes" to nodes.map { it.id }, "platforms" to platforms.map { it.id })) {
                 ids.groupingBy { it }.eachCount().filterValues { it > 1 }.keys.forEach { errors += "$kind: duplicate id $it" }
@@ -146,6 +148,9 @@ object CatalogCodec {
                 security = f.strings(exclude, "security", "$p.exclude").toSet(), dtcGroups = f.strings(exclude, "dtcGroups", "$p.exclude").toSet(),
                 moduleNames = f.strings(exclude, "moduleNames", "$p.exclude").toSet()))
     }
+
+    private fun hasReadDefinitions(pack: CatalogPack): Boolean =
+        (listOf(pack.library) + pack.nodes.map { it.data } + pack.platforms.map { it.data }).any { d -> d.ecus.any { it.diagnostics != null } }
 
     private fun unknown(map: Map<*, *>, allowed: Set<String>, path: String, errors: MutableList<String>) {
         map.keys.filterNot { it in allowed }.forEach { errors += "$path.$it: unknown field (nothing is silently discarded)" }

@@ -347,6 +347,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private var pidScopeActive = false
     private var pidsReturn = Screen.DASHBOARD
     private var toyotaPacksReturn = Screen.VEHICLES
+    private var ecuReturn = Screen.VEHICLES
     private var featureReturn = Screen.DASHBOARD
     private var liveReturn = Screen.DASHBOARD
     private var liveSelectionScope: String? = null
@@ -1393,6 +1394,14 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openSelectedSystemDiagnostics() {
+        val system = vehiclePacks.selectedSystem()?.takeIf { it.enabled } ?: return
+        val ecu = system.data.ecus.singleOrNull() ?: return
+        if (!canUseBus() || !_state.value.isConnected || ecu.diagnostics == null) return
+        if (!EcuWorkbench.canReadIdentification(ecu) && !EcuWorkbench.canReadDtcs(ecu)) return
+        openEcu(ecu)
+    }
+
     fun openSelectedSystemLive() {
         val system = vehiclePacks.selectedSystem()?.takeIf { it.enabled } ?: return
         val ecu = system.data.ecus.singleOrNull() ?: return
@@ -1581,14 +1590,17 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Opens an ECU of the selected vehicle and reads its identification and fault codes. */
     fun openEcu(ecu: EcuDefinition) {
+        if (coding.state.value.busy || actuators.state.value.running || scanJob?.isActive == true || ecuJob?.isActive == true ||
+            dtcJob?.isActive == true || _state.value.terminalBusy) return
         pauseLiveData()
+        if (_state.value.screen != Screen.ECU_DETAIL) ecuReturn = _state.value.screen
         _state.update { it.copy(screen = Screen.ECU_DETAIL, ecuDetail = EcuDetailState(ecu)) }
         readEcu()
     }
 
     fun closeEcu() {
         ecuJob?.cancel()
-        _state.update { it.copy(screen = Screen.VEHICLES, ecuDetail = null) }
+        _state.update { it.copy(screen = ecuReturn, ecuDetail = null) }
     }
 
     private fun updateEcu(change: (EcuDetailState) -> EcuDetailState) {
@@ -1597,7 +1609,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Only one bus user at a time: scans, ECU reads, actuator tests and coding writes exclude each other. */
     private fun canUseBus(): Boolean =
-        session != null && scanJob?.isActive != true && ecuJob?.isActive != true && !actuators.state.value.running && !coding.state.value.busy
+        session != null && scanJob?.isActive != true && ecuJob?.isActive != true && dtcJob?.isActive != true &&
+            !_state.value.terminalBusy && !actuators.state.value.running && !coding.state.value.busy
 
     fun readEcu() {
         val currentSession = session ?: return
@@ -1625,7 +1638,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         val currentSession = session ?: return
         val detail = _state.value.ecuDetail ?: return
         val record = ((detail.dtcs as? Readout.Value)?.value as? com.bod3.app.obd.uds.DtcReadResult.Read)?.records?.firstOrNull { it.code == code } ?: return
-        if (!canUseBus() || detail.ecu.protocol != EcuProtocol.UDS) return
+        if (!canUseBus() || !EcuWorkbench.canReadRecords(detail.ecu)) return
         ecuJob = viewModelScope.launch {
             updateEcu { d -> d.copy(records = d.records + (code to Readout.Loading)) }
             val records = readout("$code records") { EcuWorkbench(currentSession).readRecords(detail.ecu, record) }
@@ -1633,16 +1646,16 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Clears this ECU's fault memory (`14 FF FF FF`). Called only from the confirmation dialog. */
+    /** Clears only the exact dialect/group displayed in the confirmation dialog. */
     fun clearEcuDtcs() {
         val currentSession = session ?: return
         val ecu = _state.value.ecuDetail?.ecu ?: return
-        if (!canUseBus() || ecu.protocol != EcuProtocol.UDS) return
+        if (!canUseBus() || !EcuWorkbench.canClear(ecu)) return
         ecuJob = viewModelScope.launch {
             updateEcu { d -> d.copy(clear = ClearState.Running) }
             appendLog("Clearing fault memory of ${ecu.display} (${ecu.requestId}), confirmed by the user")
             val result = try {
-                when (val outcome = EcuWorkbench(currentSession).clear(ecu, ClearConfirmation.udsClear(ecu.target))) {
+                when (val outcome = EcuWorkbench(currentSession).clear(ecu, EcuWorkbench.confirmation(ecu))) {
                     UdsClearResult.Cleared -> ClearState.Done("Fault memory cleared.", true)
                     else -> ClearState.Done(outcome.display, false)
                 }

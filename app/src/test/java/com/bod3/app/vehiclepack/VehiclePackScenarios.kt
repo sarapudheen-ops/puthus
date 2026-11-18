@@ -46,7 +46,7 @@ object VehiclePackScenarios {
         val folder = Files.createTempDirectory("bod3-pack-test").toFile()
         try { block(folder) } finally { folder.deleteRecursively() }
     }
-    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false) {
+    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -55,7 +55,8 @@ object VehiclePackScenarios {
         }
         private val why = if (enabled) emptyList() else listOf("mapping_missing")
         val original = if (enabled) CatalogData(
-            ecus = listOf(EcuDefinition(name = "Synthetic ECU", requestId = "7E0", responseId = "7E8", sourceRecords = listOf("synthetic:ecu"))),
+            ecus = listOf(EcuDefinition(name = "Synthetic ECU", requestId = "7E0", responseId = "7E8", sourceRecords = listOf("synthetic:ecu"),
+                diagnostics = if (explicitReads) com.bod3.app.diagnostics.EcuReadDefinitions() else null)),
             pids = listOf(CustomPid("synthetic-rpm", "Synthetic RPM", "221234", "(A*256+B)/4", header = if (crossEcu) "7E1" else "7E0", responseHeader = "7E8", sourceRecords = listOf("synthetic:pid"))),
             actuators = listOf(ActuatorRecipe("synthetic-io", "Synthetic output", "Not vehicle data",
                 ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8"),
@@ -161,6 +162,12 @@ object VehiclePackScenarios {
 
     fun crossEcuDefinitionRejected() = temporary { cache ->
         val c = Fixture(enabled = true, crossEcu = true).client(cache)
+        val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
+        rejects { c.system(v, v.systems.single()) }
+    }
+
+    fun convertedEcuCannotSubstituteLegacyGenericReads() = temporary { cache ->
+        val c = Fixture(enabled = true, explicitReads = false).client(cache)
         val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
         rejects { c.system(v, v.systems.single()) }
     }

@@ -37,8 +37,12 @@ not fabricated engine/fuel/transmission catalog entries.
 The diagnostic overlay is closed to the selected loaded system: no global PID list, another system's
 ECUs, legacy actuator template or unrelated vehicle can fill an empty downloaded scope. Per-system live
 choices are stored separately. Resolved features route into the existing live graphs/recording and guarded
-actuator/coding controllers. DTC/freeze-frame, ECU-info and special-function actions remain disabled while
-their exact request/decoder mappings are unconverted. Enabling a screen is not semantic conversion.
+actuator/coding controllers. Explicit per-ECU identification/fault definitions can now route KWP (K-line
+or CAN) and UDS into the ECU workbench, including a separately confirmed, exact-group clear. Converted
+ECUs must provide an explicit definition set—even when empty—so this path cannot substitute generic
+UDS reads. See [the read-definition schema and safeguards](ecu-read-definitions.md). The real recovered
+DTC/ECU-info actions remain disabled while their mappings are unconverted; freeze-frame and special-function
+mappings are also unresolved. Enabling a screen is not semantic conversion.
 
 ## Authenticated bounded objects, not a full download
 

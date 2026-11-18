@@ -9,6 +9,7 @@ class VehiclePackTest {
     @Test fun onlyChosenPathIsFetchedAndThenWorksOffline() = VehiclePackScenarios.onlySelectedPathAndCache()
     @Test fun onlyPinnedConversionMayEnableWriteDefinitions() = VehiclePackScenarios.trustedConversionNotImportedFlags()
     @Test fun crossEcuDefinitionIsRejectedAtomically() = VehiclePackScenarios.crossEcuDefinitionRejected()
+    @Test fun convertedEcuCannotSubstituteLegacyGenericReads() = VehiclePackScenarios.convertedEcuCannotSubstituteLegacyGenericReads()
     @Test fun cancellationNeverInstallsPartialData() = VehiclePackScenarios.cancelledDownloadNeverInstalls()
     @Test fun downloadedPathAndSelectionAreOneAtomicNamesOnlyTransaction() = VehiclePackScenarios.manualPathIsOneAtomicNamesOnlyCommit()
     @Test fun systemScopeAndSavedLiveChoicesNeverFallBackOrCrossVehicles() = VehiclePackScenarios.closedSystemScopeNeverMixesGlobalPidsAndSelections()

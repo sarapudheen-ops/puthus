@@ -31,13 +31,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.bod3.app.datapack.DtcDescriptions
 import com.bod3.app.datapack.EcuProtocol
+import com.bod3.app.diagnostics.EcuWorkbench
 import com.bod3.app.obd.uds.DidResult
 import com.bod3.app.obd.uds.DtcReadResult
 import com.bod3.app.obd.uds.DtcRecordResult
 import com.bod3.app.ui.EcuDetailState
 import com.bod3.app.ui.Readout
 
-/** One ECU of the selected vehicle: identification (22 F1xx), fault codes (19 02) with records, and clear (14). */
+/** One selected ECU's explicit reads (KWP/UDS), or the existing legacy UDS/OBD workbench. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EcuDetailScreen(
@@ -63,7 +64,7 @@ fun EcuDetailScreen(
                     Column {
                         Text(ecu.display)
                         Text(
-                            "${ecu.requestId} → ${ecu.responseId} · ${if (ecu.is29Bit) "29-bit" else "11-bit"} · ${ecu.protocol.label}",
+                            "${ecu.requestId} → ${ecu.responseId} · ${if (ecu.link?.kLine != null) ecu.link.protocol.displayName else if (ecu.is29Bit) "29-bit CAN" else "11-bit CAN"} · ${ecu.protocol.label}",
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                         )
@@ -90,7 +91,7 @@ fun EcuDetailScreen(
                             result.records.forEach { record ->
                                 HorizontalDivider()
                                 DtcRow(record.code, descriptions, detail = record.statusText, onEditDescription = { editing = it })
-                                if (ecu.protocol == EcuProtocol.UDS) {
+                                if (EcuWorkbench.canReadRecords(ecu)) {
                                     when (val records = detail.records[record.code]) {
                                         null -> TextButton(onClick = { onReadRecords(record.code) }, enabled = connected && !busy) {
                                             Text("Read extended data and snapshot")
@@ -108,7 +109,7 @@ fun EcuDetailScreen(
                         }
                     }
                 }
-                if (ecu.protocol == EcuProtocol.UDS) {
+                if (EcuWorkbench.canClear(ecu)) {
                     OutlinedButton(
                         onClick = { confirmClear = true },
                         enabled = connected && !busy && detail.clear == null,
@@ -116,31 +117,30 @@ fun EcuDetailScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Clear fault memory of this ECU…") }
                 } else {
-                    Text("OBD-only ECU: clear its codes from the OBD fault code screen.", style = MaterialTheme.typography.bodySmall)
+                    Text(if (ecu.protocol == EcuProtocol.OBD) "OBD-only ECU: clear its codes from the OBD fault code screen."
+                        else "No documented clear request for this ECU. Clearing is disabled; no generic group is substituted.", style = MaterialTheme.typography.bodySmall)
                 }
             }
 
             SectionCard("Identification") {
-                if (detail.identification.isEmpty()) Text(if (detail.identificationLoading) "Reading…" else "Not read")
-                val answered = detail.identification.filter { it.result is DidResult.Value }
+                if (detail.identification.isEmpty()) Text(if (!EcuWorkbench.canReadIdentification(ecu)) "No resolved identification definitions; no generic identifiers were requested."
+                    else if (detail.identificationLoading) "Reading…" else "Not read")
                 val first = detail.identification.firstOrNull()
                 if (first?.result == DidResult.NoResponse && detail.identification.size == 1) {
                     Text("No reply. Check the IDs and that the ignition is on; the module may not be fitted.", color = MaterialTheme.colorScheme.error)
                 }
-                answered.forEach { reading -> InfoRow("${reading.label}\n${"%04X".format(reading.did)}", reading.display) }
-                val missing = detail.identification.size - answered.size
-                if (missing > 0 && answered.isNotEmpty()) {
-                    Text("$missing identifiers not supported by this module", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                detail.identification.forEach { reading ->
+                    InfoRow("${reading.label}\n${reading.request ?: "%04X".format(reading.did)}", reading.display)
                 }
                 if (detail.identificationLoading && detail.identification.isNotEmpty()) Text("Reading…", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
 
-    if (confirmClear) {
+    if (confirmClear && EcuWorkbench.canClear(ecu)) {
         ClearConfirmDialog(
             title = "Clear fault memory?",
-            target = "${ecu.display} (${ecu.requestId}), all DTC groups (14 FF FF FF)",
+            target = "${ecu.display} (${ecu.requestId}) · ${ecu.protocol.label} (${EcuWorkbench.clearRequestLabel(ecu)})",
             consequences = listOf("All stored fault codes of this module", "Their extended data and snapshots"),
             onConfirm = { confirmClear = false; onClear() },
             onDismiss = { confirmClear = false },

@@ -10,14 +10,17 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 | manualLeaves | 24662 |
 | manualLeavesWithSystemJoin | 24642 |
 | normalizedVehicleChoices | 4 |
+| systemEntryRecords | 1308 |
 | systems | 287030 |
+| systemsWithExactEntryJoin | 286149 |
 | unresolvedHierarchyChoices | 24658 |
-| unresolvedSourceRecords | 1054437 |
+| unresolvedSourceRecords | 1055750 |
 | Executable definitions | 0 |
 
 ## Exact per-item accounting
 
-- `unresolved-items.jsonl.gz`: every framed ECU row and declared live row, stable file/offset/slot/row ID, exact source bytes and all disabling reasons.
+- `unresolved-items.jsonl.gz`: every framed ECU row, declared live row, SYSTEMENTER entry and unclaimed entry-file span, stable file/offset/slot/row ID, exact source bytes and all disabling reasons.
+- `entry-index.json`: complete reader-backed regional function/selector directory, framed entry fields, binding IDs and every unclaimed byte span. Opaque header/timing values are not approved transport settings.
 - `vehicles.jsonl.gz`: every manual source leaf, full exact path, region/key, all system IDs and hierarchy reasons.
 - `systems.jsonl.gz`: every regional system record and converted/unresolved category counts. `null` means **unknown**, not zero or no source support.
 - The range bundle retains the same per-system pages. Selecting a vehicle does not fetch the full corpus.
@@ -34,6 +37,7 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 - `flash_unsupported`: Source system uses FLASH; flashing/download services are intentionally outside the app's write whitelist.
 - `missing_ecu_file`: Source ECU file could not be joined. No generic ECU or address is substituted.
 - `missing_function`: No regional FUNCDATA row joins this source function key.
+- `missing_system_entry`: No SYSTEMENTER entry exactly matches this region, function and complete selector byte; another selector or ECU is never substituted.
 - `missing_system_key`: The ordinary manual MENU leaf has no matching SYSLIST key in its source region.
 - `nonordinary_menu_task`: This manual leaf uses a special task, not the proven ordinary VehicleSystemScan key path.
 
@@ -88,14 +92,17 @@ The verified full regional SYSLIST excerpts give these exact joins (no low-nibbl
 | Total | 287,030 | 286,149 | 881 |
 
 These joins do not change the **zero executable definitions** figure. The accounting table above is
-from the previously published full conversion; new generated ledgers/container sizes must be observed
-in Actions before attributing them to the current revision.
+from the full conversion in [Actions run 44386793124](https://github.com/sarapudheen-ops/puthus/actions/runs/44386793124)
+for `cf78f092ed6d3bae53297503f86e6a4cf27c0866` (conversion check `135094772769`). The 1,313 additional
+unresolved records versus the earlier report are the 1,308 entry records and five unclaimed spans,
+not newly supported diagnostic features. This run also published 513 checksum-verified static reports;
+static disassembly and exact joins alone are not executable coverage.
 
 ## Evidence and current integration status
 
 This is the **full 1,307-ECU-source accounting**, published by
-[Actions run 44365323873](https://github.com/sarapudheen-ops/puthus/actions/runs/44365323873)
-for `d816c0211599ea1fc2365107eee7e2b28152d4ee`, not the earlier 47-BIN/12-ECU local sample.
+[Actions run 44386793124](https://github.com/sarapudheen-ops/puthus/actions/runs/44386793124)
+for `cf78f092ed6d3bae53297503f86e6a4cf27c0866`, not the earlier 47-BIN/12-ECU local sample.
 Download that run's `toyota-vehicle-packs` artifact for the exact ledgers named above.
 Large generated objects/ledgers remain outside Git and outside the APK.
 

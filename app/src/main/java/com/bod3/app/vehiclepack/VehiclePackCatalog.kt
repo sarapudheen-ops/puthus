@@ -147,6 +147,10 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         } else {
             require(vehicle.hierarchyResolved && why.isEmpty() && data.ecus.size == 1) { "No exact vehicle/ECU mapping" }
             val ecu = data.ecus.single()
+            val diagnostics = requireNotNull(ecu.diagnostics) { "Converted ECU must explicitly define (or disable) identification/fault reads" }
+            require(diagnostics.identification.all { it.read.sourceRecords.isNotEmpty() } &&
+                diagnostics.faults?.let { it.read.sourceRecords.isNotEmpty() && (it.clear == null || it.clear.sourceRecords.isNotEmpty()) } != false) { "Converted diagnostic reads lack source records" }
+            require(counts.getValue("ecuInfo").converted == diagnostics.identification.size)
             require(ecu.sourceRecords.isNotEmpty() && data.pids.all { it.sourceRecords.isNotEmpty() && it.target == ecu.target } &&
                 data.actuators.all { it.sourceRecords.isNotEmpty() && it.module.target == ecu.target } &&
                 data.coding.all { it.sourceRecords.isNotEmpty() && it.module.target == ecu.target }) { "Definitions are missing provenance or cross ECU boundaries" }
