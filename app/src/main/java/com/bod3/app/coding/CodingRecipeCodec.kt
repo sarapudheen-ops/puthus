@@ -213,6 +213,8 @@ data class CodingImportResult(val added: List<String>, val replaced: List<String
 /** Bundled coding packs plus the user's own recipes; user recipes replace bundled ones with the same id. */
 class CodingLibrary(private val bundled: List<CodingPack>, private val store: KeyValueStore) {
 
+    val bundledPacks: List<CodingPack> get() = bundled
+
     fun userPack(): CodingPack {
         val json = store.get(KEY_USER) ?: return empty()
         return CodingRecipeCodec.decode(json).pack ?: empty().also { store.put(KEY_USER_BROKEN, json) }

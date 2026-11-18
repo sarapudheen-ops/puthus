@@ -2,12 +2,18 @@ package com.bod3.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bod3.app.ui.screens.ActuatorRunScreen
+import com.bod3.app.ui.screens.AppSettingsScreen
+import com.bod3.app.ui.screens.DataPacksActions
+import com.bod3.app.ui.screens.DataPacksScreen
+import com.bod3.app.ui.screens.OnboardingScreen
 import com.bod3.app.ui.screens.ActuatorsScreen
 import com.bod3.app.ui.screens.CodingEditorScreen
 import com.bod3.app.ui.screens.CodingRunScreen
@@ -39,6 +45,19 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
     val log by viewModel.log.collectAsStateWithLifecycle()
     val actuatorState by viewModel.actuators.state.collectAsStateWithLifecycle()
     val codingState by viewModel.coding.state.collectAsStateWithLifecycle()
+    val appSettings by viewModel.appSettings.collectAsStateWithLifecycle()
+    val packsState by viewModel.packs.collectAsStateWithLifecycle()
+
+    val view = LocalView.current
+    DisposableEffect(appSettings.keepScreenOn) {
+        view.keepScreenOn = appSettings.keepScreenOn
+        onDispose { view.keepScreenOn = false }
+    }
+
+    if (!appSettings.onboardingDone) {
+        OnboardingScreen(onFinish = viewModel::finishOnboarding)
+        return
+    }
 
     // Permission or Bluetooth state may change while we are in the background (system settings).
     LifecycleResumeEffect(Unit) {
@@ -56,6 +75,9 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             onOpenSettings = viewModel::openSettings,
             onOpenVehicles = viewModel::openVehicles,
             onOpenGarage = viewModel::openGarage,
+            onOpenAppSettings = viewModel::openAppSettings,
+            onOpenDataPacks = viewModel::openDataPacks,
+            onShowIntro = viewModel::showOnboarding,
         )
 
         Screen.DASHBOARD -> {
@@ -82,6 +104,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onOpenGarage = viewModel::openGarage,
                     onOpenActuators = viewModel::openActuators,
                     onOpenCoding = viewModel::openCoding,
+                    onOpenDataPacks = viewModel::openDataPacks,
+                    onOpenAppSettings = viewModel::openAppSettings,
                 ),
             )
         }
@@ -95,6 +119,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onClear = viewModel::clearObdDtcs,
                 onDismissClear = viewModel::dismissClearResult,
                 onSaveDescription = viewModel::setDtcDescription,
+                units = appSettings.units,
             )
         }
 
@@ -148,6 +173,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onStopRecording = { viewModel.stopRecording() },
                     writeCsv = viewModel::writeRecordingCsv,
                 ),
+                units = appSettings.units,
             )
         }
 
@@ -407,6 +433,37 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onRename = if (state.savedProfile != null) ({ name: String -> viewModel.renameModule(module.address.requestHeader, name) }) else null,
                 )
             }
+        }
+
+        Screen.APP_SETTINGS -> {
+            BackHandler(onBack = viewModel::closeAppSettings)
+            AppSettingsScreen(
+                settings = appSettings,
+                onBack = viewModel::closeAppSettings,
+                onChange = viewModel::updateAppSettings,
+                onOpenDataPacks = viewModel::openDataPacks,
+                onOpenConnectionSettings = viewModel::openSettings,
+                onShowIntro = viewModel::showOnboarding,
+            )
+        }
+
+        Screen.DATA_PACKS -> {
+            BackHandler(onBack = viewModel::closeDataPacks)
+            DataPacksScreen(
+                state = packsState,
+                actions = DataPacksActions(
+                    onBack = viewModel::closeDataPacks,
+                    onImportText = viewModel::previewImport,
+                    onConfirmImport = viewModel::confirmImport,
+                    onCancelImport = viewModel::cancelImport,
+                    onDismissMessage = viewModel::dismissPacksMessage,
+                    writeData = viewModel::writeDataExport,
+                    writeMyActuators = viewModel::writeMyActuatorsExport,
+                    writeMyCoding = viewModel::writeMyCodingExport,
+                    writeBundled = viewModel::writeBundledExport,
+                    writeSample = viewModel::writeSampleExport,
+                ),
+            )
         }
     }
 }

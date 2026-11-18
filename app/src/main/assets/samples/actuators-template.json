@@ -1,0 +1,27 @@
+{
+  "format": "bod3-actuators",
+  "formatVersion": 1,
+  "id": "my-actuator-tests",
+  "name": "My bidirectional tests (template)",
+  "version": 1,
+  "author": "Your name",
+  "description": "A template for actuator test recipes. Start must be 2F <DID> 03 <state> (or 01/02) with stop 2F <DID> 00, or 31 01 <routine> with stop 31 02 <routine>. Confirm identifiers in the module's documentation before use.",
+  "recipes": [
+    {
+      "id": "my-output-test",
+      "name": "Output test (template)",
+      "description": "Switches one output for a few seconds.",
+      "module": { "name": "Central electronics", "address": "09", "requestId": "70E", "responseId": "778" },
+      "session": "03",
+      "start": "2F 05 10 03 01",
+      "stop": "2F 05 10 00",
+      "durationSeconds": 3,
+      "pollIntervalMs": 1000,
+      "preconditions": { "minVoltage": 12.0, "engine": "off", "ignitionOn": true, "speedZero": true },
+      "safety": ["Placeholder identifier: replace 0510 with the real one for your module."],
+      "applicability": { "makes": [], "models": [], "partNumbers": [], "softwareVersions": [] },
+      "source": "Template",
+      "verified": false
+    }
+  ]
+}

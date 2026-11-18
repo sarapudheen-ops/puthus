@@ -1,5 +1,7 @@
 package com.bod3.app.ui.screens
 
+import com.bod3.app.settings.UnitPreferences
+import com.bod3.app.settings.Units
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import com.bod3.app.R
 import com.bod3.app.android.ReportSharer
 import com.bod3.app.datapack.LiveDisplay
-import com.bod3.app.live.LiveValueDef
 import com.bod3.app.ui.LiveItem
 import com.bod3.app.ui.UiState
 import java.io.File
@@ -70,7 +71,7 @@ data class LiveActions(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LiveDataScreen(state: UiState, actions: LiveActions) {
+fun LiveDataScreen(state: UiState, actions: LiveActions, units: UnitPreferences = UnitPreferences()) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -156,6 +157,7 @@ fun LiveDataScreen(state: UiState, actions: LiveActions) {
                     item = item,
                     display = state.liveConfig.displayOf(item.def.key),
                     history = state.liveConfig.history[item.def.key].orEmpty(),
+                    units = units,
                     onDisplay = { actions.onDisplay(item.def.key, it) },
                 )
             }
@@ -164,8 +166,12 @@ fun LiveDataScreen(state: UiState, actions: LiveActions) {
 }
 
 @Composable
-private fun LiveTile(item: LiveItem, display: LiveDisplay, history: List<Double>, onDisplay: (LiveDisplay) -> Unit) {
+private fun LiveTile(item: LiveItem, display: LiveDisplay, history: List<Double>, units: UnitPreferences, onDisplay: (LiveDisplay) -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    // Values are recorded in SI units and converted for display only.
+    val shown = remember(item.def, units) { Units.display(item.def, units) }
+    val value = item.value?.let(shown::convert)
+    val shownHistory = remember(history, shown) { if (shown.conversion.isIdentity) history else history.map(shown::convert) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -187,13 +193,13 @@ private fun LiveTile(item: LiveItem, display: LiveDisplay, history: List<Double>
                 }
             }
             when (display) {
-                LiveDisplay.GAUGE -> Gauge(item.value, item.def, Modifier.fillMaxWidth().aspectRatio(2f).padding(end = 12.dp))
-                LiveDisplay.GRAPH -> Graph(history, item.def, Modifier.fillMaxWidth().height(120.dp).padding(end = 12.dp))
+                LiveDisplay.GAUGE -> Gauge(value, shown.min, shown.max, Modifier.fillMaxWidth().aspectRatio(2f).padding(end = 12.dp))
+                LiveDisplay.GRAPH -> Graph(shownHistory, shown.min, shown.max, Modifier.fillMaxWidth().height(120.dp).padding(end = 12.dp))
                 LiveDisplay.VALUE -> {}
             }
-            Text(text = item.formatted ?: "—", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            Text(text = value?.let(shown::format) ?: "—", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                text = if (item.value != null) item.def.unit else item.status ?: "Waiting…",
+                text = if (value != null) shown.unit else item.status ?: "Waiting…",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -203,15 +209,15 @@ private fun LiveTile(item: LiveItem, display: LiveDisplay, history: List<Double>
     }
 }
 
-private fun fraction(value: Double, def: LiveValueDef): Float {
-    val span = def.max - def.min
+private fun fraction(value: Double, min: Double, max: Double): Float {
+    val span = max - min
     if (span <= 0.0) return 0f
-    return ((value - def.min) / span).coerceIn(0.0, 1.0).toFloat()
+    return ((value - min) / span).coerceIn(0.0, 1.0).toFloat()
 }
 
-/** Half-circle gauge from [LiveValueDef.min] to [LiveValueDef.max]. */
+/** Half-circle gauge from [min] to [max]. */
 @Composable
-private fun Gauge(value: Double?, def: LiveValueDef, modifier: Modifier) {
+private fun Gauge(value: Double?, min: Double, max: Double, modifier: Modifier) {
     val track = MaterialTheme.colorScheme.surfaceVariant
     val bar = MaterialTheme.colorScheme.primary
     Canvas(modifier) {
@@ -221,22 +227,22 @@ private fun Gauge(value: Double?, def: LiveValueDef, modifier: Modifier) {
         val arcSize = Size(diameter, diameter)
         drawArc(track, 180f, 180f, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
         if (value != null) {
-            drawArc(bar, 180f, 180f * fraction(value, def), useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+            drawArc(bar, 180f, 180f * fraction(value, min, max), useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
         }
     }
 }
 
 /** Line graph of the recent samples, scaled to min/max (widened if values fall outside). */
 @Composable
-private fun Graph(history: List<Double>, def: LiveValueDef, modifier: Modifier) {
+private fun Graph(history: List<Double>, min: Double, max: Double, modifier: Modifier) {
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
     Canvas(modifier) {
         drawLine(grid, Offset(0f, size.height), Offset(size.width, size.height))
         drawLine(grid, Offset(0f, 0f), Offset(size.width, 0f))
         if (history.size < 2) return@Canvas
-        val low = minOf(def.min, history.min())
-        val high = maxOf(def.max, history.max())
+        val low = minOf(min, history.min())
+        val high = maxOf(max, history.max())
         val span = (high - low).takeIf { it > 0 } ?: 1.0
         val step = size.width / (history.size - 1)
         val path = Path()

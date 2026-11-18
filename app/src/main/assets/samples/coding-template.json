@@ -1,0 +1,45 @@
+{
+  "format": "bod3-coding",
+  "formatVersion": 1,
+  "id": "my-coding",
+  "name": "My coding recipes (template)",
+  "version": 1,
+  "author": "Your name",
+  "description": "A template for coding recipes: a long-coding bit and an adaptation value. Positions are placeholders; confirm them for your module and part number before writing.",
+  "recipes": [
+    {
+      "id": "my-long-coding-bit",
+      "name": "Long-coding bit (template)",
+      "description": "Turns one feature on or off.",
+      "module": { "name": "Central electronics", "address": "09", "requestId": "70E", "responseId": "778" },
+      "method": "long_coding",
+      "did": "0600",
+      "byte": 0,
+      "mask": "01",
+      "values": [ { "value": 0, "label": "Off" }, { "value": 1, "label": "On" } ],
+      "session": "03",
+      "preconditions": { "minVoltage": 12.0, "allowEngineRunning": false },
+      "applicability": { "makes": [], "models": [], "partNumbers": [], "softwareVersions": [] },
+      "source": "Template",
+      "notes": "Replace byte and mask.",
+      "verified": false
+    },
+    {
+      "id": "my-adaptation",
+      "name": "Adaptation value (template)",
+      "description": "A numeric value with scaling.",
+      "module": { "name": "Central electronics", "address": "09", "requestId": "70E", "responseId": "778" },
+      "method": "adaptation",
+      "did": "0100",
+      "byte": 0,
+      "length": 1,
+      "min": 0,
+      "max": 100,
+      "factor": 1,
+      "unit": "%",
+      "session": "03",
+      "source": "Template",
+      "verified": false
+    }
+  ]
+}

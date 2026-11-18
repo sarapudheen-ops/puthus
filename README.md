@@ -285,6 +285,37 @@ version mismatch and override, a wrong security key, a negative response to `2E`
 write (before and after the module applied it), read-back mismatch, a module that silently ignores the
 write, a value that changed since the backup, confirmation reuse/expiry, and the screen controller.
 
+## Features (M6): data packs and polish
+
+- **One import for every file** (Data packs screen, *Choose file…*): data packs (PIDs, vehicle ECU
+  lists, module names, DTC texts), bidirectional test recipes, coding recipes and saved vehicle
+  profiles. The type is detected from the `"format"` field (`bod3-datapack`, `bod3-actuators`,
+  `bod3-coding`, `bod3-vehicle-profile`), with a fallback for older files without it.
+- **Validated before anything is saved.** The whole file is checked first; a preview lists what it
+  contains (and how many items replace existing ones), warnings (e.g. unverified recipes) and every
+  problem with its location – e.g. `Not valid JSON at line 3, column 9: … (often a missing comma,
+  quote or bracket just before this point)` or `pids[0] (bad): request 2E… is not a read service`.
+  A file with any problem imports nothing. Files over 2 MB are refused.
+- **Merging:** imported items with the same id (PID id, vehicle make+model, module address, DTC code,
+  recipe id) replace the user's own; bundled packs are never changed.
+- **Export through the share sheet:** my custom PIDs, my vehicles and ECU lists, all my data as one
+  data pack, my test recipes, my coding recipes, and any bundled pack. Profiles are exported from
+  Saved vehicles.
+- **Templates** (`assets/samples`): annotated data pack, actuator and coding files showing every
+  field, shareable from the app as starting points. Unit tests validate them.
+- **App settings:** theme (system / light / dark), keep screen on, and display units – temperature
+  (°C/°F), distance-based units (km, km/h, L, L/h, Nm ↔ mi, mph, US gal, gal/h, lb·ft) and pressure
+  (kPa / bar / psi). Units convert live data (values, gauges, graphs) and freeze frames for display
+  only; CSV recordings, data packs and coding values stay in the original metric units.
+- **Onboarding** on first start: pairing the adapter, permissions, read-only by default vs Expert
+  mode, and the safety rules for tests and coding. It can be shown again from App settings.
+- **Errors that explain themselves** (`ErrorExplainer`): Bluetooth failures (adapter unreachable,
+  link dropped, permission), adapter replies (`UNABLE TO CONNECT`, `BUS INIT … ERROR`, `CAN ERROR`,
+  `NO DATA`, `?`, `BUFFER FULL`, `LV RESET`, …), timeouts and UDS negative responses (0x22
+  conditions not correct, 0x33/0x35/0x36 security, 0x31, 0x7F …) are mapped to the likely cause and
+  what to do. Used for connection and reconnect failures, unavailable readouts and protocol
+  detection.
+
 ## Architecture
 
 ```
