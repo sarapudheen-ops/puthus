@@ -93,12 +93,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      checks: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: app-debug-apk
           path: .local/device/app
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: app-debug-device-tests
           path: .local/device/tests
@@ -113,15 +116,32 @@ jobs:
           api-level: 24
           target: default
           arch: x86_64
+          disk-size: 2048M
           disable-animations: true
           script: |
             mkdir -p .local/device/reports
-            adb install .local/device/app/app-debug.apk
-            adb install .local/device/tests/app-debug-androidTest.apk
+            adb install -r -t .local/device/app/app-debug.apk
+            adb install -r -t .local/device/tests/app-debug-androidTest.apk
             adb shell am instrument -w -r -e class com.bod3.app.source.ToyotaSourceInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
             adb logcat -d > .local/device/reports/logcat.txt
             grep -Eq '^OK \([1-9][0-9]* tests?\)' .local/device/reports/instrumentation.txt
             ! grep -q 'FAILURES!!!' .local/device/reports/instrumentation.txt
+      - name: Publish Android smoke evidence for API inspection
+        if: always() && hashFiles('.local/device/reports/instrumentation.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.local/device/reports/instrumentation.txt').read_bytes()
+          text = source[:48000].decode('utf-8', errors='replace')
+          Path('.local/device/reports/summary.md').write_text('Android 24 actual-APK, complete-source-library smoke tests.\n\n```text\n' + text + '\n```\n')
+          PY
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name='Toyota Android 24 source smoke evidence' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion='${{ job.status }}' \
+            -f 'output[title]=Android SQLite / packaged full corpus' \
+            -F 'output[summary]=@.local/device/reports/summary.md'
       - name: Upload Android SQLite smoke results
         if: always()
         uses: actions/upload-artifact@v7

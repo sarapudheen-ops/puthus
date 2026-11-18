@@ -93,7 +93,7 @@ class SourceBrowser(private val db: SourceSql, private val manifest: SourceManif
         if (parent != null && (!loc.manualOnly || parent != 0L)) links.add(0, SourceLink("↑ Parent source menu", SourceLocation.Menu(parent, loc.manualOnly)))
         return paged(req, rows, "Vehicle source menu", MENU_WARNING,
             fields = listOf(node.field("path", "Source path"), SourceField("Node offset (not vehicle key)", id.toString()),
-                SourceField("Header / down-task word", "${node.text("header_hex")} / ${node.number("down_task")}")) +
+                SourceField("Header / opaque u16 @34", "${node.text("header_hex")} / ${node.number("word34")}")) +
                 listOfNotNull(edge?.let { SourceField("Incoming saved parameters (opaque)", "flags=${it.number("flags")}, tag=${it.number("tag")}, ${it.text("parameters")}") }),
             links = links, search = "Search all ${if (loc.manualOnly) "manual " else ""}paths: Innova, engine, date…") { row ->
             SourceRow(row.number("id").toString(), sourceDisplay(row.text("title")),

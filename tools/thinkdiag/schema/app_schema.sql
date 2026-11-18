@@ -16,7 +16,7 @@ CREATE TABLE text_record (library TEXT NOT NULL, id TEXT NOT NULL, value TEXT, r
  PRIMARY KEY(library,id)) WITHOUT ROWID;
 CREATE TABLE menu (id INTEGER PRIMARY KEY, parent INTEGER, ordinal INTEGER NOT NULL, title_id TEXT NOT NULL,
  title TEXT NOT NULL, path TEXT NOT NULL, manual INTEGER NOT NULL, children INTEGER NOT NULL,
- down_task INTEGER NOT NULL, header_hex TEXT NOT NULL);
+ word34 INTEGER NOT NULL, header_hex TEXT NOT NULL);
 CREATE INDEX menu_parent ON menu(parent,ordinal);
 CREATE TABLE menu_edge (parent INTEGER NOT NULL, ordinal INTEGER NOT NULL, target INTEGER NOT NULL,
  flags INTEGER NOT NULL, tag INTEGER NOT NULL, parameters TEXT NOT NULL, PRIMARY KEY(parent,ordinal)) WITHOUT ROWID;
