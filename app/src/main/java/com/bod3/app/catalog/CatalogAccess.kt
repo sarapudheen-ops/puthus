@@ -4,11 +4,17 @@ import com.bod3.app.actuator.ActuatorEntry
 import com.bod3.app.coding.CodingEntry
 import com.bod3.app.datapack.CustomPid
 import com.bod3.app.datapack.DtcDescriptions
+import com.bod3.app.datapack.EcuDefinition
+import com.bod3.app.datapack.EcuProtocol
 import com.bod3.app.datapack.ModuleNameEntry
 
 /** Views for existing diagnostics/controllers. Only manual selection supplies ECU/connection data. */
 class CatalogAccess(private val catalog: CatalogRepository) {
     fun customPids(): List<CustomPid> = effective().pids
+
+    /** Profile links and the legacy library NEVER choose probe targets. Enhanced KWP is not UDS. */
+    fun scanEcus(manual: List<EcuDefinition> = emptyList()): List<EcuDefinition> =
+        (manual + catalog.selected()?.data?.ecus.orEmpty()).filter { it.protocol != EcuProtocol.KWP }.distinctBy { it.key }
 
     /** Global legacy PIDs and explicit templates are not a fallback vehicle or adapter configuration. */
     fun effective(): CatalogData = catalog.pack().library.overlay(catalog.selected()?.data ?: CatalogData())
@@ -34,8 +40,8 @@ class CatalogAccess(private val catalog: CatalogRepository) {
             .sortedWith(compareBy({ it.recipe.module.name.lowercase() }, { it.recipe.name.lowercase() }))
     }
 
-    fun moduleNames(): List<Pair<ModuleNameEntry, String>> {
-        val selected = catalog.selected()
+    fun moduleNames(scope: ResolvedCatalog? = catalog.selected()): List<Pair<ModuleNameEntry, String>> {
+        val selected = scope
         return selected?.data?.moduleNames.orEmpty().map { it to (selected?.origins?.get("moduleNames:${CatalogData.moduleKey(it)}") ?: "Catalog") } +
             catalog.pack().library.moduleNames.map { it to "Legacy module names" }
     }

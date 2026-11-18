@@ -175,4 +175,14 @@ class CatalogValidationTest {
     @Test fun sectionsCannotSilentlyChangeTheReadOnlyServicePolicy() {
         assertTrue(rejected { CatalogCodec.dataOrThrow(JsonWriter.write(mapOf("pids" to listOf(mapOf("id" to "write", "name" to "bad", "request" to "2701", "formula" to "A"))))) }.contains("read service"))
     }
+
+    @Test fun invalidDeepParentChainsHaveBoundedTraversalAndRejectTheWholePack() {
+        val chain = (0 until 200).map { i -> CatalogNode("chain-$i", if (i == 0) null else "chain-${i - 1}", CatalogLevel.MODEL, "Invalid $i") }
+        val pack = CatalogPack("bad-chain", "Bad graph", nodes = chain)
+        val tree = CatalogTree(pack)
+        assertTrue(tree.path("chain-199").size <= CatalogLevel.entries.size)
+        assertNull(tree.resolve("chain-199"))
+        assertFalse(CatalogCodec.decode(CatalogCodec.encode(pack)).isValid)
+    }
+
 }

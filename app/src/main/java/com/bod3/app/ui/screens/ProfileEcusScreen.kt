@@ -60,6 +60,7 @@ fun ProfileEcusScreen(
 ) {
     val profile = state.savedProfile
     val extras = state.profileExtras
+    val editable = profile != null && state.profileExtrasError == null
     var editing by remember { mutableStateOf<EcuDefinition?>(null) }
     var editingKey by remember { mutableStateOf<String?>(null) }
     var deleting by rememberSaveable { mutableStateOf<String?>(null) }
@@ -77,7 +78,7 @@ fun ProfileEcusScreen(
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                 actions = {
-                    IconButton(onClick = { editing = EcuDefinition(null, "", "", ""); editingKey = null }, enabled = profile != null) {
+                    IconButton(onClick = { editing = EcuDefinition(null, "", "", ""); editingKey = null }, enabled = editable) {
                         Icon(Icons.Filled.Add, contentDescription = "Add ECU")
                     }
                 },
@@ -89,26 +90,30 @@ fun ProfileEcusScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            state.profileExtrasError?.let { error -> item {
+                SectionCard("Saved additions need recovery") { Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            } }
             item {
                 SectionCard("Saved catalog link (manual)") {
                     Text("A link is metadata, not a VIN-driven selection. Loading this profile never applies its connection settings or ECU probe list. Select a catalog vehicle explicitly before connecting.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(packVehicle?.title ?: if (extras.catalogNodeId != null) "Linked catalog level is missing; the saved link is retained" else "No catalog link or manual selection")
-                    TextButton(onClick = onOpenCatalog) { Text("Browse / choose a catalog link…") }
-                    if (state.catalog.selectedId != null) TextButton(onClick = { onSelectVehicle(state.catalog.selectedId) }) { Text("Link the current manual selection") }
-                    if (extras.catalogNodeId != null || extras.vehicleKey != null) TextButton(onClick = { onSelectVehicle(null) }) { Text("Remove saved link") }
-                    if (packVehicle != null && packVehicle.data.ecus.isNotEmpty()) OutlinedButton(onClick = onCopyFromPack) { Text("Copy its ${packVehicle.data.ecus.size} ECUs into this profile's manual list") }
+                    TextButton(onClick = onOpenCatalog, enabled = editable) { Text("Browse / choose a catalog link…") }
+                    if (state.catalog.selectedId != null) TextButton(onClick = { onSelectVehicle(state.catalog.selectedId) }, enabled = editable) { Text("Link the current manual selection") }
+                    if (extras.catalogNodeId != null || extras.vehicleKey != null) TextButton(onClick = { onSelectVehicle(null) }, enabled = editable) { Text("Remove saved link") }
+                    if (packVehicle != null && packVehicle.data.ecus.isNotEmpty()) OutlinedButton(onClick = onCopyFromPack, enabled = editable) { Text("Copy its ${packVehicle.data.ecus.size} ECUs into this profile's manual list") }
                 }
             }
             item {
                 Text(
                     "Manual ECUs are probed directly by every scan with their exact reply ID, so modules outside the scanned " +
-                        "ranges or with unusual reply IDs are found. Turn on Quick scan to probe only this list.",
+                        "ranges or with unusual reply IDs are found. Turn on Quick scan to probe only this list. " +
+                        "KWP entries are retained but excluded from the direct CAN/UDS scan; enhanced KWP requests are not guessed.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (extras.manualEcus.isEmpty()) item { Text("No manual ECUs. Tap + to add one.") }
+            if (extras.manualEcus.isEmpty() && state.profileExtrasError == null) item { Text("No manual ECUs. Tap + to add one.") }
             items(extras.manualEcus, key = { it.key }) { ecu ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -163,12 +163,13 @@ that protocol attempt). Profiles can add any extra AT/ST/VT commands (e.g. `STCS
   names, shared through the share sheet. Import validates the whole file first and lists every problem
   with its JSON path (nothing is changed on error); an existing VIN is only replaced after confirmation.
 - **Manual ECU list per vehicle** (*Modules → ECUs*): add, edit and remove ECUs (name, address code,
-  request/response ID, UDS/OBD/KWP, notes) or explicitly copy a linked catalog level's list. Every scan probes listed ECUs
+  request/response ID, UDS/OBD/KWP, notes) or explicitly copy a linked catalog level's list. CAN scans probe supported listed ECUs
   directly with their exact reply ID (`3E 00`, `22 F190`, `01 00`), so modules outside `700–7FF` or with
   unusual reply IDs are found; a 29-bit listed ECU adds the 29-bit pass on its own. *Quick scan* probes only
-  the listed ECUs.
+  the listed ECUs. KWP definitions are retained but are not misrouted through enhanced UDS reads or the
+  direct CAN/UDS probe list; documented enhanced KWP definitions are not bundled.
 - **Module naming**, in priority order: your name for the module on this vehicle (*Module → Rename*), the
-  manual ECU list, the data-pack vehicle chosen for this VIN (or the globally selected one), the module's own
+  manual ECU list, the explicitly selected catalog (or a saved metadata link when browsing offline), the module's own
   name (`F197`), data-pack address names for the vehicle's make (`moduleNames`, e.g. the bundled VW-group
   addresses for VW/Audi/Skoda/SEAT/Cupra), the OBD ECU name (`09 0A`) and standard OBD addresses. The module
   list shows where each name came from.

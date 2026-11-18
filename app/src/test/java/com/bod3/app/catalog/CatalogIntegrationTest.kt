@@ -10,6 +10,8 @@ import com.bod3.app.datapack.DataPack
 import com.bod3.app.datapack.DataPackCodec
 import com.bod3.app.datapack.DataPackStore
 import com.bod3.app.datapack.DtcGroup
+import com.bod3.app.datapack.EcuProtocol
+import com.bod3.app.datapack.ModuleNameEntry
 import com.bod3.app.datapack.VehicleDefinition
 import com.bod3.app.packs.PackKind
 import com.bod3.app.packs.PackTransfer
@@ -179,6 +181,33 @@ class CatalogIntegrationTest {
         s.coding.deleteUserRecipe("test-coding")
         assertEquals("Test coding", s.coding.entry("test-coding")!!.recipe.name)
         assertFalse(s.coding.entry("test-coding")!!.isUser)
+    }
+
+    @Test fun probeListsUseOnlyManualSelectionAndExplicitManualEcusNeverTheLibraryOrProfileLink() {
+        val kwp = brakes.copy(protocol = EcuProtocol.KWP)
+        val s = Setup(fixture(generationNode.copy(data = CatalogData(ecus = listOf(engine, kwp))))
+            .copy(library = CatalogData(ecus = listOf(engine), connection = CatalogConnection(mapOf("requestTimeoutMs" to 9000)))))
+        assertTrue(s.access.scanEcus().isEmpty())
+        val linked = s.repo.migrateProfile(com.bod3.app.profile.ProfileExtras(catalogNodeId = "generation"))
+        assertEquals("generation", linked.catalogNodeId)
+        assertNull(s.repo.selected())
+        assertTrue(s.access.scanEcus().isEmpty())
+        assertEquals(com.bod3.app.obd.connection.ConnectionProfile.DEFAULT, s.repo.connection(com.bod3.app.obd.connection.ConnectionProfile.DEFAULT))
+        s.repo.select("variant")
+        assertEquals(listOf(engine), s.access.scanEcus())
+        val manual = engine.copy(name = "Saved manual override", responseId = "7E9")
+        assertEquals(listOf(manual), s.access.scanEcus(listOf(manual, kwp)))
+        s.repo.select(null)
+        assertEquals(listOf(manual), s.access.scanEcus(listOf(manual)))
+    }
+
+    @Test fun offlineLinkedModuleNamesAreMetadataOnlyAndCannotActivateConfiguration() {
+        val name = ModuleNameEntry("70E", "Named offline module")
+        val s = Setup(fixture(generationNode.copy(data = CatalogData(moduleNames = listOf(name), ecus = listOf(engine)))))
+        assertTrue(s.access.moduleNames().isEmpty())
+        assertEquals(listOf(name), s.access.moduleNames(s.repo.tree().resolve("variant")).map { it.first })
+        assertNull(s.repo.selected())
+        assertTrue(s.access.scanEcus().isEmpty())
     }
 
     @Test fun connectionAndExpertSettingsCannotBeImportedAsCatalogPermissions() {

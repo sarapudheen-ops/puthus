@@ -12,8 +12,6 @@ import com.bod3.app.catalog.CatalogNode
 import com.bod3.app.catalog.CatalogRepository
 import com.bod3.app.catalog.CatalogTree
 import com.bod3.app.android.AssetCatalog
-import com.bod3.app.profile.JsonWriter
-import com.bod3.app.profile.MiniJson
 import java.util.UUID
 import com.bod3.app.errors.ErrorExplainer
 import com.bod3.app.packs.DataExport
@@ -264,6 +262,8 @@ data class UiState(
     val garageReturn: Screen = Screen.DEVICES,
     /** Manual ECUs, module names and data-pack vehicle of the loaded profile. */
     val profileExtras: com.bod3.app.profile.ProfileExtras = com.bod3.app.profile.ProfileExtras(),
+    /** An unreadable extras document is never treated as a successful empty/manual-list reset. */
+    val profileExtrasError: String? = null,
     /** Names modules from user names, manual ECUs and data packs; null until data is loaded. */
     val moduleNamer: com.bod3.app.profile.ModuleNamer? = null,
     /** ECUs probed directly by a scan: manual list plus data-pack vehicle ECUs. */
@@ -284,7 +284,7 @@ data class UiState(
     val selectedModule: ModuleReport? get() = modules.firstOrNull { it.address.key == selectedModuleKey }
 
     val canScan: Boolean
-        get() = (protocol as? Readout.Value)?.value?.protocol?.isCan == true && !scan.running
+        get() = (protocol as? Readout.Value)?.value?.protocol?.isCan == true && !scan.running && profileExtrasError == null
 }
 
 class ObdViewModel(application: Application) : AndroidViewModel(application) {
@@ -385,6 +385,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private var appSettingsReturn: Screen = Screen.DEVICES
     private var packsReturn: Screen = Screen.DEVICES
     private var importPreviewGeneration = 0
+    private var importApplying = false
 
     private val profiles: VehicleProfileService by lazy {
         VehicleProfileService(
@@ -399,12 +400,15 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     init {
         runCatching {
             require(catalogErrors.isEmpty()) { catalogErrors.joinToString("\n") }
-            // Refuse migration if a legacy preference is unreadable. Original keys are never cleared.
-            preferences.get(DataPackStore.KEY_USER_PACK)?.let { com.bod3.app.datapack.DataPackCodec.decodeOrThrow(it) }
-            preferences.get(ActuatorLibrary.KEY_USER)?.let { com.bod3.app.actuator.ActuatorRecipeCodec.decodeOrThrow(it) }
-            preferences.get(CodingLibrary.KEY_USER)?.let { com.bod3.app.coding.CodingRecipeCodec.decodeOrThrow(it) }
-            catalog.migrateLegacy(dataStore.userPack(), dataStore.selectedVehicleKey,
-                ActuatorLibrary(bundledActuators.packs, preferences).userPack(), CodingLibrary(bundledCoding.packs, preferences).userPack())
+            if (!catalog.state().migrated) {
+                // Refuse first migration if a legacy preference is unreadable. Original keys are never cleared.
+                // Once migrated, retained legacy preferences are no longer the active catalog's data source.
+                preferences.get(DataPackStore.KEY_USER_PACK)?.let { com.bod3.app.datapack.DataPackCodec.decodeOrThrow(it) }
+                preferences.get(ActuatorLibrary.KEY_USER)?.let { com.bod3.app.actuator.ActuatorRecipeCodec.decodeOrThrow(it) }
+                preferences.get(CodingLibrary.KEY_USER)?.let { com.bod3.app.coding.CodingRecipeCodec.decodeOrThrow(it) }
+                catalog.migrateLegacy(dataStore.userPack(), dataStore.selectedVehicleKey,
+                    ActuatorLibrary(bundledActuators.packs, preferences).userPack(), CodingLibrary(bundledCoding.packs, preferences).userPack())
+            }
         }.onFailure { catalogErrors = catalogErrors + "Catalog migration: ${it.message}"; appendLog("Catalog migration: ${it.message}") }
         refreshBluetooth()
         refreshSettings()
@@ -1339,20 +1343,27 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     /** VINs load observations only. A saved catalog link may name offline observations, never configure a link. */
     private fun refreshNaming() {
         val current = _state.value
-        val extras = current.savedProfile?.vin?.let { vin -> runCatching { extrasStore.get(vin) }.onFailure { appendLog("Profile extras: ${it.message}") }.getOrNull() } ?: ProfileExtras()
+        var extrasError: String? = null
+        val extras = current.savedProfile?.vin?.let { vin ->
+            runCatching { extrasStore.get(vin) }.getOrElse {
+                extrasError = "Saved profile additions could not be read. The original is preserved; manual-list changes and scans are paused. ${it.message}"
+                appendLog("Profile extras: ${it.message}")
+                ProfileExtras()
+            }
+        } ?: ProfileExtras()
         val tree = current.catalog.tree
         val selected = tree.resolve(current.catalog.selectedId)
         val linked = tree.resolve(extras.catalogNodeId)
         val naming = selected ?: linked.takeIf { current.offline }
         val namer = ModuleNamer(userNames = extras.moduleNames, manualEcus = extras.manualEcus,
             vehicleEcus = naming?.data?.ecus.orEmpty(), vehicleTitle = naming?.title,
-            packNames = runCatching { catalogAccess.moduleNames() }.getOrElse { emptyList() },
+            packNames = runCatching { catalogAccess.moduleNames(naming) }.getOrElse { emptyList() },
             make = selected?.make ?: current.savedProfile?.description?.make?.let(CatalogIds::makeName))
         // Old per-VIN links never supply probe targets or connection settings. Manual saved ECUs are retained.
-        val listed = (extras.manualEcus + selected?.data?.ecus.orEmpty()).map { it.moduleAddress() }.distinctBy { it.requestHeader }
+        val listed = runCatching { catalogAccess.scanEcus(extras.manualEcus).map { it.moduleAddress() } }.getOrElse { emptyList() }
         val referenceMake = selected?.make ?: DtcReferenceContext.make(current.savedProfile?.description?.make, linked?.make)
         val descriptions = runCatching { catalogAccess.descriptions(referenceMake) }.getOrElse { com.bod3.app.datapack.DtcDescriptions(emptyMap(), emptyList()) }
-        _state.update { it.copy(profileExtras = extras, moduleNamer = namer, listedModules = listed,
+        _state.update { it.copy(profileExtras = extras, profileExtrasError = extrasError, moduleNamer = namer, listedModules = listed,
             data = it.data.copy(descriptions = descriptions, dtcReferenceMake = referenceMake)) }
     }
 
@@ -1672,20 +1683,21 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Data packs: import / export --------------------------------------------------------------
 
     fun openDataPacks() {
-        if (coding.state.value.busy || actuators.state.value.running) return
+        if (importApplying || coding.state.value.busy || actuators.state.value.running) return
         pauseLiveData()
+        importPreviewGeneration++
         _state.update {
             if (it.screen != Screen.DATA_PACKS) packsReturn = it.screen
             it.copy(screen = Screen.DATA_PACKS)
         }
-        _packs.update { it.copy(message = null, preview = null) }
+        _packs.update { it.copy(message = null, preview = null, importing = false) }
         refreshPacks()
     }
 
     fun closeDataPacks() {
-        if (_packs.value.importing) return
+        if (importApplying) return
         importPreviewGeneration++
-        _packs.update { it.copy(preview = null, message = null) }
+        _packs.update { it.copy(preview = null, message = null, importing = false) }
         _state.update { it.copy(screen = packsReturn) }
     }
 
@@ -1702,12 +1714,17 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Checks a chosen file completely and shows what it would import. Profiles go to Saved vehicles. */
-    fun previewRecipeImport(text: String) { openDataPacks(); previewImport(text) }
+    fun previewRecipeImport(text: String) {
+        if (importApplying || coding.state.value.busy || actuators.state.value.running) return
+        openDataPacks()
+        previewImport(text)
+    }
 
     fun previewImport(text: String) {
+        if (importApplying) return
         val generation = ++importPreviewGeneration
+        _packs.update { it.copy(importing = true, message = null, preview = null) }
         viewModelScope.launch {
-            _packs.update { it.copy(importing = true, message = null) }
             val preview = withContext(Dispatchers.Default) {
                 runCatching { packTransfer.preview(text) }.getOrElse { error -> com.bod3.app.packs.ImportPreview(null, "Cannot import this file", errors = listOf(error.message ?: "Invalid file")) }
             }
@@ -1723,33 +1740,41 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importFailed(message: String) {
+        if (importApplying) return
+        importPreviewGeneration++
         _packs.update { it.copy(importing = false, preview = com.bod3.app.packs.ImportPreview(null, "Cannot import this file", errors = listOf(message))) }
     }
 
     fun confirmImport() {
-        if (_packs.value.importing) return
+        if (_packs.value.importing || importApplying) return
         val preview = _packs.value.preview ?: return
         if (!preview.canImport) return
+        importApplying = true
+        _packs.update { it.copy(importing = true) }
         viewModelScope.launch {
-            _packs.update { it.copy(importing = true) }
-            val message = try {
-                requireCatalogEditable()
-                withContext(Dispatchers.IO) { packTransfer.apply(preview) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                "Import failed: ${e.message}"
+            try {
+                val message = try {
+                    requireCatalogEditable()
+                    withContext(Dispatchers.IO) { packTransfer.apply(preview) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    "Import failed: ${e.message}"
+                }
+                appendLog("Import ${preview.title}: $message")
+                runCatching {
+                    refreshData(); actuators.refresh(); coding.refresh(); refreshPacks()
+                }.onFailure { appendLog("Refresh after import: ${it.message}") }
+                _packs.update { it.copy(preview = null, message = message) }
+            } finally {
+                importApplying = false
+                _packs.update { it.copy(importing = false) }
             }
-            appendLog("Import ${preview.title}: $message")
-            refreshData()
-            actuators.refresh()
-            coding.refresh()
-            _packs.update { it.copy(importing = false, preview = null, message = message) }
-            refreshPacks()
         }
     }
 
     fun cancelImport() {
+        if (importApplying) return
         importPreviewGeneration++
         _packs.update { it.copy(preview = null, importing = false) }
     }

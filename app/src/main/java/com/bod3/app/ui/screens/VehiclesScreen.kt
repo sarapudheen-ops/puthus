@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.bod3.app.catalog.CatalogLevel
 import com.bod3.app.catalog.CatalogNode
 import com.bod3.app.datapack.EcuDefinition
+import com.bod3.app.datapack.EcuProtocol
 import com.bod3.app.catalog.CatalogSection
 import com.bod3.app.ui.UiState
 import java.io.File
@@ -157,6 +158,9 @@ fun VehiclesScreen(state: UiState, actions: CatalogActions) {
                     }
                     if (resolved != null && resolved.data.ecus.isNotEmpty()) {
                         item { Text("Resolved ECU list", style = MaterialTheme.typography.titleSmall) }
+                        if (resolved.data.ecus.any { it.protocol == EcuProtocol.KWP }) item {
+                            Text("KWP entries are preserved but excluded from the direct CAN/UDS scan. Enhanced KWP reads need documented definitions; supported K-line OBD reads remain available.", style = MaterialTheme.typography.bodySmall)
+                        }
                         items(resolved.data.ecus, key = { "ecu-${it.key}" }) { ecu ->
                             Column(Modifier.fillMaxWidth().clickable(enabled = state.isConnected && focused.id == catalog.selectedId) { actions.onOpenEcu(ecu) }.padding(8.dp)) {
                                 Text(ecu.display)

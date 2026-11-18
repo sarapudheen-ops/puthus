@@ -12,7 +12,9 @@ class CatalogTree(val pack: CatalogPack) {
         var current = node(id) ?: return emptyList()
         val result = mutableListOf<CatalogNode>()
         val seen = mutableSetOf<String>()
-        while (seen.add(current.id)) {
+        // A valid path has at most four levels. Invalid imports must not turn validation into an
+        // unbounded/quadratic traversal of a hostile parent chain before its errors can be shown.
+        while (result.size < CatalogLevel.entries.size && seen.add(current.id)) {
             result += current
             current = node(current.parentId) ?: break
         }

@@ -94,7 +94,7 @@ fun DevicePickerScreen(
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh paired devices")
                     }
                     TextButton(onClick = onOpenGarage) { Text("Saved") }
-                    TextButton(onClick = onOpenVehicles) { Text("Vehicles") }
+                    TextButton(onClick = onOpenVehicles) { Text("Catalog") }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Connection settings")
                     }
@@ -161,6 +161,15 @@ private fun DeviceList(state: UiState, onConnect: (PairedAdapter) -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
+        }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(state.catalog.selected?.title ?: "No vehicle selected manually", style = MaterialTheme.typography.titleSmall)
+                Text(if (state.catalog.selectedId == null) "Standard OBD reads are available, without a fallback ECU list or vehicle connection settings. Choose a vehicle in Catalog to apply its definitions."
+                    else "This explicit selection supplies the ECU list and inherited connection overrides. Reading a VIN never changes it.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                state.catalog.errors.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            }
         }
         item {
             Text(

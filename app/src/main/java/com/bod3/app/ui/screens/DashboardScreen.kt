@@ -268,13 +268,14 @@ private fun ProfileCard(state: UiState, busy: Boolean, onOpenScan: () -> Unit, o
                 p.lastScanAtMs?.let { InfoRow("Last scan", formatTime(it)) }
             }
         }
+        state.profileExtrasError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onOpenScan, enabled = (state.canScan && !busy) || state.scan.running) {
                 Text(if (state.scan.running) "Scan running…" else "Scan modules")
             }
             OutlinedButton(onClick = onOpenModules, enabled = state.modules.isNotEmpty()) { Text("Modules (${state.modules.size})") }
         }
-        if (state.protocol is Readout.Value && !state.canScan && !state.scan.running) {
+        if (state.protocol is Readout.Value && !state.canScan && !state.scan.running && state.profileExtrasError == null) {
             Text(
                 "Module scan needs a CAN vehicle (ISO 15765-4). K-line vehicles support live data, VIN and fault codes.",
                 style = MaterialTheme.typography.bodySmall,

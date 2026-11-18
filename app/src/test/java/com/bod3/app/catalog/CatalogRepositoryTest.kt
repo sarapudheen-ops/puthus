@@ -181,4 +181,22 @@ class CatalogRepositoryTest {
         assertEquals(listOf(engine), repo.tree().resolve(id)!!.data.ecus)
         assertNull(repo.selected())
     }
+
+    @Test fun concurrentEditorsCannotLoseUnrelatedLocalDefinitions() {
+        val repo = CatalogRepository(fixture(), CatalogMemoryStore())
+        val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+        val start = java.util.concurrent.CountDownLatch(1)
+        val threads = (1..2).map { worker -> Thread {
+            try {
+                start.await()
+                repeat(10) { item -> repo.editData("generation") { it.copy(pids = it.pids + pid("worker-$worker-$item")) } }
+            } catch (error: Throwable) { errors.add(error) }
+        }.apply { start() } }
+        start.countDown()
+        threads.forEach { it.join() }
+        assertTrue(errors.toString(), errors.isEmpty())
+        assertEquals(20, repo.tree().node("generation")!!.data.pids.size)
+        assertEquals(20, repo.tree().resolve("variant")!!.data.pids.size)
+    }
+
 }

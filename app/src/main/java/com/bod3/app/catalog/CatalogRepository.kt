@@ -89,7 +89,7 @@ class CatalogRepository(
     }
 
     @Synchronized
-    fun preview(pack: CatalogPack): List<String> = try { validate(imported(pack)); emptyList() } catch (e: IllegalArgumentException) { e.message.orEmpty().lines() }
+    fun preview(pack: CatalogPack): List<String> = try { serialize(imported(pack)); emptyList() } catch (e: IllegalArgumentException) { e.message.orEmpty().lines() }
 
     /** Revalidated on confirmation. Exactly one persistence write; never a row-by-row/partial import. */
     @Synchronized
@@ -193,12 +193,17 @@ class CatalogRepository(
         require(s.selectedId == null || pack(s).nodes.any { it.id == s.selectedId && it.level != CatalogLevel.MAKE }) { "Selected catalog node no longer exists" }
     }
 
-    private fun commit(state: State) {
+    private fun serialize(state: State): String {
         validate(state)
         val raw = JsonWriter.write(linkedMapOf("formatVersion" to 1, "catalog" to CatalogCodec.packMap(state.user),
             "selectedId" to state.selectedId, "favorites" to state.favorites.sorted(), "recents" to state.recents,
             "migrated" to state.migrated, "legacyLinks" to state.legacyLinks, "hidden" to state.hidden.sorted()))
         require(raw.toByteArray(Charsets.UTF_8).size <= CatalogCodec.MAX_BYTES) { "Catalog storage exceeds 16 MiB; export/archive unused data first" }
+        return raw
+    }
+
+    private fun commit(state: State) {
+        val raw = serialize(state)
         store.put(KEY, raw) // A failed write cannot change the cache or another preference.
         cachedRaw = raw; cached = state
     }

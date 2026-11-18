@@ -80,7 +80,7 @@ fun ScanScreen(
                     }
                     val listed = state.listedModules.size
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Probe listed ECUs directly ($listed from the manual list and data-pack vehicle)", modifier = Modifier.weight(1f))
+                        Text("Probe listed ECUs directly ($listed from saved manual ECUs and the explicit catalog selection)", modifier = Modifier.weight(1f))
                         Switch(checked = scan.includeListed, onCheckedChange = onListedChange, enabled = !scan.running && listed > 0)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -94,7 +94,7 @@ fun ScanScreen(
                             Text(if (scan.startedAtMs == null) "Start scan" else "Scan again")
                         }
                         if (!state.canScan) {
-                            Text("Module scan needs a CAN vehicle (ISO 15765-4).", style = MaterialTheme.typography.bodySmall)
+                            Text(state.profileExtrasError ?: "Module scan needs a CAN vehicle (ISO 15765-4).", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }

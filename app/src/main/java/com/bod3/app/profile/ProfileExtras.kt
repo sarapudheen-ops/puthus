@@ -15,7 +15,7 @@ data class ProfileExtras(
     val manualEcus: List<EcuDefinition> = emptyList(),
     /** Request ID (upper case) → the user's name for that module. */
     val moduleNames: Map<String, String> = emptyMap(),
-    /** Data-pack vehicle (make|model key) chosen for this VIN, or null to use the global selection. */
+    /** Legacy make|model link explicitly chosen for this VIN; retained for non-destructive migration. */
     val vehicleKey: String? = null,
     val notes: String? = null,
     /** An explicitly saved catalog link. Loading a VIN never activates this configuration. */
@@ -89,7 +89,9 @@ class ProfileExtrasStore(private val store: KeyValueStore, private val migrate: 
 
     fun get(vin: String): ProfileExtras {
         val json = store.get(key(vin)) ?: return ProfileExtras()
-        val parsed = runCatching { MiniJson.parse(json) }.getOrElse {
+        val parsed = runCatching {
+            MiniJson.parse(json) as? Map<*, *> ?: throw IllegalArgumentException("Saved profile extras must be an object")
+        }.getOrElse {
             store.put("${key(vin)}.unreadable", json)
             throw IllegalArgumentException("Saved profile extras were unreadable; the original was preserved", it)
         }
