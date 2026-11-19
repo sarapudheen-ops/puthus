@@ -35,7 +35,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       # Push runs cannot take inputs, so fall back to the default list.
-      BRANDS: ${{ inputs.brands || 'VW,AUDI,SKODA,SEAT' }}
+      BRANDS: ${{ inputs.brands || 'VW' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -99,6 +99,12 @@ jobs:
               -f status=completed -f conclusion=success \
               -f 'output[title]=Recovered text libraries per brand' \
               -F 'output[summary]=@.local/recon/brand-text-summary.md' || echo "publish skipped"
+            [ -f .local/recon/brand-text-detail.md ] && cat .local/recon/brand-text-detail.md >> "$GITHUB_STEP_SUMMARY"
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name='Brand text detail' -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=success \
+              -f 'output[title]=Recovered text members per brand' \
+              -F 'output[summary]=@.local/recon/brand-text-detail.md' || echo "detail skipped"
           fi
 
       - name: Publish the support matrix as a check

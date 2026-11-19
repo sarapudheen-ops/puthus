@@ -178,6 +178,20 @@ def extract(archive_path: Path, output: Path, report_dir: Path) -> dict:
     return summary
 
 
+def detail_markdown(summary: dict) -> str:
+    """Per-member breakdown for one brand, publishable as a check summary."""
+    lines = [f"## {summary['brand']} text recovery", "",
+             f"key `{summary['keyHex'][:32]}…` · library `{summary['textLibrary']}`", "",
+             "| member | bytes | kind | records | utf8 | code pairs |",
+             "| --- | ---: | --- | ---: | ---: | ---: |"]
+    for member in summary["members"]:
+        lines.append(
+            f"| `{member['name']}` | {member['bytes']} | {member['kind']} | "
+            f"{member.get('records', '-')} | {member.get('utf8Records', '-')} | "
+            f"{member.get('codePairs', '-')} |")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archives", nargs="+", type=Path)
@@ -210,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
                         f"{len(summary['members'])} | {summary['totalRecords']} | "
                         f"{summary['keyCandidates']} | ok |")
     (args.report / "brand-text-summary.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    details = "\n".join(detail_markdown(s) for s in results if "error" not in s)
+    (args.report / "brand-text-detail.md").write_text(details, encoding="utf-8")
     print("\n".join(rows))
     return 1 if failures else 0
 
