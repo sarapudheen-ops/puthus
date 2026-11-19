@@ -35,6 +35,7 @@ def clean(text: str) -> str:
 
 def convert(records: dict[str, str], separator: str = DEFAULT_SEPARATOR) -> tuple[dict[str, str], dict]:
     candidates: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+    prefixes: dict[str, set[str]] = defaultdict(set)
     skipped = Counter()
     for identity, entry in records.items():
         fields = entry.split(separator)
@@ -42,6 +43,8 @@ def convert(records: dict[str, str], separator: str = DEFAULT_SEPARATOR) -> tupl
             skipped["not_a_code_description_pair"] += 1
             continue
         raw, description = clean(fields[0]), clean(fields[1])
+        # A brand whose codes are raw hex (BMW: "0B\0Sensor…") cannot be mapped to the app's
+        # SAE key shape, so those records are skipped and counted rather than guessed at.
         if not CODE.fullmatch(raw):
             skipped["unsupported_code"] += 1
             continue
@@ -68,6 +71,7 @@ def convert(records: dict[str, str], separator: str = DEFAULT_SEPARATOR) -> tupl
 
     stats = {
         "sourceRecords": len(records),
+        "codesWithSourcePrefix": sum(1 for code in accepted if prefixes.get(code)),
         "acceptedCodes": len(accepted),
         "acceptedRecords": sum(len(v) for v in sources.values()),
         "conflictingCodesExcluded": len(conflicts),

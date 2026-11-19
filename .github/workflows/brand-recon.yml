@@ -167,7 +167,14 @@ jobs:
               -f "output[title]=TCODE $report" \
               -F "output[summary]=@.local/recon/$report.md" || echo "$report publish skipped"
           done
-          for src in .local/recon/text/*_TCODE_EN.GAG.json; do
+          # A brand can ship several TCODE libraries (BENZ: TCODE_EN, TCODE_EX_EN, TCODE_X_EN).
+          # Merge every one of them per brand before converting.
+          mkdir -p .local/merged
+          for branddir in $(ls .local/recon/text/*_TCODE*.GAG.json 2>/dev/null | sed 's/.*\///; s/_.*//' | sort -u); do
+            python3 tools/thinkdiag/merge_tcode.py .local/recon/text --brand "$branddir" \
+              --output ".local/merged/${branddir}_TCODE_ALL.json" || true
+          done
+          for src in .local/merged/*_TCODE_ALL.json; do
             [ -f "$src" ] || continue
             brand=$(basename "$src" | sed 's/_.*//')
             case "$brand" in

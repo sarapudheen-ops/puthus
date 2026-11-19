@@ -88,3 +88,20 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RawHexCodeTests(unittest.TestCase):
+    """A brand whose native codes are raw hex must be skipped, not coerced."""
+
+    def test_raw_hex_codes_are_excluded(self):
+        accepted, audit = convert_brand_dtcs.convert({"a": "0B\0Sensor For Overturning"})
+        self.assertEqual(accepted, {})
+        self.assertEqual(audit["statistics"]["skipped"]["unsupported_code"], 1)
+
+    def test_sae_codes_still_accepted(self):
+        accepted, _ = convert_brand_dtcs.convert({"a": "P0301\0Cylinder 1 misfire"})
+        self.assertEqual(accepted, {"P0301": "Cylinder 1 misfire"})
+
+
+if __name__ == "__main__":
+    unittest.main()
