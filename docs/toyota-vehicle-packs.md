@@ -88,6 +88,14 @@ SHA-256 was `185d96cba669be5e215d2b73c15e289930779717163f9d5c6ea3c0a55f2183cc`.
 This is delivery/cache proof with current CAs, **not** proof that an untouched 2016 device CA store trusts
 the current release service, and not proof of executable recovered Toyota diagnostics.
 
+For `72c608e`, [push run 44489358832](https://github.com/sarapudheen-ops/puthus/actions/runs/44489358832)
+again passed both actual-APK Android 24 tests (job `135443323437`, evidence check `135443940475`),
+including exact selected-path ranges, private-cache reopening with network access denied, and no
+automatic selection. The same disposable-emulator CA synchronization applied; no ECU traffic was sent.
+[PR Android CI 44489366752](https://github.com/sarapudheen-ops/puthus/actions/runs/44489366752)
+reported **500 JVM tests, zero failures/errors/skips**. These successful runs validate that specific
+revision's build/delivery behavior, not later edits or executable recovered Toyota diagnostics.
+
 ## Build and reproduce
 
 Heavy conversion is intended for GitHub Actions (`.github/actions/prepare-vehicle-packs`). Large generated

@@ -197,6 +197,27 @@ class DirectLiveTest(unittest.TestCase):
                                      for k in ("recordId", "dataOffset", "formula")))
                     self.assertFalse(result["enabled"])
 
+    def test_native_numeric_review_never_removes_the_ecu_entry_blocker(self):
+        from test_toyota_calc import calc_evidence
+        f, m, l, ecu = fixture()
+        sources = {**support_sources(), "FUNCDATA_EU.BIN": f, "EU/Ecu_Data_ffff.BIN": ecu([m], [l])}
+        args = dict(region="EU", function_key=1, ecu_file="EU/Ecu_Data_ffff.BIN")
+        streams, expressions = {"00000001": "Synthetic\x00unit"}, {"00000002": "y=(0x100*x1+x2)/4;"}
+        result = review_direct21(sources, streams, expressions, calc_evidence=calc_evidence(), **args)
+        self.assertEqual(1, result["calcReviewedCandidates"])
+        self.assertEqual(0, result["executableDefinitions"])
+        item = result["items"][0]
+        self.assertEqual(["ecu_entry_untranslated"], item["reasons"])
+        self.assertFalse(item["enabled"])
+        self.assertEqual("u16be-quarter-v1", item["calcReview"]["id"])
+        self.assertTrue(set(item["calcReview"]["sourceRecords"]) <= set(item["sourceRecords"]))
+        expressions["00000002"] = "y=(256*x1+x2)/8;"  # valid arithmetic, not one of the two reviewed programs
+        result = review_direct21(sources, streams, expressions, calc_evidence=calc_evidence(), **args)
+        self.assertEqual(0, result["calcReviewedCandidates"])
+        self.assertEqual(["ecu_entry_untranslated", "calc_semantics_unreviewed"], result["items"][0]["reasons"])
+        bad = calc_evidence(); bad["librarySha256"] = "0" * 64
+        with self.assertRaises(ValueError): review_direct21(sources, streams, expressions, calc_evidence=bad, **args)
+
     def test_inspection_accounts_for_all_rows_without_producing_an_executable_pack(self):
         f, m, l, ecu = fixture()
         sources = {**support_sources(), "FUNCDATA_EU.BIN": f, "EU/Ecu_Data_ffff.BIN": ecu([m], [l])}
@@ -207,6 +228,7 @@ class DirectLiveTest(unittest.TestCase):
         self.assertEqual((1, 1, 0, 0), tuple(result[k] for k in
                          ("sourceRows", "disabledReviewCandidates", "rejectedRows", "executableDefinitions")))
         self.assertEqual(6, len(result["inputs"]))
+        self.assertEqual(0, result["calcReviewedCandidates"])
         self.assertNotIn("data", result)
         self.assertEqual("disabled-live-review", result["kind"])
         self.assertFalse(result["items"][0]["enabled"])

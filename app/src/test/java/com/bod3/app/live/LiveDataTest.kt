@@ -15,6 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiveDataTest {
+    @Test fun reviewedNumericDecodersAgreeAcrossAllUnsignedByteInputs() = NativeLiveScenarios.reviewedUnsignedArithmeticCoversItsEntireByteDomain()
     @Test fun nativeSupportChecksArePerPollRunAndExactEcu() = runBlocking { NativeLiveScenarios.supportIsScopedToPollRunAndExactDefinition() }
     @Test fun nativeSupportMetadataRoundTripsWithoutLegacyDowngrade() = NativeLiveScenarios.supportAndKeepAliveRoundTripsAndVersionGates()
     @Test fun nativeSupportRecordsAreValidatedAtomically() = NativeLiveScenarios.supportRecordsAreAtomicAndNotSensorData()

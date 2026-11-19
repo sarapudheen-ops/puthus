@@ -53,7 +53,8 @@ selecting monitor rows. For the bounded conditional numeric class:
 `tools/thinkdiag/toyota_live.py` now requires those shared support inputs and exact ECU-table joins
 before returning even a **disabled numeric review candidate**. It retains original IDs for the row,
 monitor, EXPRESS text, unit/name, command, support bindings/pool entries, discovery group, command-info
-row and exclusion table. It does not run vendor scripts or approve CALC semantics, addresses or init.
+row and exclusion table. It does not run vendor scripts or approve general CALC semantics, addresses or init.
+Only the two literal numeric forms documented below can have a separate bounded semantic review.
 Unreviewed classes/joins remain individually rejected with a reason. Its output has `enabled:false`
 and cannot be used as an ordinary PID import.
 
@@ -77,6 +78,22 @@ its first blocking reason or disabled review metadata, input hashes and zero exe
 It is not wired into the production pack converter. Bounded non-code CALC data-table reports accompany
 the static readers to review operator IDs/precedence; these are file bytes, not loaded libraries,
 relocated/live state, vendor-code execution or an app EXPRESS interpreter.
+
+### Two bounded numeric equivalences, not ECU approval
+
+The original CALC data and reader reports from
+[inspection 44489358675](https://github.com/sarapudheen-ops/puthus/actions/runs/44489358675)
+(`72c608e`, 546 checksum-verified reports) now anchor two literal numeric forms: `y=x-40;` and
+`y=(0x100*x1+x2)/4;`. `toyota_calc.py` checks the exact library/object hashes, operator IDs, binding
+powers and arithmetic branches before attaching separate `calcReview` metadata. The app decoder is
+compared against the independently translated numeric/formatting result for every one of the 65,792
+unsigned-byte inputs. No native evaluator is run. Other scripts do not inherit this review by algebraic
+similarity, whitespace normalization, or a familiar label.
+
+Replaying the same exact source join locally gives **30 numerically reviewed rows within the unchanged
+353 disabled candidates**. All still have `ecu_entry_untranslated`; this is not runnable Toyota coverage.
+The detailed [numeric proof, source addresses, formatting boundary and remaining transport work](toyota-numeric-review.md)
+keep this limited semantic step distinct from source verification, synthetic tests and physical proof.
 
 ## App schema and lifetime
 
@@ -122,7 +139,7 @@ The Python tests exercise exact source joins and refusal of absent, ambiguous or
 These are synthetic regression tests, not converted real-vehicle features.
 
 Still required before enabling a recovered system: complete source-bound address/baud/P1–P4/init and
-session behavior (including native fast/slow alternatives where present), CALC expression semantics,
+session behavior (including native fast/slow alternatives where present), CALC semantics beyond the two reviewed numeric forms,
 remaining applicability/decoder classes, production conversion integration and per-feature accounting,
 exact fault/freeze-frame/ECU-info definitions, tests/coding/special-function translations and their
 existing safety-engine integration. The all-disabled production guard remains in place.

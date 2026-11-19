@@ -119,8 +119,11 @@ validation. Sensor-nonzero admission is not used. See [native evidence, schema a
 The bounded direct-21 numeric translator emits **disabled review candidates only** and requires exact
 support bindings, command/discovery tables and viewer exclusions. It is not integrated as an executable
 pack producer. Numeric/byte-join candidates, runtime tests and source verification do not increase the
-converted counts above. Per-ECU transport/init and CALC semantics still block real live definitions;
-fault/freeze-frame, test, coding and special-function translations remain unfinished.
+converted counts above. [Two exact numeric forms now have bounded semantic evidence](toyota-numeric-review.md),
+including all unsigned-byte inputs and native numeric formatting; this applies to 30 rows within the
+unchanged 353 disabled numeric candidates in one representative function/ECU review. Per-ECU
+transport/init still blocks all of them, and other CALC classes remain unreviewed.
+Fault/freeze-frame, test, coding and special-function translations remain unfinished.
 
 The migration from full offline source assets to the small pinned index is documented in
 [on-demand delivery and reproduction](toyota-vehicle-packs.md). This report must be regenerated

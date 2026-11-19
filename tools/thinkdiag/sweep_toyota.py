@@ -159,6 +159,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                     "Opaque fields stay named by source offset; pattern matches are not diagnostic definitions."]}
     all_files = []
     native_census = []
+    calc_evidence = None
     opaque_natives, top_level_data = [], []
     with zipfile.ZipFile(archive_path) as archive:
         for info in checked_infos(archive):
@@ -181,8 +182,10 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                     report = reader_report(data, name, [function], include_symbols=False, max_output_chars=None)
                     emit_report(f"reader-{name}-{function}", f"{name}: {function}", report)
                 if name in FOCUSED_DATA:
-                    emit_report(f"data-{name}", f"{name}: bounded static data tables",
-                                data_report(data, name, FOCUSED_DATA[name]))
+                    tables = data_report(data, name, FOCUSED_DATA[name])
+                    emit_report(f"data-{name}", f"{name}: bounded static data tables", tables)
+                    if name == "libTOYOTA_CALC.so":
+                        calc_evidence = json.loads(tables)
             if name == "BIN.ZIP":
                 import io
                 with zipfile.ZipFile(io.BytesIO(data)) as nested:
@@ -479,8 +482,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # or its first blocking reason. It is not coverage of all Toyota functions.
     review_names = ["FUNCDATA_EU.BIN", "EU/Ecu_Data_0081.BIN"] + ["EU/" + n for n in
                     ("Toyota_bin_00.BIN", "Toyota_bin_11.BIN", "Toyota_bin_12.BIN", "Viewer_bin_12.BIN")]
+    if calc_evidence is None:
+        raise ValueError("The SHA-pinned archive did not supply native CALC data evidence")
     review = review_direct21({n: paths[n].read_bytes() for n in review_names}, libraries["DSTREAM_EN.GAG.json"],
-                             libraries["EXPRESS.GAG.json"], region="EU", function_key=61, ecu_file="EU/Ecu_Data_0081.BIN")
+                             libraries["EXPRESS.GAG.json"], region="EU", function_key=61, ecu_file="EU/Ecu_Data_0081.BIN",
+                             calc_evidence=calc_evidence)
     review["sourceSha256"] = source_hash
     (output / "direct21-review.json").write_text(json_text(review))
     emit_report("direct21-review", "Exact EU function 61 / ECU 0081 numeric review (ALL DISABLED)", json_text(review))

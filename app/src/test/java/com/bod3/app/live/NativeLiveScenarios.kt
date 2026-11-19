@@ -20,6 +20,37 @@ object NativeLiveScenarios {
         responseHeader = "7E8", link = link, dataOffset = 1, supportChecks = listOf(snapshot, discovered),
         sourceRecords = listOf("fixture-row"))
 
+    fun reviewedUnsignedArithmeticCoversItsEntireByteDomain() {
+        // Decoder equivalence only. This does not approve an ECU, source path,
+        // initialization, applicability or an executable recovered definition.
+        val first = pid.copy(id = "u8-fixture", request = "2105", formula = "(A-40)", dataOffset = 0,
+            supportChecks = emptyList(), min = -40.0, max = 140.0)
+        val second = pid.copy(id = "u16-fixture", request = "210C", formula = "(((256*A)+B)/4)", dataOffset = 0,
+            supportChecks = emptyList(), min = 0.0, max = 16383.75)
+        for (byte in 0..255) {
+            val nativeIntegerText = (byte - 40).toString() // native %.0f path
+            check(first.decode(listOf(0x61, 5, byte)) == nativeIntegerText.toDouble()) { "Unsigned byte $byte" }
+        }
+        for (raw in 0..65535) {
+            val high = raw ushr 8; val low = raw and 255
+            // Independent, exact decimal spelling of the native formatter's
+            // integer / three-decimal branches. No vendor evaluator is run.
+            val integer = (raw ushr 2).toString()
+            val nativeQuarterText = if ((raw and 3) == 0) integer else integer + "." + ((raw and 3) * 250).toString().padStart(3, '0')
+            check(second.decode(listOf(0x61, 12, high, low)) == nativeQuarterText.toDouble()) { "Unsigned word $raw" }
+        }
+        // Native %.0f / %.3f output does not round integers or exact quarters;
+        // display ranges must not clamp high unsigned values to a physical guess.
+        check(first.decode(listOf(0x61, 5, 255)) == 215.0)
+        check(second.decode(listOf(0x61, 12, 255, 255)) == 16383.75)
+        check(first.decode(listOf(0x61, 5)) == null)
+        check(second.decode(listOf(0x61, 12, 255)) == null)
+        for (bad in listOf(-1, 256)) {
+            check(first.decode(listOf(0x61, 5, bad)) == null)
+            check(second.decode(listOf(0x61, 12, 0, bad)) == null)
+        }
+    }
+
     suspend fun supportIsScopedToPollRunAndExactDefinition() {
         var support = true; var member = true; var bytes = listOf(0xEE, 0, 0)
         val adapter = SimulatedCanAdapter(listOf(

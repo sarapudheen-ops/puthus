@@ -11,9 +11,10 @@ separate A801 record/window, the discovered-ID membership from template 15, the
 command-table join, and native viewer exclusions. Missing inputs disable the
 candidate; no defaults, familiar PID labels or similar function keys substitute.
 
-This module never approves an ECU address/init, vehicle hierarchy, CALC language
-semantics or an executable pack. Each result is explicitly disabled and must NOT
-be copied into data.pids. The production pack verifier still forbids execution.
+This module never approves an ECU address/init, vehicle hierarchy, general CALC
+language or an executable pack. Only two bounded numeric equivalences can carry
+separate SHA-pinned native CALC review evidence. Each result is still explicitly
+disabled and must NOT be copied into data.pids. Production still forbids execution.
 """
 from dataclasses import dataclass
 from decimal import Decimal
@@ -24,6 +25,7 @@ import math
 import re
 import struct
 
+from toyota_calc import NativeCalcEvidence
 from toyota_structure import (audit_command_pool, frame_pool_references, function_index,
                               section_directory, typed_table, uint)
 
@@ -160,7 +162,9 @@ class P4SupportFiles:
 
 class Direct21Live:
     def __init__(self, function_file, function_bytes, function_key, ecu_file, ecu_bytes, streams, expressions,
-                 *, support_files=None):
+                 *, support_files=None, calc_review=None):
+        if calc_review is not None and not isinstance(calc_review, NativeCalcEvidence):
+            raise ValueError("CALC review needs validated native data evidence")
         function_bytes, ecu_bytes = bytes(function_bytes), bytes(ecu_bytes)
         self.function_file = function_file
         self.function_key = function_key
@@ -170,6 +174,7 @@ class Direct21Live:
         self.monitors = {}
         self.dynamic_lsb_ids = set()
         self.support_files = support_files
+        self.calc_review = calc_review
         self.support_groups = []
         self.command_info = []
         index, _ = function_index(function_bytes)
@@ -285,7 +290,8 @@ class Direct21Live:
         if row[23] != start_bit // 8 + 1 or not 1 <= byte_count <= 26:
             raise UntranslatedLive("service_reply_untranslated", "Native position does not match the exact reply-data window")
         calc_id = uint(row, 26, 4)
-        arithmetic = translate_arithmetic(self.expressions.get(f"{calc_id:08X}"))
+        script = self.expressions.get(f"{calc_id:08X}")
+        arithmetic = translate_arithmetic(script)
         if arithmetic.bytes_needed != byte_count:
             raise UntranslatedLive("formula_untranslated", "EXPRESS and monitor signal widths disagree")
         label_id = uint(row, 0, 4)
@@ -300,20 +306,22 @@ class Direct21Live:
         identity = f"{self.function_file}@{at:08x}#function{self.function_key}:live{row_index}"
         checks = self.prerequisites(request[1], start_bit, end_bit, monitor_at)
         exclusion_source = self.support_files.not_excluded(uint(row, 12, 2))
+        calc = self.calc_review.describe(script, arithmetic.formula, arithmetic.bytes_needed) if self.calc_review else None
         return {
             "id": identity, "kind": "numeric-live-review", "enabled": False,
-            "reasons": ["ecu_entry_untranslated", "calc_semantics_unreviewed"],
+            "reasons": ["ecu_entry_untranslated"] + ([] if calc else ["calc_semantics_unreviewed"]),
+            **({"calcReview": calc} if calc else {}),
             "name": name.strip(), "unit": unit.strip(), "request": request.hex().upper(),
             "formula": arithmetic.formula, "dataOffset": row[23] - 1,
             "supportChecks": checks, "min": minimum, "max": maximum, "decimals": 3,
             "sourceRecords": [identity, f"{self.function_file}@{self.index_offset:08x}",
                 f"{self.function_file}@{command_at:08x}#live-command{command_index}",
                 f"{self.ecu_file}@{monitor_at:08x}#monitor", f"DSTREAM_EN.GAG#{label_id:08X}",
-                f"EXPRESS.GAG#{calc_id:08X}", exclusion_source],
+                f"EXPRESS.GAG#{calc_id:08X}", exclusion_source] + (calc["sourceRecords"] if calc else []),
         }
 
 
-def review_direct21(sources, streams, expressions, *, region, function_key, ecu_file):
+def review_direct21(sources, streams, expressions, *, region, function_key, ecu_file, calc_evidence=None):
     """Account for EVERY row of one explicitly chosen source function/ECU join.
 
     This is an inspection artifact, not a catalog, datapack or enabled-system
@@ -327,7 +335,8 @@ def review_direct21(sources, streams, expressions, *, region, function_key, ecu_
         raise ValueError("Review ECU is not in the exact requested source region")
     function_file = f"FUNCDATA_{region}.BIN"
     parser = Direct21Live(function_file, sources[function_file], function_key, ecu_file, sources[ecu_file],
-                          streams, expressions, support_files=context)
+                          streams, expressions, support_files=context,
+                          calc_review=NativeCalcEvidence(calc_evidence) if calc_evidence is not None else None)
     items, rejected = [], Counter()
     candidates = 0
     for i, (at, _) in enumerate(parser.rows):
@@ -344,6 +353,7 @@ def review_direct21(sources, streams, expressions, *, region, function_key, ecu_
              ("Toyota_bin_00.BIN", "Toyota_bin_11.BIN", "Toyota_bin_12.BIN", "Viewer_bin_12.BIN")]
     return {"kind": "disabled-live-review", "region": region, "functionKey": function_key, "ecuFile": ecu_file,
             "sourceRows": len(parser.rows), "disabledReviewCandidates": candidates,
+            "calcReviewedCandidates": sum("calcReview" in item for item in items),
             "rejectedRows": sum(rejected.values()), "rejectionsByFirstReason": dict(sorted(rejected.items())),
             "executableDefinitions": 0, "items": items,
             "inputs": [{"file": n, "bytes": len(sources[n]), "sha256": hashlib.sha256(sources[n]).hexdigest()} for n in names]}
