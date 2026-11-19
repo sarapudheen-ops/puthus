@@ -246,3 +246,59 @@ Checks published: **Brand archive support matrix**, **Brand archive members**,
 Scale that to the other 70 brands by changing the `brands` input. `BMW.zip` (1.97 GB) and `BENZ.zip`
 (818 MB) should be run one at a time; the job has a 60-minute timeout and reads the ZIP central
 directory only, so it will not decompress the whole archive in one process.
+
+## German brands (measured)
+
+Run [44581665113](https://github.com/sarapudheen-ops/puthus/actions/runs/44581665113) inspected the
+German set. All eight archives open with **0 ZIP-encrypted entries**.
+
+| Brand | Size | Entries | `.so` | `.ggp` | `.gag` | YZJM |
+|---|---:|---:|---:|:---:|:---:|---:|
+| AUDI | 100.0 MB | 72 | 27 | yes | yes | 0 |
+| VW | 83.2 MB | 78 | 27 | yes | yes | 0 |
+| SKODA | 67.1 MB | 70 | 27 | yes | yes | 0 |
+| SEAT | 62.9 MB | 75 | 27 | yes | yes | 0 |
+| PORSCHE | 132.3 MB | 188 | 28 | yes | no | 0 |
+| SPRINTER | 58.1 MB | 857 | 25 | yes | no | 0 |
+| SMART | 27.1 MB | 232 | 35 | yes | no | 0 |
+| OPEL | 19.3 MB | 74 | 24 | yes | no | 0 |
+
+### The German set is structurally easier than Toyota
+
+None of the eight carries a single `YZJM`-wrapped member, and none has a nested `BIN.ZIP`. The Toyota
+decoder's whole YZJM layer — strings, seed, eight derived key words, 32-byte table — is **not used by
+any German brand**. What they do carry is plain `.GGP` text libraries at the top level, which the
+`ggp.py` reader already implements.
+
+### Key material clusters, it does not repeat
+
+`libDEVICEID.so` has only **2** variants across all eight brands:
+
+| Family | `libDEVICEID.so` | `libSTD.so` |
+|---|---|---|
+| AUDI, SKODA, SMART, VW | `44c9976c37f4f957…` | `1e14ce3b43b4ff43…` |
+| SEAT, SPRINTER | `44c9976c37f4f957…` | `ead8cb83aad29e38…` |
+| OPEL | `44c9976c37f4f957…` | `067a6437feec602c…` |
+| PORSCHE | `e6a1276c431bb661…` | `ead8cb83aad29e38…` |
+
+`libSTD.so` — the library holding the Rijndael-256 key and LAH/WCX constant — has **3** variants across
+all eight brands. So the German brands reduce to at most three constant reads, not eight. Compare
+Toyota, which had a unique `libDEVICEID.so` and was the only brand worked through.
+
+### What that means
+
+Fault-code text, system names and the manual tree for the German set need **no** wire-protocol
+semantics, so their recovery is bounded: read the constants from each `libSTD.so` variant, run the
+existing `ggp.py`, and convert. That is the same shape of work already proven for Toyota's DTC pack,
+against a simpler container.
+
+It does **not** change the executable-definition boundary. Recovered labels remain labels.
+
+### VW Group support already in the app
+
+`app/src/main/assets/datapacks/vw-group-mqb.json` declares six MQB vehicles — Tiguan (AD1), Golf (5G
+Mk7), Passat (B8), A3 (8V), Octavia (5E), Leon (5F) — with **11 UDS ECUs each** and real request/response
+addresses (`7E0`/`7E8` engine, `7E1`/`7E9` transmission, `713`/`77D` brakes, `746`/`7B0` air
+conditioning). `coding/vw-mqb-coding.json` carries 3 coding recipes and
+`actuators/vw-mqb-templates.json` 3 test templates. **The PID list in that pack is empty** — the
+addressing and structure are there, the content is not.
