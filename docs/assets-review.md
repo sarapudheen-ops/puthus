@@ -4,13 +4,18 @@ Personal-use project, no store distribution, no third-party users. This note is 
 whether the 73 vendored brand archives can be turned into files the app reads from local storage, and
 what I would actually build first.
 
-## What I could inspect in this sandbox
+## Where the archives are opened
 
-The release **metadata** is reachable, the release **payload** is not: `gh release download` and the
+Release-asset **downloads** are blocked from this development sandbox: `gh release download` and the
 Actions artifact endpoint both fail at `release-assets.githubusercontent.com` /
-`productionresultssa9.blob.core.windows.net` with `SSL_ERROR_SYSCALL`. So I could not open a zip here.
-Everything below about archive internals comes from the repository's own pinned, tested decoders and
-reports (`tools/thinkdiag/`, `docs/toyota-*.md`, `docs/conversion-report.md`), not from a live run.
+`productionresultssa9.blob.core.windows.net` with `SSL_ERROR_SYSCALL`, while GitHub's API stays
+reachable. The existing pipelines never worked around this by downloading to a workstation - they run
+**on GitHub's own runners**, which can reach the assets. `inspect_pack.py` and the decode steps in
+`.github/workflows/thinkdiag-data.yml` therefore execute inside Actions.
+
+The same route is now used explicitly: `.github/workflows/brand-recon.yml` downloads any brand,
+inspects it as data only and publishes the results as checks and an artifact. See
+[Brand archive reconnaissance](#brand-archive-reconnaissance-measured) below for measured results.
 
 Re-size the problem from the release listing:
 
@@ -161,3 +166,83 @@ The realistic, high-value path is: narrow to your actual cars, convert **DTC tex
 brands, then ECU identification, and treat multi-GB live-data conversion as research, not a delivery
 target. A local-file pack source is a reasonable small feature on top of that — but it delivers
 already-converted data, it does not create it.
+
+## Brand archive reconnaissance (measured)
+
+Run [44576848503](https://github.com/sarapudheen-ops/puthus/actions/runs/44576848503) inspected
+`TOYOTA`, `EOBD2` and `DEMO` on a GitHub runner. Every number below is measured, not assumed.
+
+### Nothing is encrypted
+
+All three archives report **0 ZIP-encrypted entries**. The outer ZIPs open directly; only the inner
+member formats need the decoding already implemented.
+
+### The container layout is identical across brands
+
+`DIAGNOSTIC/VEHICLES/<BRAND>/V<version>/…` in all three, with the same family of files
+(`DTCH_CFG.BIN`, `FUNCH_CFG.BIN`, `FUNC*.BIN`, `*.GGP`, `*.GAG`, `lib*.so`, `BIN.ZIP` where present).
+`DEMO` is V10.64, `EOBD2` V10.28, `TOYOTA` V10.62 — the layout does not depend on the version.
+
+| Brand | Size | Entries | ZIP-encrypted | `.ggp` | `libDEVICEID` | `libSTD` |
+|---|---:|---:|---:|:---:|:---:|:---:|
+| TOYOTA | 71.8 MB | 211 | 0 | yes | yes | yes |
+| DEMO | 57.7 MB | 255 | 0 | yes | yes | yes |
+| EOBD2 | 6.8 MB | 26 | 0 | yes | yes | yes |
+
+### The key question: is the decode key material shared?
+
+The decoder reads a 32-byte YZJM format table and a Rijndael-256 key from static locations inside
+`libDEVICEID.so` and `libSTD.so`. Byte hashes of those libraries decide whether that work is done once
+or once per brand:
+
+| Brand | `libDEVICEID.so` | `libSTD.so` | `libCOMM_ABSTRACT_LAYER.so` |
+|---|---|---|---|
+| DEMO | `e6a1276c431bb661…` | `b6773057b98efcba…` | shared |
+| EOBD2 | `e6a1276c431bb661…` | `a59906a7aff48202…` | shared |
+| TOYOTA | `44c9976c37f4f957…` | `b6a5a7c6e5303d8a…` | shared |
+
+Measured conclusion:
+
+- **`libDEVICEID.so` is shared within a family** (DEMO = EOBD2, both V10.2x/10.6x-era) and differs from
+  TOYOTA's. So the YZJM table is **not** one global constant.
+- **`libSTD.so` differs across all three**, so the Rijndael key and LAH/WCX constant must be read from
+  each brand's own library.
+- `libCOMM_ABSTRACT_LAYER.so` and `Funcfg.so` are shared/versioned respectively, confirming the vendor
+  SDK is common while the crypto-bearing libraries are versioned.
+
+This is the measured basis for the earlier statement: decryption is solved *as a technique*, and
+**each brand needs its own static constant read** — but the container format, member names and reader
+logic are common, so a brand is a data pin plus a verification run, not a new decoder.
+
+### What is actually inside (DEMO sample)
+
+Representative members that matter for a mechanic:
+
+| Member | Bytes | Note |
+|---|---:|---|
+| `DEMO_EN.GGP` | 650,840 | the English text library — menu, system and code labels |
+| `DTCH_CFG.BIN` | 652 | DTC configuration table |
+| `FUNCH_CFG.BIN` | 164 | function configuration table |
+| `libDEMOPRO.so` | 1,353,928 | brand diagnostic logic (never executed) |
+| `libDIAG.so` | 352,768 | `FOPEN`/`OpenSearchIDDLL` readers already dissected for Toyota |
+| `libREADDATA.so`, `libUPLOADFILE.so` | 272,528 / — | data readers |
+
+`EOBD2` carries `DTCH_CFG.BIN` at 60,359 bytes — a large generic-emissions code table, and
+`libOBD2_SPEC_APP.so` / `libOBD2_SYSP.so` for generic OBD-II. It is the cleanest first target because it
+is generic-emissions data rather than manufacturer-specific semantics.
+
+### Reproduce any of this
+
+```sh
+gh workflow run brand-recon.yml -f brands=TOYOTA,EOBD2,DEMO     # needs the file on the default branch
+# or push a change to .github/workflows/brand-recon.yml to run the default list
+gh api "repos/$REPO/commits/$SHA/check-runs" --jq \
+  '.check_runs[] | select(.name=="Brand archive support matrix") | .output.summary'
+```
+
+Checks published: **Brand archive support matrix**, **Brand archive members**,
+**Brand library hash comparison**. The `brand-recon` artifact keeps the full per-brand inspection JSON.
+
+Scale that to the other 70 brands by changing the `brands` input. `BMW.zip` (1.97 GB) and `BENZ.zip`
+(818 MB) should be run one at a time; the job has a 60-minute timeout and reads the ZIP central
+directory only, so it will not decompress the whole archive in one process.
