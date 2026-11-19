@@ -302,3 +302,55 @@ addresses (`7E0`/`7E8` engine, `7E1`/`7E9` transmission, `713`/`77D` brakes, `74
 conditioning). `coding/vw-mqb-coding.json` carries 3 coding recipes and
 `actuators/vw-mqb-templates.json` 3 test templates. **The PID list in that pack is empty** — the
 addressing and structure are there, the content is not.
+
+## Extracted and shipped: German brand DTC packs
+
+`tools/thinkdiag/extract_brand_text.py` recovers the text libraries **without any hard-coded ELF
+address**. The Toyota pipeline reads two fixed offsets in `libSTD.so`; other brands move them, so this
+tool scans that library and accepts a candidate only when it passes a check the existing readers
+already enforce:
+
+- a **GGP filename key** is accepted only when `unpack_ggp` returns well-formed ASCII member names;
+- a **LAH/WCX format table** is accepted only when it turns the 256-byte substitution block into a
+  true permutation of 0..255.
+
+Both fail closed. No vendor library is loaded or executed. Nine synthetic tests cover key discovery,
+format-table discovery, decoys and one-bad-archive isolation.
+
+### Measured result (run [44589074637](https://github.com/sarapudheen-ops/puthus/actions/runs/44589074637))
+
+All four VW Group archives extract on the first attempt:
+
+| Brand | Text library | Members | Records | Key candidates |
+|---|---|---:|---:|---:|
+| VW | `AUDI_EN.GGP` (102 MB) | 22 | 1,266,764 | 1 |
+| AUDI | `AUDI_EN.GGP` | 22 | 1,263,507 | 1 |
+| SKODA | `AUDI_EN.GGP` | 22 | 1,159,552 | 1 |
+| SEAT | `AUDI_EN.GGP` | 22 | 1,158,580 | 1 |
+
+Recovered libraries include `TCODE_EN.GAG` (62,228 fault-code records), `TCODEH_EN.GAG` (full
+workshop descriptions), `DSTREAM_EN.GAG` (484,183 live-data labels with units),
+`UDS_INDEX.GAG` (9,630 named values) and `EXPRESS.GAG` (6,745 scaling expressions).
+
+### Shipped, importable
+
+`convert_brand_dtcs.py` turns those into `bod3-datapack` v2 files the app imports directly:
+
+| Pack | Makes | Codes | Base | Extended | Bytes |
+|---|---|---:|---:|---:|---:|
+| `vw-dtcs.json` | Volkswagen | 38,826 | 13,280 | 25,546 | 2,892,540 |
+| `audi-dtcs.json` | Audi | 38,826 | 13,280 | 25,546 | 2,892,550 |
+| `skoda-dtcs.json` | Skoda | 37,579 | 13,291 | 24,288 | 2,784,540 |
+| `seat-dtcs.json` | SEAT | 37,579 | 13,291 | 24,288 | 2,784,523 |
+
+Download: <https://github.com/sarapudheen-ops/puthus/releases/tag/dtc-packs>. Import in the app via
+**Data packs → Import**. Only explicit code/description pairs with one unique wording are kept;
+conflicting and placeholder records are excluded and counted in a per-brand audit file.
+
+### What the extraction also proves
+
+`EXPRESS.GAG` decodes to real scaling expressions, for example
+`if(x1==0x04) y=x2*0.125-720; else if(x1==0x05) y=(x2*256+x3)*0.125-720; …`, and `UDS_INDEX.GAG` to
+named live values such as `BV_BatteRegulLT3UDS`. Those are the missing formula layer. They remain
+**inert text**: joining a label and an expression to an ECU request is still unproven, so none of it is
+executed or promoted to a definition.
