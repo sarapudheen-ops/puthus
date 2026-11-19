@@ -354,3 +354,24 @@ conflicting and placeholder records are excluded and counted in a per-brand audi
 named live values such as `BV_BatteRegulLT3UDS`. Those are the missing formula layer. They remain
 **inert text**: joining a label and an expression to an ECU request is still unproven, so none of it is
 executed or promoted to a definition.
+
+### Full German set recovered
+
+Covering every German archive in `assets-v1`, not one brand:
+
+| Brand | Text records recovered | DTC pack | Codes | Download |
+|---|---:|---|---:|---|
+| VW | 1,266,764 | `vw-dtcs.json` | 38,826 | yes |
+| AUDI | 1,263,507 | `audi-dtcs.json` | 38,826 | yes |
+| SKODA | 1,159,552 | `skoda-dtcs.json` | 37,579 | yes |
+| SEAT | 1,158,580 | `seat-dtcs.json` | 37,579 | yes |
+| PORSCHE | 701,096 | `porsche-dtcs.json` | 1,984 | yes |
+| SPRINTER | 483,248 | `sprinter-dtcs.json` | 8,994 | yes |
+| SMART | 326,630 | `smart-dtcs.json` | 1,503 | yes |
+| OPEL | 138,831 | `opel-dtcs.json` | 11,525 | yes |
+
+Every archive opened on the first attempt with no per-brand code change: the key is found by
+self-validation against the data, so a brand is a download plus a verification run.
+
+Total: 6,498,208 recovered text records, 174,716 app-importable fault codes across the German set.
+Pack download page: <https://github.com/sarapudheen-ops/puthus/releases/tag/dtc-packs>
