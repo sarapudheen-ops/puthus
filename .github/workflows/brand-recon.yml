@@ -14,6 +14,13 @@ on:
         required: true
         type: boolean
         default: true
+  # A workflow must exist on the default branch before workflow_dispatch works.
+  # This fallback lets a feature branch run the same inspection by pushing a change
+  # to this file, with the brand list set below.
+  push:
+    branches: ['arena/**']
+    paths:
+      - '.github/workflows/brand-recon.yml'
 
 permissions:
   contents: read
@@ -27,7 +34,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      BRANDS: ${{ inputs.brands }}
+      # Push runs cannot take inputs, so fall back to the default list.
+      BRANDS: ${{ inputs.brands || 'EOBD2,DEMO' }}
     steps:
       - uses: actions/checkout@v7
 
