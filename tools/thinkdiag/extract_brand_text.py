@@ -167,6 +167,10 @@ def extract(archive_path: Path, output: Path, report_dir: Path) -> dict:
                 "formatTableCandidates": len(tables),
                 "codePairs": sum(1 for v in records.values() if "\0" in v),
                 "examples": [(k, v[:120]) for k, v in list(records.items())[:5]],
+                # First few NUL-delimited pairs, so the real code/description shape is
+                # inspectable without publishing the whole extracted library.
+                "pairExamples": [(k, v.replace("\0", " | ")[:160])
+                                 for k, v in list(records.items()) if "\0" in v][:6],
             })
         summary["members"].append(item)
 
