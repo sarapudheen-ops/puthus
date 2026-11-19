@@ -111,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/thinkdiag/probe_members.py .local/recon/text \
-            --output .local/recon/record-shapes.md || echo "probe failed"
+            --per-member 2 --output .local/recon/record-shapes.md || echo "probe failed"
           if [ -f .local/recon/record-shapes.md ]; then
             cat .local/recon/record-shapes.md >> "$GITHUB_STEP_SUMMARY"
             gh api --method POST "repos/$GH_REPO/check-runs" \

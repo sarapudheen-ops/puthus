@@ -66,7 +66,10 @@ def inspect(directory: pathlib.Path, per_member: int, limit_members: int) -> dic
     return report
 
 
-def markdown(report: dict) -> str:
+MAX_SUMMARY = 55_000  # GitHub rejects a check summary over ~65 KB
+
+
+def markdown(report: dict, budget: int = MAX_SUMMARY) -> str:
     lines = ["## Record shape by member", ""]
     lines.append("| member | records | formula | odx | request-like | hex | label+unit | part no | text |")
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
@@ -91,8 +94,11 @@ def markdown(report: dict) -> str:
         lines.append("")
         for kind, rows in interesting.items():
             for identity, text in rows:
-                lines.append(f"- **{kind}** `{identity}` → {text}")
+                lines.append(f"- **{kind}** `{identity}` → {text[:150]}")
         lines.append("")
+        if sum(len(line) + 1 for line in lines) > budget:
+            lines.append("_Output truncated to fit the check-summary limit._")
+            break
     return "\n".join(lines) + "\n"
 
 
