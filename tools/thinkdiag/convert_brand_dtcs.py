@@ -19,7 +19,7 @@ import sys
 
 # Same shape the app enforces for a DTC key: P/B/C/U + 4 hex, optional -NN.
 CODE = re.compile(r"[PCBU][0-3][0-9A-F]{3}(?:[0-9A-F]{2})?")
-SEPARATOR = "\0"
+DEFAULT_SEPARATOR = "\0"
 PLACEHOLDERS = {
     "NORMAL", "NOFAULT", "NOFAULTS", "NODTC", "NODTCS", "NODESCRIPTION", "UNKNOWN",
     "RESERVED", "NOTAPPLICABLE", "VARIATIONCODING",
@@ -33,11 +33,11 @@ def clean(text: str) -> str:
     return " ".join("".join(c for c in text if ord(c) >= 32 or c == " ").split())
 
 
-def convert(records: dict[str, str]) -> tuple[dict[str, str], dict]:
+def convert(records: dict[str, str], separator: str = DEFAULT_SEPARATOR) -> tuple[dict[str, str], dict]:
     candidates: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
     skipped = Counter()
     for identity, entry in records.items():
-        fields = entry.split(SEPARATOR)
+        fields = entry.split(separator)
         if len(fields) != 2:
             skipped["not_a_code_description_pair"] += 1
             continue
@@ -108,13 +108,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("source", type=Path, help="TCODE*_EN.GAG.json from extract_brand_text.py")
     parser.add_argument("--brand", required=True, help="Brand name, e.g. VW")
     parser.add_argument("--makes", required=True, help="Comma-separated app makes, e.g. Volkswagen,Audi")
+    parser.add_argument("--separator", default="NUL",
+                        help="NUL (default), or the literal separator text, e.g. '|'")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
     records = json.loads(args.source.read_text(encoding="utf-8"))
     brand = args.brand.upper()
     makes = [m.strip() for m in args.makes.split(",") if m.strip()]
-    accepted, audit = convert(records)
+    separator = "\0" if args.separator == "NUL" else args.separator.encode().decode("unicode_escape")
+    accepted, audit = convert(records, separator)
     pack = build_pack(brand, makes, args.source.name, accepted)
     encoded = (json.dumps(pack, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 

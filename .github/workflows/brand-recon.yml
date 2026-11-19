@@ -154,6 +154,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .local/packs
+          python3 tools/thinkdiag/dtcpairs.py .local/recon/text \
+            --output .local/recon/separators.md || echo "separator probe failed"
           for src in .local/recon/text/*_TCODE_EN.GAG.json; do
             [ -f "$src" ] || continue
             brand=$(basename "$src" | sed 's/_.*//')
@@ -171,8 +173,11 @@ jobs:
               MINI) makes="Mini" ;;
               *)   makes="$brand" ;;
             esac
+            sep=$(python3 tools/thinkdiag/dtcpairs.py .local/recon/text --output /dev/null 2>/dev/null \
+              | head -1 >/dev/null && echo NUL)
+            case "$brand" in BMW) sep="NUL" ;; esac
             python3 tools/thinkdiag/convert_brand_dtcs.py "$src" --brand "$brand" \
-              --makes "$makes" --output ".local/packs/${brand,,}-dtcs.json" \
+              --makes "$makes" --separator "$sep" --output ".local/packs/${brand,,}-dtcs.json" \
               || echo "$brand: conversion produced no pack"
           done
           ls -la .local/packs || true
