@@ -35,7 +35,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       # Push runs cannot take inputs, so fall back to the default list.
-      BRANDS: ${{ inputs.brands || 'VW,AUDI,SKODA,SEAT' }}
+      BRANDS: ${{ inputs.brands || 'OPEL,SMART,SPRINTER,PORSCHE' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -161,6 +161,13 @@ jobs:
               AUDI) makes="Audi" ;;
               SKODA) makes="Skoda" ;;
               SEAT) makes="SEAT" ;;
+              BENZ) makes="Mercedes-Benz" ;;
+              SMART) makes="Smart" ;;
+              SPRINTER) makes="Mercedes-Benz" ;;
+              OPEL) makes="Opel" ;;
+              PORSCHE) makes="Porsche" ;;
+              BMW) makes="BMW" ;;
+              MINI) makes="Mini" ;;
               *)   makes="$brand" ;;
             esac
             python3 tools/thinkdiag/convert_brand_dtcs.py "$src" --brand "$brand" \
