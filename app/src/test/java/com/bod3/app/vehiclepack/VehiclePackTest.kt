@@ -10,6 +10,7 @@ class VehiclePackTest {
     @Test fun onlyPinnedConversionMayEnableWriteDefinitions() = VehiclePackScenarios.trustedConversionNotImportedFlags()
     @Test fun crossEcuDefinitionIsRejectedAtomically() = VehiclePackScenarios.crossEcuDefinitionRejected()
     @Test fun convertedEcuCannotSubstituteLegacyGenericReads() = VehiclePackScenarios.convertedEcuCannotSubstituteLegacyGenericReads()
+    @Test fun convertedPrerequisitesNeedTheirOwnProvenanceAndNeverGrantImportTrust() = VehiclePackScenarios.convertedPrerequisitesMustCarryTheirOwnProvenance()
     @Test fun cancellationNeverInstallsPartialData() = VehiclePackScenarios.cancelledDownloadNeverInstalls()
     @Test fun downloadedPathAndSelectionAreOneAtomicNamesOnlyTransaction() = VehiclePackScenarios.manualPathIsOneAtomicNamesOnlyCommit()
     @Test fun systemScopeAndSavedLiveChoicesNeverFallBackOrCrossVehicles() = VehiclePackScenarios.closedSystemScopeNeverMixesGlobalPidsAndSelections()

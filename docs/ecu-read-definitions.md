@@ -22,10 +22,12 @@ Existing ordinary UDS/OBD declarations without `diagnostics` retain the legacy b
 declarations without read definitions remain disabled for fault/identification requests. The wire
 protocol and application dialect are separate: KWP over CAN uses KWP request/response rules too.
 
-Catalog JSON uses **formatVersion 2** when any ECU has `diagnostics`, and datapack JSON uses
-**formatVersion 3**. Earlier versions remain readable and are still emitted when these fields are
-absent. The new fields cannot be declared in an earlier format version. This makes an older app reject
-an enhanced export rather than silently discard its read restrictions and send generic requests.
+Catalog JSON requires at least **formatVersion 2** when any ECU has `diagnostics`, and datapack JSON
+at least **formatVersion 3**. Ordered live prerequisites or an explicit bare-KWP `3E` keepalive require
+catalog **3** / datapack **4**; see [Toyota live prerequisites](toyota-live-prerequisites.md).
+Earlier versions remain readable and are still emitted when their new fields are absent. New fields
+cannot be declared in an earlier format version. This makes an older app reject an enhanced export
+rather than silently discard its read restrictions and send generic requests.
 CSV cannot express enhanced links/read definitions: such an export fails before writing anything and
 asks for JSON. JSON round trips preserve the link, exact requests, reply windows, layouts and source IDs.
 

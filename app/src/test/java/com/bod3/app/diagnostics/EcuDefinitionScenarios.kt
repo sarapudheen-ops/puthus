@@ -144,7 +144,7 @@ object EcuDefinitionScenarios {
     suspend fun kwpOverCanAndUdsUseOnlySelectedDefinitions() {
         for (kwp in listOf(true, false)) {
             val simulation = SimKwpEcu()
-            val module = SimModule('6', "7E0", "7E8", respond = { r ->
+            val module = SimModule('6', "7E0", "7E8", dialect = if (kwp) DiagnosticDialect.KWP2000 else DiagnosticDialect.UDS, respond = { r ->
                 if (!kwp && r == listOf(0x19, 2, 0xFF)) listOf(listOf(0x59, 2, 0xFF, 4, 0x20, 0x13, 8)) else simulation.respond(r)
             })
             val adapter = SimulatedCanAdapter(listOf(module))
@@ -161,7 +161,7 @@ object EcuDefinitionScenarios {
             val dtc = (bench.readDtcs(selected) as DtcReadResult.Read).records.single()
             check(dtc.code == if (kwp) "P0123" else "P0420-13")
             if (!kwp) check(dtc.confirmed)
-            check(adapter.requests.all { it.header == "7E0" })
+            check(adapter.requests.all { it.header == "7E0" } && adapter.violations.isEmpty())
             check(adapter.requests.none { it.payload == listOf(0x22, 0xF1, 0x87) })
             // CAN transport alone must not make a KWP ECU expose UDS snapshots.
             check(!EcuWorkbench.canReadRecords(selected))
@@ -170,7 +170,8 @@ object EcuDefinitionScenarios {
 
     suspend fun malformedPositiveAndNrcNeverBecomeSuccess() {
         var reply = listOf(0x5A, 0x90, 1)
-        val adapter = SimulatedCanAdapter(listOf(SimModule('6', "7E0", "7E8", respond = { listOf(reply) })))
+        var extra: List<List<Int>> = emptyList()
+        val adapter = SimulatedCanAdapter(listOf(SimModule('6', "7E0", "7E8", dialect = DiagnosticDialect.KWP2000, respond = { listOf(reply) + extra })))
         val selected = ecu.copy(requestId = "7E0", responseId = "7E8", link = DiagnosticLink(ObdProtocol.ISO_15765_4_CAN_11_500, DiagnosticDialect.KWP2000))
         val bench = EcuWorkbench(Session(adapter, ObdProtocol.ISO_15765_4_CAN_11_500))
         check(bench.readIdentification(selected).single().result is DidResult.Failed)
@@ -181,5 +182,13 @@ object EcuDefinitionScenarios {
         reply = listOf(0x7F, 0x18, 0x78)
         check(bench.readDtcs(selected) == DtcReadResult.Negative(0x78))
         check(adapter.requests.size == 4) // no automatic retries, mode changes or generic fallbacks
+        reply = listOf(0x5A, 0x90, 0x53, 0x49, 0x4D)
+        for (bad in listOf(listOf(0x7F, 0x1A, 0x31), listOf(0x5A, 0x91, 0x53, 0x49, 0x4D))) {
+            extra = listOf(bad)
+            check(bench.readIdentification(selected).single().result is DidResult.Failed)
+        }
+        reply = listOf(0x54); extra = listOf(listOf(0x7F, 0x14, 0x22))
+        check(bench.clear(selected, EcuWorkbench.confirmation(selected)) is UdsClearResult.Failed)
+        check(adapter.requests.size == 7 && adapter.violations.isEmpty())
     }
 }

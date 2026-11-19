@@ -19,9 +19,11 @@ class SimKwpEcu {
     var wrongReadBack = false
     var pending = false
     val requests = mutableListOf<List<Int>>()
+    var replyOverride: (List<Int>) -> List<List<Int>>? = { null }
 
     fun respond(r: List<Int>): List<List<Int>> {
         requests += r
+        replyOverride(r)?.let { return it }
         val service = r.first()
         fun no(code: Int) = listOf(listOf(0x7F, service, code))
         val p = when (service) {

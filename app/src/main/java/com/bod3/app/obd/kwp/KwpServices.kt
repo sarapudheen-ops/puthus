@@ -19,6 +19,8 @@ object KwpServices {
     fun readAllowed(request: List<Int>): Boolean = request.all { it in 0..255 } && when (request.firstOrNull()) {
         0x1A, 0x21 -> request.size == 2
         0x22 -> request.size >= 3 && request.size % 2 == 1
+        // Toyota's support snapshot (FDATA SendCmdAndGetPid), not arbitrary A8 variants.
+        0xA8 -> request == listOf(0xA8, 0x01)
         0x18 -> request.size == 4 // status mask, two-byte DTC group
         0x19 -> request.size in 1..4 // documented KWP read-DTC variant, NOT UDS report sub-functions
         0x3E -> request == listOf(0x3E) || request == listOf(0x3E, 0x00)
@@ -28,7 +30,7 @@ object KwpServices {
 
     fun matches(request: List<Int>, payload: List<Int>): Boolean {
         if (request.isEmpty() || payload.firstOrNull() != request[0] + 0x40) return false
-        val echo = when (request[0]) { 0x01, 0x02, 0x09, 0x1A, 0x21, 0x10, 0x27, 0x30, 0x31, 0x32, 0x33, 0x3B -> 1; 0x22, 0x2E, 0x2F -> 2; else -> 0 }
+        val echo = when (request[0]) { 0x01, 0x02, 0x09, 0x1A, 0x21, 0x10, 0x27, 0x30, 0x31, 0x32, 0x33, 0x3B, 0xA8 -> 1; 0x22, 0x2E, 0x2F -> 2; else -> 0 }
         return request.size > echo && payload.size > echo && payload.drop(1).take(echo) == request.drop(1).take(echo)
     }
 }
@@ -47,7 +49,7 @@ class KwpClient(private val session: Session, val target: EcuTarget.Physical) {
         require(status in 0..255 && group in 0..65535)
         return read(listOf(0x18, status, group shr 8, group and 255))
     }
-    suspend fun testerPresent() = read(listOf(0x3E, 0x00))
+    suspend fun testerPresent() = read(requireNotNull(target.link).testerPresent)
     suspend fun clear(confirmation: ClearConfirmation): ObdResponse = session.request(target, confirmation.request,
         target.link?.kLine?.p2StarMs?.toLong() ?: 10000, confirmation = confirmation)
 
@@ -74,7 +76,7 @@ class KwpClient(private val session: Session, val target: EcuTarget.Physical) {
     suspend fun <T> keepAliveWhile(block: suspend () -> T): T = coroutineScope {
         val interval = target.link?.kLine?.keepAliveMs ?: 2000L
         val keepAlive = launch {
-            while (isActive) { delay(interval); session.keepAliveCurrent(target, listOf(0x3E, 0x00)) }
+            while (isActive) { delay(interval); session.keepAliveCurrent(target) }
         }
         try { block() } finally { keepAlive.cancel() }
     }

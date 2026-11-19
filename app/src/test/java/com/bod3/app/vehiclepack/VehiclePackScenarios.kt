@@ -46,7 +46,7 @@ object VehiclePackScenarios {
         val folder = Files.createTempDirectory("bod3-pack-test").toFile()
         try { block(folder) } finally { folder.deleteRecursively() }
     }
-    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true) {
+    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -57,7 +57,9 @@ object VehiclePackScenarios {
         val original = if (enabled) CatalogData(
             ecus = listOf(EcuDefinition(name = "Synthetic ECU", requestId = "7E0", responseId = "7E8", sourceRecords = listOf("synthetic:ecu"),
                 diagnostics = if (explicitReads) com.bod3.app.diagnostics.EcuReadDefinitions() else null)),
-            pids = listOf(CustomPid("synthetic-rpm", "Synthetic RPM", "221234", "(A*256+B)/4", header = if (crossEcu) "7E1" else "7E0", responseHeader = "7E8", sourceRecords = listOf("synthetic:pid"))),
+            pids = listOf(CustomPid("synthetic-rpm", "Synthetic RPM", "221234", "(A*256+B)/4", header = if (crossEcu) "7E1" else "7E0", responseHeader = "7E8", sourceRecords = listOf("synthetic:pid"),
+                supportChecks = supportProvenance?.let { listOf(com.bod3.app.datapack.PidSupportCheck("220001", "A",
+                    sourceRecords = if (it) listOf("synthetic:prerequisite") else emptyList())) }.orEmpty())),
             actuators = listOf(ActuatorRecipe("synthetic-io", "Synthetic output", "Not vehicle data",
                 ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8"),
                 start = listOf(0x2F, 0x12, 0x34, 3, 1), stop = listOf(0x2F, 0x12, 0x34, 0),
@@ -170,6 +172,21 @@ object VehiclePackScenarios {
         val c = Fixture(enabled = true, explicitReads = false).client(cache)
         val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
         rejects { c.system(v, v.systems.single()) }
+    }
+
+    fun convertedPrerequisitesMustCarryTheirOwnProvenance() = temporary { cache ->
+        for (hasSources in listOf(false, true)) {
+            val f = Fixture(enabled = true, supportProvenance = hasSources)
+            val c = f.client(cache); val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
+            if (!hasSources) rejects { c.system(v, v.systems.single()) }
+            else {
+                val data = c.system(v, v.systems.single()).data
+                check(data.pids.single().supportChecks.single().sourceRecords == listOf("synthetic:prerequisite"))
+                // Even fully preserved prerequisite provenance is NOT write trust on ordinary import.
+                val imported = CatalogCodec.dataOrThrow(JsonWriter.write(CatalogCodec.dataMap(data)))
+                check(imported.pids == data.pids && imported.actuators.none { it.verified } && imported.coding.none { it.verified })
+            }
+        }
     }
 
     fun cancelledDownloadNeverInstalls() = temporary { cache ->

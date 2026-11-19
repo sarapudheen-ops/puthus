@@ -453,7 +453,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     ecu_samples = {"0006", "000b", "0024", "0028", "002d", "006e", "0070", "0081", "0085", "00c1", "00c2", "00d4"}
     for name, source in sorted(paths.items()):
         if name == "SYSTEMENTER.BIN" or (name.startswith("EU/") and (
-                re.fullmatch(r"EU/Toyota_bin_[0-9a-fA-F]+\.BIN", name)
+                re.fullmatch(r"EU/(?:Toyota|Viewer)_bin_[0-9a-fA-F]+\.BIN", name)
                 or any(name.casefold() == f"eu/ecu_data_{identity}.bin" for identity in ecu_samples))):
             raw = source.read_bytes()
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),

@@ -43,8 +43,11 @@ data class DiagnosticLink(
     val dialect: DiagnosticDialect = DiagnosticDialect.UDS,
     val baudKbps: Double? = null,
     val kLine: KLineConfig? = null,
+    /** Exact per-ECU keepalive; bare 3E is a KWP variant, never inferred from CAN transport. */
+    val testerPresent: List<Int> = listOf(0x3E, 0x00),
 ) {
     fun problems(): List<String> = buildList {
+        if (testerPresent != listOf(0x3E, 0x00) && !(dialect == DiagnosticDialect.KWP2000 && testerPresent == listOf(0x3E))) add("testerPresent: only 3E (KWP) or 3E00 is allowed")
         if (protocol.isCan) {
             if (kLine != null) add("CAN link cannot contain K-line initialization")
             if (baudKbps != null && (!protocol.hasCustomBaud || baudKbps !in 10.0..1000.0)) add("CAN baud is invalid for this protocol")
@@ -75,6 +78,7 @@ data class DiagnosticLink(
 object DiagnosticLinkCodec {
     fun encode(link: DiagnosticLink): Map<String, Any?> = linkedMapOf(
         "protocol" to link.protocol.name, "dialect" to link.dialect.name, "baudKbps" to link.baudKbps,
+        "testerPresent" to link.testerPresent.takeIf { it != listOf(0x3E, 0x00) }?.let { Hex.format(it, "") },
         "kLine" to link.kLine?.let { k -> linkedMapOf(
             "init" to k.init.name, "initAddress" to k.initAddress, "baud" to k.baud,
             "p1MaxMs" to k.p1MaxMs, "p2MaxMs" to k.p2MaxMs, "p2StarMs" to k.p2StarMs,
@@ -90,11 +94,14 @@ object DiagnosticLinkCodec {
         val f = JsonFields(errors); val m = f.asObject(raw, path) ?: return null
         val before = errors.size
         fun unknown(map: Map<*, *>, allowed: Set<String>, p: String) { map.keys.filterNot { it in allowed }.forEach { errors += "$p.$it: unknown field" } }
-        unknown(m, setOf("protocol", "dialect", "baudKbps", "kLine"), path)
+        unknown(m, setOf("protocol", "dialect", "baudKbps", "kLine", "testerPresent"), path)
         fun <T : Enum<T>> readEnum(value: String?, choices: Array<T>, p: String): T? = choices.firstOrNull { it.name == value }.also { if (it == null) errors += "$p: unknown value $value" }
         val protocol = readEnum(f.string(m, "protocol", path), ObdProtocol.entries.toTypedArray(), "$path.protocol")
         val dialect = readEnum(f.string(m, "dialect", path), DiagnosticDialect.entries.toTypedArray(), "$path.dialect")
         val baud = f.number(m, "baudKbps", path, false)
+        val keepAlive = f.string(m, "testerPresent", path, false)?.let { text ->
+            Hex.parse(text).also { if (it == null) errors += "$path.testerPresent: must be hex bytes" }
+        } ?: listOf(0x3E, 0x00)
         val k = f.obj(m, "kLine", path, false)?.let { km ->
             val p = "$path.kLine"
             unknown(km, setOf("init", "initAddress", "baud", "p1MaxMs", "p2MaxMs", "p2StarMs", "p3MinMs", "p3MaxMs", "p4Ms", "fastLowMs", "fastHighMs", "initParity", "dataParity", "slowInitTimingsMs"), p)
@@ -113,7 +120,7 @@ object DiagnosticLinkCodec {
             )
         }
         if (protocol == null || dialect == null || errors.size != before) return null
-        val result = DiagnosticLink(protocol, dialect, baud, k)
+        val result = DiagnosticLink(protocol, dialect, baud, k, keepAlive)
         errors += result.problems().map { "$path.$it" }
         return result
     }

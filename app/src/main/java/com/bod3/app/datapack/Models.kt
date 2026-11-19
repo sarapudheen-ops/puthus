@@ -15,6 +15,80 @@ internal fun parseHexBytes(text: String): List<Int> {
     return clean.chunked(2).map { it.toInt(16) }
 }
 
+/** A read-only prerequisite on the SAME physical ECU, evaluated once per live run/link epoch. */
+data class PidSupportCheck(
+    val request: String,
+    val formula: String,
+    val dataOffset: Int = 0,
+    val sourceRecords: List<String> = emptyList(),
+    /** A801 returns [local ID, length, support bytes] records, NOT live sensor samples. */
+    val recordId: Int? = null,
+) {
+    private val parsed: Formula? by lazy { Formula.parseOrNull(formula) }
+    val requestBytes: List<Int> get() = parseHexBytes(request)
+
+    fun problems(link: DiagnosticLink?): List<String> = buildList {
+        val bytes = runCatching { requestBytes }.getOrNull()
+        // Only reads with a completely echoed single identifier can be prerequisites. In
+        // particular, no clear/session/security/tester-present/write can hide in this list.
+        val shape = bytes != null && when (bytes.firstOrNull()) {
+            0x01, 0x09, 0x1A, 0x21 -> bytes.size == 2
+            0x22 -> bytes.size == 3
+            0xA8 -> bytes == listOf(0xA8, 0x01) && recordId != null
+            else -> false
+        }
+        if (recordId != null && (recordId !in 0..255 || bytes != listOf(0xA8, 0x01))) add("recordId: only an A801 support-record ID in 0-255 is allowed")
+        if (!shape || !(if (link?.dialect == DiagnosticDialect.KWP2000)
+                KwpServices.readAllowed(bytes) || (bytes.firstOrNull() in ReadOnlyPolicy.obdServices && ReadOnlyPolicy.isAllowed(bytes))
+            else ReadOnlyPolicy.isAllowed(bytes))) add("request: must be an exact, read-only single-identifier request")
+        if (formula.length > 2048 || parsed == null || parsed!!.bytesNeeded == 0) add("formula: needs a bounded byte-dependent arithmetic expression")
+        if (dataOffset !in 0..4095) add("dataOffset: must be 0-4095")
+        if (sourceRecords.any(String::isBlank)) add("sourceRecords: must not contain empty IDs")
+    }
+
+    companion object {
+        /**
+         * A801 alone permits multiple replies, with the exact E801 echo on EVERY message.
+         * COMM GetKwpRecData retains the first service/identifier and strips both from subsequent
+         * A8 messages; SendCmdAndGetReceive_EX drops the first service, and FDATA skips the remaining
+         * identifier before reading TLVs. Ordinary 21xx samples/prerequisites stay single-message.
+         */
+        internal fun normalizeReply(request: List<Int>, payloads: List<List<Int>>): List<Int>? {
+            if (request != listOf(0xA8, 1)) return payloads.singleOrNull()
+            if (payloads.size !in 1..256 || payloads.any { it.size <= 2 || it.take(2) != listOf(0xE8, 1) || it.any { b -> b !in 0..255 } }) return null
+            if (payloads.sumOf { it.size.toLong() - 2 } > 8192) return null
+            return listOf(0xE8, 1) + payloads.flatMap { it.drop(2) }
+        }
+    }
+
+    fun accepts(payload: List<Int>): Boolean {
+        val data = pidReplyData(runCatching { requestBytes }.getOrNull(), payload, 0) ?: return false
+        val bytes = if (recordId == null) data else {
+            // Validate the WHOLE reply before admitting any record. A truncated or duplicate
+            // trailing record cannot authorize a feature just because an earlier one matched.
+            if (data.size > 8192) return false
+            val seen = mutableSetOf<Int>(); var at = 0; var found: List<Int>? = null
+            while (at < data.size) {
+                if (at + 2 > data.size || !seen.add(data[at])) return false
+                val id = data[at]; val size = data[at + 1]; at += 2
+                if (size !in 0..255 || at + size > data.size) return false
+                if (id == recordId) found = data.subList(at, at + size)
+                at += size
+            }
+            found ?: return false
+        }
+        if (dataOffset !in 0..bytes.size) return false
+        return parsed?.evaluate(bytes.drop(dataOffset))?.let { it != 0.0 } == true
+    }
+}
+
+private fun pidReplyData(request: List<Int>?, payload: List<Int>, offset: Int): List<Int>? {
+    if (request.isNullOrEmpty() || offset !in 0..4095 || payload.size < request.size + offset ||
+        payload.any { it !in 0..255 } || payload.firstOrNull() != request[0] + 0x40 ||
+        payload.subList(1, request.size) != request.drop(1)) return null
+    return payload.drop(request.size + offset)
+}
+
 /**
  * A user-defined live value: a read request, an optional ECU address, and a formula over the reply's
  * data bytes. Requests must be read-only (e.g. `010C`, `22F40C`); the positive reply echo (`41 0C`,
@@ -37,6 +111,8 @@ data class CustomPid(
     val link: DiagnosticLink? = null,
     val dataOffset: Int = 0,
     val sourceRecords: List<String> = emptyList(),
+    /** Ordered prerequisites, potentially on different local IDs, but never on another ECU. */
+    val supportChecks: List<PidSupportCheck> = emptyList(),
 ) {
     /** Validation errors (empty when valid). Field names match the JSON keys. */
     fun problems(): List<String> = buildList {
@@ -53,6 +129,9 @@ data class CustomPid(
         } catch (e: IllegalArgumentException) {
             add("formula: ${e.message}")
         }
+        if (supportChecks.size > 32) add("supportChecks: at most 32 prerequisite reads are allowed")
+        if (supportChecks.isNotEmpty() && (header == null || responseHeader == null)) add("supportChecks: an exact physical ECU address pair is required")
+        supportChecks.forEachIndexed { i, check -> addAll(check.problems(link).map { "supportChecks[$i].$it" }) }
         if (!(min < max)) add("min/max: min must be smaller than max")
         if (decimals !in 0..6) add("decimals: must be 0-6")
         if (dataOffset !in 0..4095) add("dataOffset: must be 0-4095")
@@ -80,12 +159,8 @@ data class CustomPid(
     private val parsedFormula: Formula? by lazy { Formula.parseOrNull(formula) }
 
     /** Decodes a positive reply payload (starting with the response service byte), or null. */
-    fun decode(payload: List<Int>): Double? {
-        val request = runCatching { requestBytes }.getOrNull() ?: return null
-        if (payload.size < request.size || payload[0] != request[0] + 0x40) return null
-        if (payload.subList(1, request.size) != request.drop(1)) return null
-        return parsedFormula?.evaluate(payload.drop(request.size + dataOffset))
-    }
+    fun decode(payload: List<Int>): Double? = pidReplyData(runCatching { requestBytes }.getOrNull(), payload, dataOffset)
+        ?.let { parsedFormula?.evaluate(it) }
 
     fun format(value: Double): String = if (decimals == 0) Math.round(value).toString() else "%.${decimals}f".format(value)
 }

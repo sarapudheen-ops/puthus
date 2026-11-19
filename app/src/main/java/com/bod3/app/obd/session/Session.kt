@@ -98,7 +98,7 @@ class ObdRequestException(val error: ElmError, val response: ElmResponse) :
 data class ObdResponse(
     val request: List<Int>,
     val elm: ElmResponse,
-    /** Positive responses (service + 0x40), one per answering ECU. */
+    /** Positive responses (service + 0x40); some exact KWP reads return several messages. */
     val messages: List<EcuMessage>,
     /** Negative responses (`7F <service> <NRC>`), if any ECU rejected the request. */
     val negativeResponses: List<EcuMessage>,
@@ -107,6 +107,8 @@ data class ObdResponse(
      * message (e.g. a first frame whose flow control went unanswered). Used to detect modules.
      */
     val responders: List<String> = emptyList(),
+    /** No lost/invalid transport frames, unexpected ECU, service or identifier in this exchange. */
+    val complete: Boolean = true,
 ) {
     val error: ElmError? get() = elm.error
 
@@ -187,6 +189,16 @@ class Session(
     /** The target the adapter is currently routed to, or null when unknown (after a failed change). */
     val currentTarget: EcuTarget? get() = appliedTarget
 
+    private var linkEpoch = 0L
+
+    /** Prerequisite snapshots must not survive routing resets, ECU switches or expired K-line init. */
+    internal fun currentLinkEpoch(target: EcuTarget.Physical): Long? {
+        if (appliedTarget != target) return null
+        val k = target.link?.kLine
+        if (k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true) return null
+        return linkEpoch
+    }
+
     suspend fun request(
         target: EcuTarget,
         request: List<Int>,
@@ -208,7 +220,8 @@ class Session(
     }
 
     /** Used by owned session keep-alives: never switches ECU, initializes a bus or resends a write. */
-    suspend fun keepAliveCurrent(target: EcuTarget.Physical, request: List<Int> = listOf(0x3E, 0x00)): Boolean {
+    suspend fun keepAliveCurrent(target: EcuTarget.Physical, request: List<Int> = target.link?.testerPresent ?: listOf(0x3E, 0x00)): Boolean {
+        require(request == (target.link?.testerPresent ?: listOf(0x3E, 0x00))) { "Keepalive differs from this ECU's definition" }
         require(request == listOf(0x3E) || request == listOf(0x3E, 0x00))
         return routedOperation(target) { lock.withLock {
             val k = target.link?.kLine
@@ -217,7 +230,16 @@ class Session(
         } }
     }
 
-    private suspend fun exchange(target: EcuTarget, request: List<Int>, timeoutMs: Long, writing: Boolean): ObdResponse {
+    private suspend fun exchange(target: EcuTarget, request: List<Int>, timeoutMs: Long, writing: Boolean): ObdResponse = try {
+        exchangeCurrent(target, request, timeoutMs, writing)
+    } catch (e: Exception) {
+        // A disconnect, reset, partial routing change or cancelled exchange makes all ECU-local
+        // prerequisite snapshots stale. Never reconnect/replay a write behind a saved grant.
+        invalidateRouting()
+        throw e
+    }
+
+    private suspend fun exchangeCurrent(target: EcuTarget, request: List<Int>, timeoutMs: Long, writing: Boolean): ObdResponse {
         val physical = target as? EcuTarget.Physical
         val k = physical?.link?.kLine
         val expired = k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true
@@ -246,6 +268,10 @@ class Session(
             if (remaining > 0) wait(remaining)
         }
         val command = request.joinToString("") { "%02X".format(it) }
+        // Explicit startCommunication/session/write/clear operations can change applicability
+        // without changing the ECU header. They also expire a live run's prerequisite snapshot.
+        if (writing || ReadOnlyPolicy.isClearRequest(request) ||
+            (physical?.link?.dialect == DiagnosticDialect.KWP2000 && request == listOf(0x81))) linkEpoch++
         // Adapter supplies the length and checksum; the response is independently verified below.
         val elm = executor.execute(command, timeoutMs)
         lastExchangeAtMs = clock()
@@ -266,14 +292,12 @@ class Session(
             if (!response.isOk) throw ObdRequestException(response.error ?: ElmError.UNKNOWN_COMMAND, response)
         }
         protocol = newProtocol
-        appliedHeader = null
-        appliedFilter = null
-        appliedFlowControl = null
-        appliedTarget = null
+        invalidateRouting()
     } }
 
     /** Forgets the routing state, forcing the next request to re-send every routing command. */
     fun invalidateRouting() {
+        linkEpoch++
         appliedHeader = null
         appliedFilter = null
         appliedFlowControl = null
@@ -295,6 +319,7 @@ class Session(
         if (!protocol.isCan) return
         if (target == appliedTarget) return
         val wanted = HeaderCommands.routingFor(target, protocol.headerFormat, options)
+        linkEpoch++
         appliedTarget = null
         try {
             if (appliedHeader != wanted.header) {
@@ -334,10 +359,12 @@ class Session(
 
         val physical = target as? EcuTarget.Physical
         val link = physical?.link
-        val all = if (link?.kLine != null) {
+        val decoded = if (link?.kLine != null) {
             val expected = requireNotNull(Hex.parse(physical.responseHeader.orEmpty()))
-            elm.lines.mapNotNull { KLineFrames.decode(it, expected, protocol == ObdProtocol.ISO_9141_2) }
-        } else ResponseDecoder.decode(elm.lines, protocol, options.extendedAddressing)
+            val messages = elm.lines.mapNotNull { KLineFrames.decode(it, expected, protocol == ObdProtocol.ISO_9141_2) }
+            com.bod3.app.obd.protocol.DecodedMessages(messages, messages.size == elm.lines.size)
+        } else ResponseDecoder.inspect(elm.lines, protocol, options.extendedAddressing)
+        val all = decoded.messages
         val responders = if (link?.kLine != null) all.mapNotNull { it.header }.distinct() else FrameParser.parse(elm.lines, protocol.headerFormat).map { it.header }.distinct()
         val service = request[0]
         val addressed = all.filter { m -> link?.kLine != null || physical?.responseHeader == null || physical.responseMask != null || m.header.equals(physical.responseHeader, true) }
@@ -347,7 +374,8 @@ class Session(
         val negative = addressed.filter { message ->
             message.payload.size >= 3 && message.payload[0] == 0x7F && message.payload[1] == service
         }
-        return ObdResponse(request, elm, positive, negative, responders)
+        return ObdResponse(request, elm, positive, negative, responders,
+            complete = decoded.complete && addressed.size == all.size && positive.size + negative.size == addressed.size)
     }
 
     private fun matchesRequest(request: List<Int>, payload: List<Int>): Boolean {

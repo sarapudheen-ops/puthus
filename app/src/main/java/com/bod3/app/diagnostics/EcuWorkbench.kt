@@ -74,6 +74,8 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
         val request = definition.requestBytes
         val response = try { session.request(ecu.target, request, timeout(ecu)) }
         catch (e: AdapterException) { return DidResult.Failed(e.message ?: "adapter error") }
+        if (!response.complete || (response.messages.isNotEmpty() && response.negativeResponses.isNotEmpty()))
+            return DidResult.Failed("Incomplete, mismatched or mixed positive/negative ECU read; no partial result accepted")
         if (response.messages.size > 1) return DidResult.Failed("Multiple positive messages for one ECU read; no ambiguous result accepted")
         response.messages.firstOrNull()?.let {
             return definition.data(it.payload)?.let(DidResult::Value)
@@ -97,6 +99,8 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
         if (ecu.diagnostics == null) return client.clearDtcs(ecu.target, confirmation)
         val response = try { session.request(ecu.target, definition.requestBytes, timeout(ecu), confirmation = confirmation) }
         catch (e: AdapterException) { return UdsClearResult.Failed(e.message ?: "adapter error") }
+        if (!response.complete || (response.messages.isNotEmpty() && response.negativeResponses.isNotEmpty()))
+            return UdsClearResult.Failed("Incomplete, mismatched or mixed positive/negative clear replies; result is unknown")
         if (response.messages.size > 1) return UdsClearResult.Failed("Multiple positive clear replies; result is ambiguous")
         response.messages.firstOrNull()?.let {
             return if (it.payload == definition.prefixBytes) UdsClearResult.Cleared

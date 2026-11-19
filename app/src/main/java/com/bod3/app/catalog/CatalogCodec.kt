@@ -18,12 +18,12 @@ data class CatalogResult(val pack: CatalogPack?, val errors: List<String>) {
 /** One invalid object rejects the entire document. There is no forgiving/partial catalog decoder. */
 object CatalogCodec {
     const val FORMAT = "bod3-vehicle-catalog"
-    const val VERSION = 2
+    const val VERSION = 3
     const val MAX_BYTES = 16 * 1024 * 1024
 
     fun encode(pack: CatalogPack): String = JsonWriter.write(packMap(pack))
     fun packMap(p: CatalogPack): Map<String, Any?> = linkedMapOf(
-        "format" to FORMAT, "formatVersion" to if (hasReadDefinitions(p)) 2 else 1, "id" to p.id, "name" to p.name, "version" to p.version,
+        "format" to FORMAT, "formatVersion" to requiredVersion(p), "id" to p.id, "name" to p.name, "version" to p.version,
         "description" to p.description, "nodes" to p.nodes.map(::nodeMap),
         "platforms" to p.platforms.map { linkedMapOf("id" to it.id, "name" to it.name, "notes" to it.notes, "data" to dataMap(it.data)) },
         "library" to dataMap(p.library),
@@ -85,7 +85,8 @@ object CatalogCodec {
         val description = f.string(m, "description", "", false)
         if (id == null || name == null) return CatalogResult(null, errors.distinct())
         var pack = CatalogPack(id, name, version, nodes, platforms, library, description)
-        if (hasReadDefinitions(pack) && formatVersion != 2) errors += "diagnostics: requires catalog formatVersion 2 so older apps cannot silently substitute generic ECU reads"
+        if (formatVersion != null && formatVersion < requiredVersion(pack)) errors +=
+            "diagnostics/supportChecks/testerPresent: requires catalog formatVersion ${requiredVersion(pack)} so older apps cannot silently discard exact reads, prerequisites or keepalive"
         if (context != null) {
             for ((kind, ids) in listOf("nodes" to nodes.map { it.id }, "platforms" to platforms.map { it.id })) {
                 ids.groupingBy { it }.eachCount().filterValues { it > 1 }.keys.forEach { errors += "$kind: duplicate id $it" }
@@ -113,7 +114,7 @@ object CatalogCodec {
         if (raw == null) return CatalogData()
         val f = JsonFields(errors); val m = f.asObject(raw, p) ?: return CatalogData()
         unknown(m, setOf("ecus", "pids", "dtcs", "dtcGroups", "moduleNames", "actuators", "coding", "security", "connection", "exclude"), p, errors)
-        val legacy = DataPackCodec.decode(JsonWriter.write(linkedMapOf("formatVersion" to 2, "id" to "catalog-data", "name" to "Catalog data",
+        val legacy = DataPackCodec.decode(JsonWriter.write(linkedMapOf("formatVersion" to DataPackCodec.FORMAT_VERSION, "id" to "catalog-data", "name" to "Catalog data",
             "pids" to m["pids"], "dtcs" to m["dtcs"], "moduleNames" to m["moduleNames"], "dtcGroups" to m["dtcGroups"])))
         errors += legacy.errors.map { "$p.$it" }
         val ecus = f.list(m, "ecus", p).mapIndexedNotNull { i, e -> DataPackCodec.decodeEcu(e, "$p.ecus[$i]", errors) }
@@ -149,8 +150,14 @@ object CatalogCodec {
                 moduleNames = f.strings(exclude, "moduleNames", "$p.exclude").toSet()))
     }
 
-    private fun hasReadDefinitions(pack: CatalogPack): Boolean =
-        (listOf(pack.library) + pack.nodes.map { it.data } + pack.platforms.map { it.data }).any { d -> d.ecus.any { it.diagnostics != null } }
+    private fun requiredVersion(pack: CatalogPack): Int {
+        val data = listOf(pack.library) + pack.nodes.map { it.data } + pack.platforms.map { it.data }
+        if (data.any { d -> d.pids.any { it.supportChecks.isNotEmpty() || it.link?.testerPresent == listOf(0x3E) } ||
+                d.ecus.any { it.link?.testerPresent == listOf(0x3E) } ||
+                d.actuators.any { it.module.target.link?.testerPresent == listOf(0x3E) } ||
+                d.coding.any { it.module.target.link?.testerPresent == listOf(0x3E) } }) return 3
+        return if (data.any { d -> d.ecus.any { it.diagnostics != null } }) 2 else 1
+    }
 
     private fun unknown(map: Map<*, *>, allowed: Set<String>, path: String, errors: MutableList<String>) {
         map.keys.filterNot { it in allowed }.forEach { errors += "$path.$it: unknown field (nothing is silently discarded)" }

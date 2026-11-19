@@ -92,17 +92,17 @@ The verified full regional SYSLIST excerpts give these exact joins (no low-nibbl
 | Total | 287,030 | 286,149 | 881 |
 
 These joins do not change the **zero executable definitions** figure. The accounting table above is
-from the full conversion in [Actions run 44386793124](https://github.com/sarapudheen-ops/puthus/actions/runs/44386793124)
-for `cf78f092ed6d3bae53297503f86e6a4cf27c0866` (conversion check `135094772769`). The 1,313 additional
-unresolved records versus the earlier report are the 1,308 entry records and five unclaimed spans,
-not newly supported diagnostic features. This run also published 513 checksum-verified static reports;
-static disassembly and exact joins alone are not executable coverage.
+from the full conversion in [Actions run 44482990080](https://github.com/sarapudheen-ops/puthus/actions/runs/44482990080)
+for `d782c9a94b87e032fd9725aceb2d0154edcaa05a` (conversion check `135420684960`). The 1,313 additional
+unresolved records versus the pre-entry-reader report are the 1,308 entry records and five unclaimed
+spans, not newly supported diagnostic features. This run published 527 checksum-verified static
+reports; static disassembly and exact joins alone are not executable coverage.
 
 ## Evidence and current integration status
 
 This is the **full 1,307-ECU-source accounting**, published by
-[Actions run 44386793124](https://github.com/sarapudheen-ops/puthus/actions/runs/44386793124)
-for `cf78f092ed6d3bae53297503f86e6a4cf27c0866`, not the earlier 47-BIN/12-ECU local sample.
+[Actions run 44482990080](https://github.com/sarapudheen-ops/puthus/actions/runs/44482990080)
+for `d782c9a94b87e032fd9725aceb2d0154edcaa05a`, not the earlier 47-BIN/12-ECU local sample.
 Download that run's `toyota-vehicle-packs` artifact for the exact ledgers named above.
 Large generated objects/ledgers remain outside Git and outside the APK.
 
@@ -110,6 +110,17 @@ The selected-path loader, closed selected-system scope, manual confirmation, bou
 and system/feature UI are being integrated in this PR. They do **not** supply missing diagnostic
 semantics. Until the joins listed above are translated and tested, every recovered real system
 stays disabled. Synthetic KWP/CAN tests establish engine behavior, not recovered Toyota coverage.
+
+### Current live conversion work — not counted as executable
+
+The native A801 reply origin and separate support/discovery pipeline have now been traced; the runtime
+has ordered same-ECU prerequisite reads and link-epoch invalidation, with bounded atomic support-table
+validation. Sensor-nonzero admission is not used. See [native evidence, schema and remaining blockers](toyota-live-prerequisites.md).
+The bounded direct-21 numeric translator emits **disabled review candidates only** and requires exact
+support bindings, command/discovery tables and viewer exclusions. It is not integrated as an executable
+pack producer. Numeric/byte-join candidates, runtime tests and source verification do not increase the
+converted counts above. Per-ECU transport/init and CALC semantics still block real live definitions;
+fault/freeze-frame, test, coding and special-function translations remain unfinished.
 
 The migration from full offline source assets to the small pinned index is documented in
 [on-demand delivery and reproduction](toyota-vehicle-packs.md). This report must be regenerated
