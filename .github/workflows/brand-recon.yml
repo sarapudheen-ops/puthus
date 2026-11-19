@@ -80,6 +80,11 @@ jobs:
           python3 tools/thinkdiag/brand_libs.py .local/brands --output .local/recon || {
             echo "library comparison failed"; exit 0; }
           cat .local/recon/library-hashes.md >> "$GITHUB_STEP_SUMMARY"
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Brand library hash comparison' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Shared native libraries across brands' \
+            -F 'output[summary]=@.local/recon/library-hashes.md' || echo "library check publish skipped"
 
       - name: Publish the support matrix as a check
         if: always()
