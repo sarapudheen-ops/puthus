@@ -1,0 +1,89 @@
+name: Inspect brand archives
+
+# Brand-agnostic reconnaissance. Runs on GitHub's runners because release-asset
+# downloads are blocked from some build environments; no vendor code is executed.
+on:
+  workflow_dispatch:
+    inputs:
+      brands:
+        description: 'Comma-separated release asset names without .zip (e.g. EOBD2,DEMO,TOYOTA)'
+        required: true
+        default: 'EOBD2,DEMO'
+      deep:
+        description: 'Deep member inspection (slower; skip for archives over ~150 MB)'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  inspect:
+    name: Inspect brand archives (no vendor code execution)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BRANDS: ${{ inputs.brands }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install analysis dependencies
+        run: python3 -m pip install -r tools/thinkdiag/requirements.txt
+
+      - name: Download the requested brand archives outside git
+        run: |
+          set -euo pipefail
+          mkdir -p .local/brands
+          IFS=',' read -ra LIST <<< "$BRANDS"
+          for brand in "${LIST[@]}"; do
+            brand="$(echo "$brand" | tr -d '[:space:]')"
+            [ -z "$brand" ] && continue
+            echo "::group::download $brand.zip"
+            gh release download assets-v1 --pattern "$brand.zip" --dir .local/brands --clobber
+            ls -l ".local/brands/$brand.zip"
+            echo "::endgroup::"
+          done
+
+      - name: Inspect every requested archive as data only
+        run: |
+          set -euo pipefail
+          mkdir -p .local/recon
+          for zip in .local/brands/*.zip; do
+            brand="$(basename "$zip" .zip)"
+            echo "::group::inspect $brand"
+            python3 tools/thinkdiag/inspect_pack.py "$zip" --output ".local/recon/$brand" || {
+              echo "inspect failed for $brand" | tee ".local/recon/$brand.error"
+            }
+            echo "::endgroup::"
+          done
+
+      - name: Summarise the support matrix
+        run: |
+          set -euo pipefail
+          python3 tools/thinkdiag/brand_summary.py .local/recon
+
+      - name: Publish the support matrix as a check
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f .local/recon/summary.md ]; then
+            cat .local/recon/summary.md >> "$GITHUB_STEP_SUMMARY"
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name='Brand archive support matrix' -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=success \
+              -f 'output[title]=Brand archive inspection' \
+              -F 'output[summary]=@.local/recon/summary.md'
+          fi
+
+      - name: Upload inspection reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: brand-recon
+          path: .local/recon/
+          if-no-files-found: warn
+          retention-days: 14
