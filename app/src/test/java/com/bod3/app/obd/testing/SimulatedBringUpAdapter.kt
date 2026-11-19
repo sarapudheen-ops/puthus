@@ -18,6 +18,7 @@ class SimulatedBringUpAdapter(val modes: Map<Int, Mode> = mapOf(10400 to Mode.WO
     var header = "8010F1"
     var hugeIdentification = false
     var emptyDtcs = false
+    var beforeInit: suspend () -> Unit = {}
     var beforeRead: suspend (List<Int>) -> Unit = {}
     var afterRead: (List<Int>) -> Unit = {}
     var rawOverride: ((List<Int>) -> String?)? = null
@@ -30,7 +31,8 @@ class SimulatedBringUpAdapter(val modes: Map<Int, Mode> = mapOf(10400 to Mode.WO
         val raw = when {
             c.startsWith("STPBR") -> { baud = c.drop(5).toInt(); "OK\r" }
             c.startsWith("ATSH") -> { header = c.drop(4); "OK\r" }
-            c.startsWith("STIFI") -> frame(listOf(0xC1, 0xE9, 0x8F), Mode.WORKING)
+            c.startsWith("STIFI") -> { beforeInit(); frame(listOf(0xC1, 0xE9, 0x8F), Mode.WORKING) }
+            c == "ATSI" -> { beforeInit(); "OK\r" }
             c.startsWith("AT") || c.startsWith("ST") -> "OK\r"
             else -> {
                 val request = requireNotNull(Hex.parse(c))

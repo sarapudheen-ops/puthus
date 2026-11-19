@@ -205,7 +205,7 @@ class PackTransferTest {
                 PackKind.DATA -> DataPackCodec.decode(text).let { r -> assertTrue("${file.name}: ${r.errors}", r.isValid); true }
                 PackKind.ACTUATORS -> ActuatorRecipeCodec.decode(text).let { r -> assertTrue("${file.name}: ${r.errors}", r.isValid); true }
                 PackKind.CODING -> CodingRecipeCodec.decode(text).let { r -> assertTrue("${file.name}: ${r.errors}", r.isValid); true }
-                PackKind.PROFILE, PackKind.CATALOG -> false
+                PackKind.PROFILE, PackKind.CATALOG, PackKind.VERIFIED_SETUPS -> false
             }
             assertTrue(file.name, ok)
         }

@@ -156,9 +156,18 @@ class Session(
         }
         val link = requireNotNull(target.link)
         invalidateRouting()
-        if (link.kLine == null) lock.withLock {
-            sendAll(listOf("ATPC") + link.protocol.selectCommands(link.baudKbps) + listOf("ATH1", "ATCAF1", "ATCFC1"))
-            protocol = link.protocol
+        lock.withLock {
+            if (link.kLine != null) {
+                // Initialization has its own bounded budget (not the 1-second diagnostic-read
+                // budget). In particular, a valid 5-baud handshake can take several seconds.
+                KLineAdapter.initialize(executor, target, logger, strictBringUp = true)
+                protocol = link.protocol
+                appliedTarget = target
+                lastExchangeAtMs = clock()
+            } else {
+                sendAll(listOf("ATPC") + link.protocol.selectCommands(link.baudKbps) + listOf("ATH1", "ATCAF1", "ATCFC1"))
+                protocol = link.protocol
+            }
         }
     }
 
@@ -175,7 +184,7 @@ class Session(
     /** Serializes safety checks as well as the write. No stale checks while waiting behind a poll/run. */
     suspend fun <T> withDiagnosticOperation(block: suspend () -> T): T {
         if (currentCoroutineContext()[Lease]?.session === this) return block()
-        return operationLock.withLock { withContext(Lease(this, null)) { block() } }
+        return executor.withExclusive { operationLock.withLock { withContext(Lease(this, null)) { block() } } }
     }
 
     /** Holds routing across session/security/write/verify/cleanup, excluding background live polls. */
@@ -201,7 +210,7 @@ class Session(
             require(lease.target == null || target == lease.target) { "Operation is bound to a different ECU" }
             return block()
         }
-        return operationLock.withLock { withContext(Lease(this, null)) { block() } }
+        return withDiagnosticOperation(block)
     }
     private var baseProtocol = initialProtocol
     private var lastExchangeAtMs: Long? = null

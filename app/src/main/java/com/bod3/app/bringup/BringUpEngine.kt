@@ -22,6 +22,7 @@ class BringUpEngine(
 ) {
     data class Progress(val candidateId: String, val index: Int, val total: Int, val role: ProbeRole? = null)
     private class EvidenceLimit : IllegalStateException("Evidence budget exhausted; no setup was verified and no log was silently discarded")
+    private class InterruptedEvidence : IllegalStateException("An adapter exchange was interrupted; evidence may be partial. No setup verified; reconnect before retrying")
 
     suspend fun run(
         scope: BringUpScope, candidates: List<BringUpCandidate>, manualCandidateId: String? = null,
@@ -59,6 +60,9 @@ class BringUpEngine(
                 exchanges += BringUpExchange(active?.id, exchange.command, exchange.timeoutMs, exchange.timestampMs,
                     exchange.durationMs, raw, exchange.error?.take(2048))
                 logBytes += overhead + raw.toByteArray(Charsets.UTF_8).size
+                // A timed-out/cancelled/lost exchange can still receive bytes after observation
+                // stops. Keep its available evidence, but never call that run a complete log.
+                if (exchange.error != null) complete = false
                 if (overflow) { complete = false; throw EvidenceLimit() }
             }
         }
@@ -97,7 +101,8 @@ class BringUpEngine(
                         } catch (e: Exception) {
                             (e.message ?: e.javaClass.simpleName).take(2048)
                         }
-                        val working = error.isEmpty() && complete && probes.size == 3 && probes.all { it.passed } &&
+                        if (!complete) throw InterruptedEvidence()
+                        val working = error.isEmpty() && probes.size == 3 && probes.all { it.passed } &&
                             probes.all { p -> exchanges.any { it.candidateId == candidate.id && it.command.filterNot(Char::isWhitespace) == p.request && it.error == null } }
                         attempts += BringUpAttempt(candidate.id, candidate.fingerprint, attemptStarted, clock(),
                             if (working) AttemptOutcome.WORKING else AttemptOutcome.FAILED,

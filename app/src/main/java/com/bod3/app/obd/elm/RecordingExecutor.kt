@@ -63,7 +63,9 @@ class RecordingExecutor(
 
     fun snapshot(): List<RawExchange> = synchronized(lock) { entries.toList() }
 
-    override suspend fun execute(command: String, timeoutMs: Long): ElmResponse {
+    override suspend fun <T> withExclusive(block: suspend () -> T): T = delegate.withExclusive(block)
+
+    override suspend fun execute(command: String, timeoutMs: Long): ElmResponse = withExclusive {
         val normalized = command.trim().uppercase()
         val listeners = synchronized(lock) { observers.toList() }
         listeners.forEach { it.before(normalized, timeoutMs) }
@@ -83,7 +85,7 @@ class RecordingExecutor(
         // Outside the delegate catch: an evidence-limit exception must not turn a received reply
         // into a second, fictitious failed adapter exchange.
         listeners.forEach { it.after(ObservedExchange(normalized, timeoutMs, start, (clock() - start).coerceAtLeast(0), response.raw, null)) }
-        return response
+        response
     }
 
     private fun trackHeader(command: String) {

@@ -19,7 +19,11 @@ class BringUpTest {
     @Test fun unresolvedSourceFieldsAreListedWithoutGuessingTraffic() = runBlocking { BringUpScenarios.blockedNoIo() }
     @Test fun rejectedAdapterTimingCommandCannotVerifyAnotherSetup() = runBlocking { BringUpScenarios.strictSetup() }
     @Test fun emptyDtcMemoryStillProvesARead() = runBlocking { BringUpScenarios.emptyDtcIsValid() }
+    @Test fun fiveBaudHandshakeHasItsOwnBudgetOutsideTheShortDiagnosticRead() = runBlocking { BringUpScenarios.fiveBaudInitHasOwnBudget() }
+    @Test fun interruptedExchangeCannotVerifyOrHideIncompleteEvidence() = runBlocking { BringUpScenarios.interruptedExchangeCannotHaveCompleteEvidence() }
     @Test fun unsafeSessionCrossEcuAndMalformedCandidatesFailBeforeIo() = runBlocking { BringUpScenarios.malformedCandidates() }
+    @Test fun workingProbeCannotApproveUnrelatedIdentificationClearOrWriteDefinitions() = runBlocking { BringUpScenarios.independentDefinitionProvenance() }
+    @Test fun transferredReportsCannotContradictTheirExactProbeDefinitions() = runBlocking { BringUpScenarios.contradictoryReportsAreRejected() }
     @Test fun transfersRetainFullEvidenceButNotSourceOrWriteTrust() = runBlocking { BringUpScenarios.transferDoesNotTrustFlags() }
     @Test fun corruptTransfersAreAtomicAndDifferentCarsStaySeparate() = runBlocking { BringUpScenarios.transferAtomicValidation() }
     @Test fun storageNeverSilentlyEvictsAnotherVehicle() = runBlocking { BringUpScenarios.capacityNoSilentEviction() }

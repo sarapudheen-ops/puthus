@@ -359,6 +359,7 @@ object VehiclePackScenarios {
             check(); ByteArray(ref.bytes).also { RandomAccessFile(file, "r").use { input -> input.seek(ref.offset); input.readFully(it) } }
         }))
         var variants = 0
+        var recoveredCandidates = 0
         fun visit(level: PackLevel, ids: List<String>) {
             for (choice in level.children) {
                 if (choice.level != "variant") visit(client.open(choice), ids + choice.id)
@@ -369,12 +370,18 @@ object VehiclePackScenarios {
                         val loaded = client.system(vehicle, system)
                         check(!loaded.enabled && loaded.data.count == 0)
                         loaded.unresolvedPages.firstOrNull()?.let { check(client.unresolved(it).isNotEmpty()) }
+                        val candidates = client.bringUpCandidates(loaded)
+                        check(candidates.all { !it.runnable && it.runtime == null && it.sourceRecords.isNotEmpty() })
+                        check(candidates.map { it.supportCount } == candidates.map { it.supportCount }.sortedDescending())
+                        check(candidates.all { it.metadata.keys.containsAll(listOf("protocol", "baudRaw", "init", "addresses", "timing", "session")) })
+                        if (loaded.sourceRecords.any { it.startsWith("SYSTEMENTER.BIN@") }) check(candidates.isNotEmpty())
+                        recoveredCandidates += candidates.size
                     }
                     variants++
                 }
             }
         }
         visit(client.root(), emptyList())
-        check(variants == (index.summary["normalizedVehicleChoices"] as Number).toInt())
+        check(variants == (index.summary["normalizedVehicleChoices"] as Number).toInt() && recoveredCandidates > 0)
     }
 }

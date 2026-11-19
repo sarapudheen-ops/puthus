@@ -54,8 +54,10 @@ fun BringUpSection(
         OutlinedButton(onClick = share, enabled = !state.running && state.report != null) { Text("Share bring-up report") }
         Text("One JSON file includes the candidate list, candidates tried, complete raw adapter replies, decoded probe results, timing and failures. It may contain private identifiers; review before sharing.", style = MaterialTheme.typography.bodySmall)
         state.report?.let { r ->
-            Text("Last run: ${r.outcome} · ${r.attempts.size} candidates · ${r.exchanges.size} exchanges · " +
-                if (r.logComplete) "complete evidence" else "INCOMPLETE evidence — not verified", style = MaterialTheme.typography.labelSmall)
+            Text("Last run for ${r.scope.vehicleInstance}: ${r.outcome} · ${r.attempts.size} candidates · ${r.exchanges.size} exchanges · " +
+                (if (r.logComplete) "complete evidence" else "INCOMPLETE evidence — not verified"), style = MaterialTheme.typography.labelSmall)
+            if (r.workingCandidate?.runtime?.identityKind == com.bod3.app.bringup.EcuIdentityKind.NON_UNIQUE)
+                Text("Identification is not a reviewed unique ECU serial. Live/DTC reads only; active tests, coding and clearing stay disabled.", style = MaterialTheme.typography.bodySmall)
             r.attempts.forEach { a ->
                 Text("${a.candidateId}: ${a.outcome} — ${a.detail}", style = MaterialTheme.typography.bodySmall)
                 a.probes.forEach { p -> Text("${p.role}: ${p.request} → ${p.payload?.take(160) ?: "no valid positive reply"} · ${if (p.passed) "PASS" else "FAIL"}", style = MaterialTheme.typography.labelSmall) }

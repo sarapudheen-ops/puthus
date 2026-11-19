@@ -55,8 +55,10 @@ data class BringUpRuntime(
         val ids = ecu.diagnostics?.identification.orEmpty()
         val id = ids.singleOrNull { it.read.id == identificationId }?.read
         if (id == null || id.minBytes < 1 || id.sourceRecords.isEmpty()) add("A source-bound, nonempty identification read is required")
+        if (ids.any { it.read.sourceRecords.isEmpty() }) add("Every identification definition needs its own source records, not just the probe")
         val dtc = ecu.diagnostics?.faults
         if (dtc == null || dtc.read.sourceRecords.isEmpty()) add("An exact source-bound DTC read and record layout are required")
+        if (dtc?.clear?.sourceRecords?.isEmpty() == true) add("A clear definition needs independent source provenance; a working read cannot approve it")
         val live = data.pids.singleOrNull { it.id == livePidId }
         if (live == null) add("Choose exactly one translated live-data request")
         for (pid in data.pids) {
@@ -134,14 +136,25 @@ data class BringUpReport(
         scope.validate(); BringUpCandidate.ranked(candidates)
         require(startedAtMs >= 0 && finishedAtMs >= startedAtMs && detail.length <= 2048)
         require(attempts.size <= candidates.size && attempts.distinctBy { it.candidateId }.size == attempts.size)
-        require(manualCandidateId == null || candidates.any { it.id == manualCandidateId })
+        require(attempts.count { it.outcome == AttemptOutcome.WORKING } == if (outcome == BringUpOutcome.WORKING) 1 else 0)
+        require(manualCandidateId == null || candidates.any { it.id == manualCandidateId } && attempts.all { it.candidateId == manualCandidateId })
         for (a in attempts) {
             require(candidates.any { it.id == a.candidateId && it.fingerprint == a.fingerprint }) { "Attempt refers to a changed candidate" }
             require(a.startedAtMs in startedAtMs..finishedAtMs && a.finishedAtMs in a.startedAtMs..finishedAtMs && a.detail.length <= 2048)
             require(a.probes.size <= 3 && a.probes.map { it.role }.distinct().size == a.probes.size)
             require(a.probes.all { it.request.length <= 8192 && Hex.parse(it.request) != null && it.detail.length <= 2048 &&
                 (it.payload == null || it.payload.length <= 16384 && Hex.parse(it.payload) != null) })
-            if (a.outcome == AttemptOutcome.WORKING) require(a.probes.map { it.role } == ProbeRole.entries && a.probes.all { it.passed && it.payload != null })
+            if (a.outcome == AttemptOutcome.WORKING) {
+                require(a.probes.map { it.role } == ProbeRole.entries && a.probes.all { it.passed && it.payload != null })
+                val runtime = requireNotNull(candidates.single { it.id == a.candidateId }.runtime)
+                require(a.probes.map { Hex.parse(it.request) } == listOf(runtime.identification.requestBytes,
+                    runtime.live.requestBytes, runtime.ecu.diagnostics!!.faults!!.read.requestBytes)) { "Probe requests differ from the exact candidate definitions" }
+                require(runtime.identification.data(requireNotNull(Hex.parse(a.probes[0].payload!!)))?.isNotEmpty() == true)
+                require(runtime.live.decode(requireNotNull(Hex.parse(a.probes[1].payload!!)))?.isFinite() == true)
+                val faults = requireNotNull(runtime.ecu.diagnostics?.faults)
+                require(faults.read.data(requireNotNull(Hex.parse(a.probes[2].payload!!)))?.let {
+                    faults.layout.decode(it, "bring-up") is com.bod3.app.obd.uds.DtcReadResult.Read } == true)
+            }
         }
         require(exchanges.size <= BringUpEngine.MAX_EXCHANGES && exchanges.all { e ->
             e.candidateId == null || candidates.any { it.id == e.candidateId }

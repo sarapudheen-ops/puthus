@@ -69,6 +69,12 @@ class VehiclePackInstrumentedTest {
                 assertTrue(client.unresolved(it).isNotEmpty())
                 assertEquals(7, requests)
             }
+            val requestsBeforeCandidates = requests
+            val candidates = client.bringUpCandidates(system)
+            assertEquals(requestsBeforeCandidates + system.bringUpPages.size, requests)
+            if (system.sourceRecords.any { it.startsWith("SYSTEMENTER.BIN@") }) assertTrue(candidates.isNotEmpty())
+            assertTrue(candidates.all { !it.runnable && it.runtime == null && it.sourceRecords.isNotEmpty() })
+            assertEquals(candidates.map { it.supportCount }.sortedDescending(), candidates.map { it.supportCount })
             assertTrue("Only one selected path/system should transfer", transferred < 2 * 1024 * 1024)
             assertEquals(app.noBackupFilesDir.canonicalFile, cache.canonicalFile.parentFile)
             assertFalse(cache.listFiles().orEmpty().any { it.extension == "partial" })
@@ -81,6 +87,7 @@ class VehiclePackInstrumentedTest {
             assertEquals(system.id, cachedSystem.id)
             assertEquals(system.counts, cachedSystem.counts)
             assertEquals(system.enabled, cachedSystem.enabled)
+            assertEquals(candidates.map { it.fingerprint }, offline.bringUpCandidates(cachedSystem).map { it.fingerprint })
             assertEquals(selectionBefore, prefs.get(CatalogRepository.KEY))
         } finally { cache.deleteRecursively() }
     }

@@ -64,14 +64,17 @@ An executable candidate must come from the APK-pinned hash tree and contain:
   read with its complete record decoder. No generic UDS or emissions definitions are substituted.
 - Same-ECU provenance on all definitions and live prerequisites. Unknown mappings stay blocked.
 
-The engine serializes configuration, init and reads using the existing Session operation lease. Adapter
-routing cannot interleave with live polls, scans, coding or active tests. A separate read-only context
+The engine serializes configuration, init and reads using the Session operation lease, backed by the
+physical driver's exclusive operation gate. Direct terminal/reset/voltage commands and other Sessions
+also wait outside that gate; they cannot enter the run or contaminate its evidence. Adapter routing
+cannot interleave with live polls, scans, coding or active tests. A separate read-only context
 rejects write/clear grants even if a caller supplies a valid existing grant. KWP `81` is used only by the
 existing documented communication initialization, not as diagnostic session control. No native vendor
 code or EXPRESS interpreter is run or shipped.
 
 Each candidate is capped at 12 seconds. Diagnostic requests have a 1-second host timeout; configuration
-commands have 1 second; fast init 2 seconds; 5-baud init up to 6 seconds. For K-line probes, the adapter's
+commands have 1 second; fast init 2 seconds; 5-baud init up to 6 seconds. Initialization runs before the
+diagnostic-read budget starts, still within the candidate's overall budget. For K-line probes, the adapter's
 response timeout is capped at 500 ms (or the smaller source limit), leaving Bluetooth/prompt headroom.
 This is an observation ceiling, **not a newly inferred source P2\***. The candidate's documented normal
 response timeout is restored and acknowledged before activation or a subsequent guarded operation.
@@ -88,7 +91,9 @@ that could change the candidate are refused.
 An ELM timeout/cancellation must drain the outstanding prompt before another command. If it cannot,
 the driver requires reconnect rather than risking attribution of a previous candidate's late reply to
 the next one. The existing adapter-only ATZ reset retry is the sole reset-recovery exception. Timeout
-logs retain unterminated response text observed so far. No ECU write is automatically replayed.
+logs retain unterminated response text observed so far. An interrupted adapter exchange stops bring-up
+and marks evidence INCOMPLETE, since late/disconnected bytes cannot be promised; it cannot verify a
+setup or silently continue to another candidate. No ECU write is automatically replayed.
 
 ### Active tests, coding and clears
 
@@ -96,8 +101,8 @@ Recovered write features additionally require a source-reviewed **unique ECU ser
 (`identityKind: ECU_SERIAL`); part numbers/software versions alone (`NON_UNIQUE`, the default) cannot
 prove it is the same ECU and keep writes disabled. Immediately before each leased ECU operation or
 direct granted physical write/clear, Session calls the same-ECU guard **inside** the operation lease.
-It re-reads the exact identification on that exact link and compares the full payload with the current
-bring-up identity. A failure, exception or changed identity revokes current verification before any write.
+It reapplies the exact source setup, re-reads identification on that link, and compares the full payload
+with the current bring-up identity. A failure, exception or changed identity revokes current verification before any write.
 
 This gate does not create a write grant or change imported recipe trust. Expert mode, applicability,
 voltage/engine/speed checks, one-operation confirmations, backup/diff/read-back/rollback, owned keepalive,

@@ -118,6 +118,29 @@ object BringUpScenarios {
         val b = Bench(); b.adapter.emptyDtcs = true
         check(b.engine().run(selected, listOf(candidate())).outcome == BringUpOutcome.WORKING)
     }
+    suspend fun fiveBaudInitHasOwnBudget() {
+        val b = Bench()
+        val c = candidate(runtimeChange = { r ->
+            val link = r.ecu.link!!.copy(protocol = ObdProtocol.ISO_14230_4_KWP_SLOW,
+                kLine = r.ecu.link!!.kLine!!.copy(init = KLineInit.FIVE_BAUD))
+            r.copy(data = r.data.copy(ecus = listOf(r.ecu.copy(link = link)), pids = listOf(r.live.copy(link = link)),
+                actuators = r.data.actuators.map { it.copy(module = it.module.copy(link = link)) }))
+        })
+        b.adapter.beforeInit = { delay(1700) } // Longer than a diagnostic read's outer budget.
+        val report = b.engine().run(selected, listOf(c))
+        check(report.outcome == BringUpOutcome.WORKING)
+        check(b.adapter.commands.single { it.first == "ATSI" }.second == 6000L)
+        check(b.adapter.commands.filter { it.first in setOf("1A90", "2120", "18FFFFFF") }.all { it.second == 1000L })
+    }
+    suspend fun interruptedExchangeCannotHaveCompleteEvidence() {
+        val b = Bench(mapOf(10400 to Mode.WORKING, 19200 to Mode.WORKING))
+        b.adapter.beforeRead = { throw com.bod3.app.obd.elm.CommandTimeoutException("1A90", 1000, "83 F1") }
+        val report = b.engine().run(selected, listOf(candidate(10400, 2), candidate(19200)))
+        check(report.outcome == BringUpOutcome.ERROR && !report.logComplete && report.workingCandidate == null)
+        check(report.attempts.size == 1 && report.exchanges.last().rawResponse == "83 F1")
+        check(b.adapter.commands.none { it.first == "STPBR19200" })
+        report.validate()
+    }
     suspend fun malformedCandidates() {
         val b = Bench()
         val unsafe = candidate(runtimeChange = { r -> r.copy(data = r.data.copy(pids = listOf(r.live.copy(request = "14FFFF")))) })
@@ -128,6 +151,30 @@ object BringUpScenarios {
         rejects { b.engine().run(selected.copy(vehicleInstance = ""), listOf(candidate())) }
         rejects { BringUpCandidate.ranked(listOf(candidate(), candidate())) }
         check(b.adapter.commands.isEmpty())
+    }
+    suspend fun independentDefinitionProvenance() {
+        val b = Bench()
+        val missingOtherId = candidate(runtimeChange = { r ->
+            val d = r.ecu.diagnostics!!
+            val other = d.identification.single().copy(read = r.identification.copy(id = "other", sourceRecords = emptyList()))
+            r.copy(data = r.data.copy(ecus = listOf(r.ecu.copy(diagnostics = d.copy(identification = d.identification + other)))))
+        })
+        val missingClear = candidate(runtimeChange = { r ->
+            val d = r.ecu.diagnostics!!
+            r.copy(data = r.data.copy(ecus = listOf(r.ecu.copy(diagnostics = d.copy(faults = d.faults!!.copy(clear = DiagnosticClear("14FFFF", "54")))))))
+        })
+        val missingWrite = candidate(runtimeChange = { r -> r.copy(data = r.data.copy(actuators = r.data.actuators.map { it.copy(sourceRecords = emptyList()) })) })
+        for (c in listOf(missingOtherId, missingClear, missingWrite)) rejects { b.engine().run(selected, listOf(c)) }
+        check(b.adapter.commands.isEmpty())
+    }
+    suspend fun contradictoryReportsAreRejected() {
+        val r = Bench().engine().run(selected, listOf(candidate()))
+        val a = r.attempts.single()
+        rejects { r.copy(outcome = BringUpOutcome.NO_MATCH).validate() }
+        rejects { r.copy(logComplete = false).validate() }
+        rejects { r.copy(exchanges = emptyList()).validate() }
+        rejects { r.copy(attempts = listOf(a.copy(probes = a.probes.map { if (it.role == ProbeRole.IDENTIFICATION) it.copy(request = "1A91") else it }))).validate() }
+        rejects { r.copy(attempts = listOf(a.copy(probes = a.probes.map { if (it.role == ProbeRole.DTC) it.copy(payload = "580101") else it }))).validate() }
     }
     suspend fun transferDoesNotTrustFlags() = temporary { folder ->
         val b = Bench(); val report = b.engine().run(selected, listOf(candidate()))
@@ -179,7 +226,7 @@ object BringUpScenarios {
         var report: BringUpReport? = null
         val job = launch { b.engine().run(selected, listOf(candidate()), onFinished = { report = it }) }
         waiting.await(); job.cancelAndJoin()
-        check(report?.outcome == BringUpOutcome.CANCELLED && report?.workingAttempt == null)
+        check(report?.outcome == BringUpOutcome.CANCELLED && report?.workingAttempt == null && report?.logComplete == false)
         check(b.adapter.requests.size == 1)
         val snapshot = report!!.exchanges.toList()
         b.adapter.beforeRead = {}; release.complete(Unit)
@@ -213,7 +260,11 @@ object BringUpScenarios {
         val adapter = SimulatedBringUpAdapter(); val recorder = RecordingExecutor(adapter)
         lateinit var controller: BringUpController
         val session = Session(recorder, ObdProtocol.ISO_15765_4_CAN_11_500, ecuOperationGuard = { current, target -> controller.requireSameEcu(current, target) })
-        val c = candidate(runtimeChange = { if (nonUnique) it.copy(identityKind = EcuIdentityKind.NON_UNIQUE) else it })
+        val c = candidate(runtimeChange = { r -> if (nonUnique) {
+            val d = r.ecu.diagnostics!!
+            r.copy(identityKind = EcuIdentityKind.NON_UNIQUE, data = r.data.copy(ecus = listOf(r.ecu.copy(diagnostics = d.copy(
+                faults = d.faults!!.copy(clear = DiagnosticClear("14FFFF", "54", listOf("synthetic:clear"))))))))
+        } else r })
         val store = VerifiedSetupStore(folder)
         controller = BringUpController(this, store, InMemoryKeyValueStore(), { session to recorder })
         controller.select(selected.path, selected.systemId, listOf(c)); controller.vehicleInstance(selected.vehicleInstance)
@@ -225,7 +276,7 @@ object BringUpScenarios {
         withTimeout(10000) { controller.state.first { !it.running && it.report != null } }
         check(controller.state.value.verifiedHere && controller.data(session)?.pids?.size == 1)
         if (nonUnique) {
-            check(controller.data(session)!!.actuators.isEmpty())
+            check(controller.data(session)!!.actuators.isEmpty() && controller.data(session)!!.ecus.single().diagnostics!!.faults!!.clear == null)
             rejects { session.request(target, listOf(0x3B, 0x20, 1), grant = grant) }
             check(adapter.requests.none { it.bytes.first() == 0x3B })
         } else {
@@ -245,7 +296,7 @@ object BringUpScenarios {
         check(controller.data(b.session) == null && !controller.state.value.verifiedHere)
         controller.start(); withTimeout(10000) { controller.state.first { !it.running && it.report != null && it.verifiedHere } }
         check(controller.data(b.session) != null)
-        controller.vehicleInstance("Garage car 2"); check(controller.data(b.session) == null)
+        controller.vehicleInstance("Garage car 2"); check(controller.data(b.session) == null && controller.state.value.report == null)
         controller.vehicleInstance(selected.vehicleInstance); check(controller.data(b.session) == null)
         controller.start(); withTimeout(10000) { controller.state.first { !it.running && it.verifiedHere } }
         check(controller.data(Session(b.recorder, ObdProtocol.ISO_15765_4_CAN_11_500)) == null)

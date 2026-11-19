@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Testable screen state, deliberately distinguishing saved/transferred evidence from THIS connection. */
 data class BringUpState(
@@ -55,7 +56,7 @@ class BringUpController(
     fun vehicleInstance(text: String) {
         if (_state.value.running || text.length > 80) return
         proof = null
-        _state.update { it.copy(vehicleInstance = text, verifiedHere = false, message = null) }
+        _state.update { it.copy(vehicleInstance = text, verifiedHere = false, report = null, progress = null, message = null) }
         accessChanged()
     }
     fun choose(id: String?) {
@@ -130,7 +131,8 @@ class BringUpController(
 
     /** No global or cross-system fallback. Persisted/imported claims alone never return data. */
     fun data(session: Session?): CatalogData? = currentProof(session)?.candidate?.runtime?.let { r ->
-        if (r.identityKind == EcuIdentityKind.ECU_SERIAL) r.data else r.data.copy(actuators = emptyList(), coding = emptyList())
+        if (r.identityKind == EcuIdentityKind.ECU_SERIAL) r.data else r.data.copy(actuators = emptyList(), coding = emptyList(),
+            ecus = r.data.ecus.map { ecu -> ecu.copy(diagnostics = ecu.diagnostics?.let { d -> d.copy(faults = d.faults?.copy(clear = null)) }) })
     }
     private fun currentProof(session: Session?): Proof? = proof?.takeIf { p ->
         p.session === session && p.candidate.runnable && p.scope == runCatching { selectedScope() }.getOrNull() &&
@@ -143,11 +145,15 @@ class BringUpController(
         require(p.candidate.target == target) { "Bring-up was verified for a different ECU/link" }
         require(p.candidate.runtime?.identityKind == EcuIdentityKind.ECU_SERIAL) { "Identification is not a reviewed unique ECU serial; read-only verification cannot unlock writes" }
         val identification = try {
-            session.withReadOnlyBringUp {
-                val result = BringUpEngine.probe(session, requireNotNull(p.candidate.runtime), ProbeRole.IDENTIFICATION)
-                if (result.passed) session.restoreBringUpTiming(target)
-                result
-            }
+            withTimeoutOrNull(BringUpEngine.CANDIDATE_TIMEOUT_MS) {
+                session.withReadOnlyBringUp {
+                    // Reapply the exact setup, not a cache that a terminal/reset could have changed.
+                    session.prepareBringUp(target)
+                    val result = BringUpEngine.probe(session, requireNotNull(p.candidate.runtime), ProbeRole.IDENTIFICATION)
+                    if (result.passed) session.restoreBringUpTiming(target)
+                    result
+                }
+            } ?: error("Same-ECU setup/identification recheck timed out")
         } catch (e: Exception) {
             proof = null
             _state.update { it.copy(verifiedHere = false, message = "ECU identity recheck failed; repeat read-only bring-up") }
@@ -168,7 +174,8 @@ class BringUpController(
             try {
                 val saved = withContext(Dispatchers.IO) { if (currentSystem == null) emptyList() else store.matching(currentPath, currentSystem) }
                 val report = withContext(Dispatchers.IO) { store.lastReport() }?.takeIf { it.scope.path == currentPath && it.scope.systemId == currentSystem }
-                if (generation == token) _state.update { it.copy(saved = saved, report = it.report ?: report) }
+                if (generation == token) _state.update { s -> s.copy(saved = saved,
+                    report = s.report ?: report?.takeIf { it.scope.vehicleInstance == s.vehicleInstance.trim() }) }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (generation == token) message("Saved bring-up evidence could not be loaded: ${e.message}") }
         }
