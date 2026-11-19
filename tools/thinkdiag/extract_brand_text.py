@@ -27,7 +27,18 @@ from ggp import GagFile, unpack_ggp
 
 HEX64 = re.compile(rb"[0-9A-Fa-f]{64}")
 TEXT_MEMBER = re.compile(r"(?i)(?:^|/)([A-Z0-9_]+\.GGP)$")
-MAX_INSPECT = 512 * 1024 * 1024
+# Vendor archives reach ~2 GB (BMW). Bound the *members* we read, not the archive.
+MAX_MEMBER = 512 * 1024 * 1024
+MAX_TOTAL = 8 * 1024 * 1024 * 1024
+
+
+def file_sha256(path: Path, chunk: int = 1024 * 1024) -> str:
+    """Stream a possibly multi-GB archive through SHA-256."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(chunk), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def find_keys(data: bytes) -> list[bytes]:
@@ -106,7 +117,7 @@ def extract(archive_path: Path, output: Path, report_dir: Path) -> dict:
 
     with zipfile.ZipFile(archive_path) as archive:
         infos = archive.infolist()
-        if len(infos) > 20_000 or sum(i.file_size for i in infos) > MAX_INSPECT:
+        if len(infos) > 50_000 or sum(i.file_size for i in infos) > MAX_TOTAL:
             raise ValueError("Archive exceeds inspection limits")
         members_by_base = {
             PurePosixPath(i.filename).name: i for i in infos if not i.is_dir()
@@ -121,7 +132,12 @@ def extract(archive_path: Path, output: Path, report_dir: Path) -> dict:
         # Prefer the member naming the brand, then the largest.
         text_ggps.sort(key=lambda n: (brand not in n, -members_by_base[n].file_size))
         ggp_name = text_ggps[0]
+        if members_by_base[ggp_name].file_size > MAX_MEMBER:
+            raise ValueError(f"Text library {ggp_name} exceeds the member size bound")
         ggp_data = archive.read(members_by_base[ggp_name])
+        native_name = "libSTD.so"
+        if members_by_base[native_name].file_size > 64 * 1024 * 1024:
+            raise ValueError("libSTD.so exceeds the constant-library size bound")
 
     keys = find_keys(native)
     if not keys:
@@ -131,7 +147,7 @@ def extract(archive_path: Path, output: Path, report_dir: Path) -> dict:
     summary = {
         "brand": brand,
         "archive": archive_path.name,
-        "archiveSha256": hashlib.sha256(archive_path.read_bytes()).hexdigest(),
+        "archiveSha256": file_sha256(archive_path),
         "textLibrary": ggp_name,
         "keyHex": key.hex(),
         "keyCandidates": len(keys),
