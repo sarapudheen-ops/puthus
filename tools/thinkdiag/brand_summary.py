@@ -64,6 +64,30 @@ def markdown(rows: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+MEMBER_HEADER = ("| file | bytes | type | prefix entropy |\n"
+                 "| --- | ---: | --- | ---: |")
+
+
+def member_markdown(root: pathlib.Path, limit: int = 40) -> str:
+    """Per-brand member listings, bounded so a report stays publishable."""
+    chunks = []
+    for page in sorted(root.glob("*/inspection.json")):
+        report = json.loads(page.read_text(encoding="utf-8"))
+        brand = str(report.get("archive", page.parent.name)).removesuffix(".zip")
+        members = report.get("members") or []
+        chunks.append(f"### {brand} \u2014 {report.get('bytes', 0)} bytes, "
+                      f"{report.get('entryCount', 0)} entries\n")
+        chunks.append(MEMBER_HEADER)
+        for member in members[:limit]:
+            name = str(member.get("name", "")).replace("|", "\\|")
+            chunks.append(f"| `{name}` | {member.get('bytes', 0)} | {member.get('type', '')} | "
+                          f"{member.get('entropy', '')} |")
+        if len(members) > limit:
+            chunks.append(f"| _…{len(members) - limit} more members omitted_ |  |  |  |")
+        chunks.append("")
+    return "\n".join(chunks) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=pathlib.Path)
@@ -75,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     (args.directory / "summary.json").write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
     body = markdown(rows)
     (args.directory / "summary.md").write_text(body, encoding="utf-8")
+    (args.directory / "members.md").write_text(member_markdown(args.directory), encoding="utf-8")
     print(body, end="")
     return 0
 

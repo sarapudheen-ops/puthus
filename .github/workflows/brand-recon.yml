@@ -80,11 +80,19 @@ jobs:
           set -euo pipefail
           if [ -f .local/recon/summary.md ]; then
             cat .local/recon/summary.md >> "$GITHUB_STEP_SUMMARY"
+            [ -f .local/recon/members.md ] && cat .local/recon/members.md >> "$GITHUB_STEP_SUMMARY"
             gh api --method POST "repos/$GH_REPO/check-runs" \
               -f name='Brand archive support matrix' -f head_sha="$GITHUB_SHA" \
               -f status=completed -f conclusion=success \
               -f 'output[title]=Brand archive inspection' \
               -F 'output[summary]=@.local/recon/summary.md'
+          fi
+          if [ -f .local/recon/members.md ]; then
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name='Brand archive members' -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=success \
+              -f 'output[title]=Brand archive member detail' \
+              -F 'output[summary]=@.local/recon/members.md' || echo "members check publish skipped"
           fi
 
       - name: Upload inspection reports
