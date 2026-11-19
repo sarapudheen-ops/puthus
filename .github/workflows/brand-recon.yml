@@ -23,7 +23,7 @@ on:
       - '.github/workflows/brand-recon.yml'
 
 permissions:
-  contents: read
+  contents: write # Publish the built DTC packs as release assets the app can import.
   checks: write
 
 jobs:
@@ -128,6 +128,36 @@ jobs:
           ls -la .local/packs || true
           python3 tools/thinkdiag/pack_summary.py .local/packs --output .local/packs/summary.md \
             && cat .local/packs/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "no packs built"
+
+      - name: Publish DTC packs so they can be downloaded without a GitHub login
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls .local/packs/*-dtcs.json >/dev/null 2>&1 || { echo "no packs to publish"; exit 0; }
+          TAG=dtc-packs
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease --title "Brand DTC packs (import into bod3)" \
+              --notes "Import these in the app: Data packs -> Import. Recovered fault-code text only: no PIDs, addresses or tests. Reference text, not a confirmed diagnosis."
+          else
+            gh release create "$TAG" --prerelease --title "Brand DTC packs (import into bod3)" \
+              --notes "Import these in the app: Data packs -> Import. Recovered fault-code text only: no PIDs, addresses or tests. Reference text, not a confirmed diagnosis."
+          fi
+          gh release upload "$TAG" .local/packs/*-dtcs.json --clobber
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name) \(.size) bytes"'
+
+      - name: Publish the pack summary as a check
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f .local/packs/summary.md ]; then
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name='DTC packs built' -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=success \
+              -f 'output[title]=App-importable DTC packs' \
+              -F 'output[summary]=@.local/packs/summary.md' || echo "publish skipped"
+          fi
 
       - name: Upload the DTC packs
         if: always()
