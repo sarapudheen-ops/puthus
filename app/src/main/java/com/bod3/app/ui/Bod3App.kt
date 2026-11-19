@@ -463,10 +463,13 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
         Screen.TOYOTA_PACKS -> {
             BackHandler(onBack = viewModel::closeToyotaPacks)
             val vehiclePacks by viewModel.vehiclePacks.state.collectAsStateWithLifecycle()
+            val bringUp by viewModel.bringUp.state.collectAsStateWithLifecycle()
             ToyotaVehiclePacksScreen(vehiclePacks, viewModel.vehiclePacks, state.offline, state.isConnected,
                 onBack = viewModel::closeToyotaPacks, onLive = viewModel::openSelectedSystemLive,
                 onTests = viewModel::openActuators, onCoding = viewModel::openCoding,
-                onDiagnostics = viewModel::openSelectedSystemDiagnostics)
+                onDiagnostics = viewModel::openSelectedSystemDiagnostics, bringUp = bringUp, bringUpController = viewModel.bringUp,
+                onStartBringUp = viewModel::startBringUp, writeBringUpReport = viewModel::writeBringUpReport,
+                writeVerifiedSetups = viewModel::writeVerifiedSetups, onImportSetups = viewModel::openDataPacks)
         }
 
         Screen.DATA_PACKS -> {
@@ -485,6 +488,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     writeMyCoding = viewModel::writeMyCodingExport,
                     writeBundled = viewModel::writeBundledExport,
                     writeSample = viewModel::writeSampleExport,
+                    writeVerifiedSetups = viewModel::writeVerifiedSetups,
                 ),
             )
         }

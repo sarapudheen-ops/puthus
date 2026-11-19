@@ -5,6 +5,8 @@ import com.bod3.app.obd.transport.TransportException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
@@ -156,6 +158,52 @@ class AdapterDriverTest {
         driver.initialize()
         assertEquals(2, transport.written.count { it == "ATZ" })
         driver.close()
+    }
+
+    @Test
+    fun cancelledExchangeMustDrainItsPromptBeforeAnotherCandidate() = runBlocking<Unit> {
+        val sent = CompletableDeferred<Unit>()
+        val transport = FakeAdapterTransport { command -> if (command == "0100") { sent.complete(Unit); null } else "12.6V" }
+        val driver = openDriver(transport)
+        val job = async { driver.execute("0100", 5000) }
+        sent.await(); job.cancelAndJoin()
+        transport.inject("7E8 06 41 00 BE 3E A8 13\r>")
+        assertEquals("12.6V", driver.execute("ATRV", 1000).text)
+        assertEquals(listOf("0100", "ATRV"), transport.written)
+        driver.close()
+    }
+
+    @Test
+    fun missingPromptAfterCancellationRefusesTheNextCommandInsteadOfMisattributingAReply() = runBlocking<Unit> {
+        val sent = CompletableDeferred<Unit>()
+        val transport = FakeAdapterTransport { sent.complete(Unit); null }
+        val driver = openDriver(transport)
+        val job = async { driver.execute("0100", 5000) }
+        sent.await(); job.cancelAndJoin()
+        assertThrows(TransportException::class.java) { runBlocking { driver.execute("ATRV", 1000) } }
+        assertEquals(listOf("0100"), transport.written)
+        assertTrue(driver.linkLost.value != null)
+        driver.close()
+    }
+
+    @Test
+    fun timeoutEvidenceKeepsThePartialUnterminatedResponse() = runBlocking<Unit> {
+        val sent = CompletableDeferred<Unit>()
+        val transport = FakeAdapterTransport { sent.complete(Unit); null }
+        val driver = openDriver(transport)
+        val recorder = RecordingExecutor(driver)
+        val evidence = mutableListOf<ObservedExchange>()
+        val remove = recorder.observe(object : ExchangeObserver {
+            override fun before(command: String, timeoutMs: Long) = Unit
+            override fun after(exchange: ObservedExchange) { evidence += exchange }
+        })
+        val job = async { runCatching { recorder.execute("1A90", 300) }.exceptionOrNull() }
+        sent.await(); transport.inject("83 F1 10 5A")
+        val error = job.await() as CommandTimeoutException
+        assertEquals("83 F1 10 5A", error.partialResponse)
+        assertEquals(error.partialResponse, evidence.single().rawResponse)
+        assertTrue(evidence.single().error!!.contains("within 300 ms"))
+        remove(); driver.close()
     }
 
     @Test

@@ -4,7 +4,7 @@ import java.io.IOException
 
 open class AdapterException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
-class CommandTimeoutException(val command: String, val timeoutMs: Long) :
+class CommandTimeoutException(val command: String, val timeoutMs: Long, val partialResponse: String = "") :
     AdapterException("No reply to '$command' within $timeoutMs ms")
 
 class AdapterInitException(val command: String, val response: ElmResponse?) :

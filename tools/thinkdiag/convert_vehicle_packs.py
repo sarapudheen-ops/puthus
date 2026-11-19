@@ -86,6 +86,8 @@ class Converter:
         self.normalized = []
         self.entries = None
         self.entry_pages = {}
+        self.bring_up_pages = {}
+        self.entry_support = {}
 
     def record(self, item):
         self.ledger.write(canonical(item) + b"\n")
@@ -105,6 +107,11 @@ class Converter:
 
     def convert_entries(self):
         self.entries = EntryIndex(self.sources["SYSTEMENTER.BIN"])
+        # Count DISTINCT recovered source records, not repeated menu/vehicle references. This
+        # ranks byte-identical source setups only; it NEVER broadens an ECU's applicability.
+        for item in self.entries.lists.values():
+            for entry in item.entries:
+                self.entry_support.setdefault(entry.raw, []).append(entry.source_id)
         for item in self.entries.lists.values():
             for entry in item.entries:
                 report = entry.report()
@@ -120,6 +127,38 @@ class Converter:
             self.disabled(source_id("SYSTEMENTER.BIN", span["offset"], "#unclaimed"), "unclassified-entry-span",
                           bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
         (self.output / "entry-index.json").write_bytes(canonical(self.entries.report()) + b"\n")
+
+    def bring_up_candidates(self, region, function, selector, flash=False):
+        row = self.entries.regions.get(region, {}).get(function)
+        if row is None:
+            return []
+        key = (row["listOffset"], selector, flash)
+        if key not in self.bring_up_pages:
+            candidates = []
+            for entry in self.entries.lists[row["listOffset"]].entries:
+                support = sorted(set(self.entry_support[entry.raw]))
+                blockers = ["Native transport/address/init/timing fields are not fully translated; no adapter settings are guessed",
+                            "Identification and DTC read/record definitions are not translated; a valid reply cannot approve unknown formulas"]
+                if entry.descriptor != selector:
+                    blockers.append("Selector differs from the exact selected vehicle/system; this is evidence, not a fallback ECU")
+                if flash:
+                    blockers.append("FLASH is outside read-only bring-up and the write whitelist")
+                candidates.append({"id": entry.source_id, "name": f"Recovered entry {entry.descriptor:02X}",
+                    "sourceRecords": [entry.source_id], "supportRecords": support, "supportCount": len(support),
+                    "metadata": {"protocol": f"Unmapped native transport code {entry.transport}",
+                        "baudRaw": str(entry.baud), "selector": f"{entry.descriptor:02X}", "flags": f"{entry.flags:02X}",
+                        "init": "Untranslated; bindings " + json.dumps(entry.init),
+                        "addresses": "Raw runtime107b0=" + entry.fields.get("runtime107b0", "absent"),
+                        "timing": "Raw runtime107f0=" + entry.fields.get("runtime107f0", "absent"),
+                        "session": "Untranslated; no session-control request permitted",
+                        "sourceFields": json.dumps(entry.fields, sort_keys=True, separators=(",", ":")),
+                        "rawHex": entry.raw.hex(),
+                        "supportBasis": "Distinct byte-identical SYSTEMENTER records; not cross-vehicle applicability"},
+                    "blockers": blockers, "runtime": None})
+            candidates.sort(key=lambda c: (-c["supportCount"], c["id"]))
+            self.bring_up_pages[key] = [self.writer.add({"kind": "bring-up-candidates", "candidates": candidates[i:i + 128]})
+                                       for i in range(0, len(candidates), 128)]
+        return self.bring_up_pages[key]
 
     def convert_ecus(self):
         for name, raw in sorted(self.sources.items()):
@@ -220,6 +259,7 @@ class Converter:
                         "sourceVerified": True, "enabled": False, "reasons": reasons,
                         "functionKey": key, "entrySelector": raw[27], "transportLabel": transport,
                         "rawHex": raw.hex(), "ecuSource": ecu, "functionSource": function, "entrySource": entry_source,
+                        "bringUpPages": self.bring_up_candidates(region_id, key, raw[27], transport == "FLASH"),
                         "counts": counts, "data": {}}
                     ref = self.writer.add(value)
                     brief = {"id": identity, "name": value["name"], "counts": counts,

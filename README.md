@@ -24,6 +24,20 @@ Phase 1 targets ELM327-compatible Bluetooth Classic adapters based on the MIC331
   Clears (04, 14), writes (2E, 3B), routines (31), IO control (2F), security access (27), session control
   (10), resets (11) etc. are rejected before anything reaches the adapter.
 
+## Read-only recovered-ECU bring-up
+
+The selected Toyota system screen now lists source-backed setup candidates, ranks their distinct source
+support, and offers a guarded identification/live/DTC probe flow with progress, manual choice and stop.
+Successful runs retain full evidence per manually named vehicle instance; share one bring-up report or
+export/import a verified-setup data pack. Transferred evidence is not verification on another car/phone.
+Recovered write operations additionally recheck the same unique ECU identity and retain all existing
+Expert/confirmation/backup/verification/rollback controls.
+
+**Current source limitation:** the Toyota converter still has **0 executable recovered definitions**.
+Its unresolved candidates are inspectable/reportable but cannot be probed by guessing transport fields
+or read definitions. No real ECU was contacted during development. See the
+[bring-up guide, safety contract and limitations](docs/ecu-bring-up.md).
+
 ## Features (Phase 2): module scan and vehicle profiles
 
 - **Module scan** (CAN vehicles), with progress and cancel:

@@ -131,11 +131,45 @@ class Session(
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     private val wait: suspend (Long) -> Unit = { delay(it) },
     private val logger: (String) -> Unit = {},
+    /** Recovered systems additionally require a same-ECU read-only bring-up, checked inside the lease. */
+    private val ecuOperationGuard: suspend (Session, EcuTarget.Physical) -> Unit = { _, _ -> },
 ) {
     private val lock = Mutex()
     private val operationLock = Mutex()
     private class Lease(val session: Session, val target: EcuTarget.Physical?) : AbstractCoroutineContextElement(Key) {
+        var guardedTarget: EcuTarget.Physical? = null
         companion object Key : CoroutineContext.Key<Lease>
+    }
+    private class BringUpReadOnly(val session: Session) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<BringUpReadOnly>
+    }
+
+    /** One exclusive, non-escalatable read-only operation, including adapter configuration/init. */
+    suspend fun <T> withReadOnlyBringUp(block: suspend () -> T): T = withDiagnosticOperation {
+        withContext(BringUpReadOnly(this)) { block() }
+    }
+
+    suspend fun prepareBringUp(target: EcuTarget.Physical) {
+        require(currentCoroutineContext()[BringUpReadOnly]?.session === this) { "Bring-up preparation needs a read-only lease" }
+        require(!options.extendedAddressing && !options.customFlowControl && options.flowControlData == "300000" && options.canBaudKbps == null) {
+            "Bring-up needs a standard addressing profile; custom addressing/flow-control/baud settings would change the candidate"
+        }
+        val link = requireNotNull(target.link)
+        invalidateRouting()
+        if (link.kLine == null) lock.withLock {
+            sendAll(listOf("ATPC") + link.protocol.selectCommands(link.baudKbps) + listOf("ATH1", "ATCAF1", "ATCFC1"))
+            protocol = link.protocol
+        }
+    }
+
+    /** Restore the candidate's documented normal timeout before activating it or issuing any grant. */
+    suspend fun restoreBringUpTiming(target: EcuTarget.Physical) {
+        require(currentCoroutineContext()[BringUpReadOnly]?.session === this)
+        val k = target.link?.kLine ?: return
+        lock.withLock {
+            require(appliedTarget == target) { "Bring-up target is no longer current" }
+            sendAll(listOf("ATST %02X".format(((k.p2StarMs + 3) / 4).coerceIn(1, 255)), "STPTO ${k.p2StarMs}"))
+        }
     }
 
     /** Serializes safety checks as well as the write. No stale checks while waiting behind a poll/run. */
@@ -148,7 +182,17 @@ class Session(
     suspend fun <T> withEcuOperation(target: EcuTarget.Physical, block: suspend () -> T): T = withDiagnosticOperation {
         val lease = currentCoroutineContext()[Lease]
         require(lease?.target == null || lease.target == target) { "An operation cannot change its ECU" }
-        withContext(Lease(this, target)) { block() }
+        if (lease?.target == target) block() else withContext(Lease(this, target)) {
+            if (currentCoroutineContext()[BringUpReadOnly]?.session !== this@Session) ensureOperationGuard(target)
+            block()
+        }
+    }
+
+    private suspend fun ensureOperationGuard(target: EcuTarget.Physical) {
+        val lease = currentCoroutineContext()[Lease] ?: error("Missing diagnostic operation lease")
+        if (lease.guardedTarget == target) return
+        ecuOperationGuard(this, target)
+        lease.guardedTarget = target
     }
 
     private suspend fun <T> routedOperation(target: EcuTarget, block: suspend () -> T): T {
@@ -157,7 +201,7 @@ class Session(
             require(lease.target == null || target == lease.target) { "Operation is bound to a different ECU" }
             return block()
         }
-        return operationLock.withLock { block() }
+        return operationLock.withLock { withContext(Lease(this, null)) { block() } }
     }
     private var baseProtocol = initialProtocol
     private var lastExchangeAtMs: Long? = null
@@ -209,6 +253,10 @@ class Session(
         require(request.isNotEmpty() && request.all { it in 0..0xFF }) { "Request must contain bytes in 0..255" }
         require(timeoutMs > 0) { "Request timeout must be positive" }
         return routedOperation(target) {
+            if (currentCoroutineContext()[BringUpReadOnly]?.session === this) {
+                require(confirmation == null && grant == null && isRead(target, request)) { "Bring-up cannot consume a write/clear grant" }
+            }
+            if (!isRead(target, request) && target is EcuTarget.Physical) ensureOperationGuard(target)
             when {
                 confirmation != null && ReadOnlyPolicy.isClearRequest(request) -> confirmation.consume(request, target)
                 grant != null && !isRead(target, request) -> grant.check(request, target)
@@ -248,7 +296,8 @@ class Session(
         }
         if (k != null && (appliedTarget != target || expired)) {
             invalidateRouting()
-            KLineAdapter.initialize(executor, physical, logger)
+            KLineAdapter.initialize(executor, physical, logger,
+                strictBringUp = currentCoroutineContext()[BringUpReadOnly]?.session === this)
             protocol = physical.link!!.protocol
             appliedTarget = target
             lastExchangeAtMs = clock()
@@ -348,7 +397,8 @@ class Session(
 
     private suspend fun sendAll(commands: List<String>) {
         for (command in commands) {
-            val response = executor.execute(command, HEADER_COMMAND_TIMEOUT_MS)
+            val timeout = if (currentCoroutineContext()[BringUpReadOnly]?.session === this) 1000L else HEADER_COMMAND_TIMEOUT_MS
+            val response = executor.execute(command, timeout)
             if (!response.isOk) throw ObdRequestException(response.error ?: ElmError.UNKNOWN_COMMAND, response)
         }
     }

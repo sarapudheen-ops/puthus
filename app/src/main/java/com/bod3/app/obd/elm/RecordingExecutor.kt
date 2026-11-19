@@ -13,6 +13,15 @@ data class RawExchange(
     val error: String? = null,
 )
 
+/** Full evidence is separate from the rolling diagnostic log, including the unfiltered adapter text. */
+data class ObservedExchange(val command: String, val timeoutMs: Long, val timestampMs: Long,
+                            val durationMs: Long, val rawResponse: String, val error: String?)
+interface ExchangeObserver {
+    /** May refuse BEFORE sending a command when an evidence budget has been exhausted. */
+    fun before(command: String, timeoutMs: Long)
+    fun after(exchange: ObservedExchange)
+}
+
 /**
  * Wraps a [CommandExecutor] and, while [isRecording], keeps a log of every exchange.
  * Thread-safe; the log is capped at [maxEntries] (oldest dropped).
@@ -28,6 +37,13 @@ class RecordingExecutor(
     private var sequence = 0
     private var priority: String? = null
     private var header: String? = null
+    private val observers = mutableSetOf<ExchangeObserver>()
+
+    /** Caller must hold its Session operation lease; removal never changes the rolling log. */
+    fun observe(observer: ExchangeObserver): () -> Unit {
+        synchronized(lock) { observers += observer }
+        return { synchronized(lock) { observers -= observer }; Unit }
+    }
 
     @Volatile
     var isRecording: Boolean = false
@@ -49,17 +65,25 @@ class RecordingExecutor(
 
     override suspend fun execute(command: String, timeoutMs: Long): ElmResponse {
         val normalized = command.trim().uppercase()
+        val listeners = synchronized(lock) { observers.toList() }
+        listeners.forEach { it.before(normalized, timeoutMs) }
         trackHeader(normalized)
         val headerAtSend = synchronized(lock) { header }
         val start = clock()
-        try {
-            val response = delegate.execute(command, timeoutMs)
-            record(normalized, headerAtSend, start, response.lines.joinToString("\n"), null)
-            return response
+        val response = try {
+            delegate.execute(command, timeoutMs)
         } catch (e: Exception) {
-            record(normalized, headerAtSend, start, "", e.message ?: e.javaClass.simpleName)
+            val error = e.message ?: e.javaClass.simpleName
+            val partial = (e as? CommandTimeoutException)?.partialResponse.orEmpty()
+            record(normalized, headerAtSend, start, partial, error)
+            listeners.forEach { it.after(ObservedExchange(normalized, timeoutMs, start, (clock() - start).coerceAtLeast(0), partial, error)) }
             throw e
         }
+        record(normalized, headerAtSend, start, response.lines.joinToString("\n"), null)
+        // Outside the delegate catch: an evidence-limit exception must not turn a received reply
+        // into a second, fictitious failed adapter exchange.
+        listeners.forEach { it.after(ObservedExchange(normalized, timeoutMs, start, (clock() - start).coerceAtLeast(0), response.raw, null)) }
+        return response
     }
 
     private fun trackHeader(command: String) {

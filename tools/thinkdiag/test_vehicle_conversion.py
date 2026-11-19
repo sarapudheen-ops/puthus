@@ -162,6 +162,68 @@ class ConversionTest(unittest.TestCase):
             with self.assertRaises(ValueError): load_sources(p / "archive", p / "decoded", p / "manifest")
 
 
+class BringUpCandidateConversionTest(unittest.TestCase):
+    def candidates(self, sources):
+        with tempfile.TemporaryDirectory() as d:
+            _, labels = fixture()
+            converter = Converter(sources, labels, Path(d))
+            index = converter.finish()
+            records = [json.loads(line) for line in gzip.decompress((Path(d) / "systems.jsonl.gz").read_bytes()).splitlines()]
+            container = Path(d) / index["container"]
+            system = read_object(container, converter.systems[records[0]["id"]])
+            candidates = [c for ref in system["bringUpPages"] for c in read_object(container, ref)["candidates"]]
+            verify(Path(d))
+            return system, candidates
+
+    def alternatives(self):
+        sources, _ = fixture()
+        record = sources["SYSTEMENTER.BIN"][20:]
+        alt = bytearray(record); alt[0] = 0x51; alt[1] = 5
+        first = bytes([2, 0, 0, 0]) + record + alt
+        second = bytes([1, 0, 0, 0]) + record
+        sources["SYSTEMENTER.BIN"] = (bytes([1, 1]) + struct.pack("<I", 6) + struct.pack("<HIIII", 2, 1, 24, 2, 24 + len(first))
+                                         + first + second)
+        return sources
+
+    def test_every_source_alternative_ranked_by_distinct_record_support(self):
+        system, candidates = self.candidates(self.alternatives())
+        self.assertEqual(2, len(candidates))
+        self.assertEqual([2, 1], [c["supportCount"] for c in candidates])
+        self.assertTrue(all(c["supportCount"] == len(set(c["supportRecords"])) for c in candidates))
+        self.assertEqual(["11", "51"], [c["metadata"]["selector"] for c in candidates])
+        self.assertTrue(any("Selector differs" in why for why in candidates[1]["blockers"]))
+        self.assertFalse(any("Selector differs" in why for why in candidates[0]["blockers"]))
+        self.assertEqual({}, system["data"])
+        self.assertFalse(system["enabled"])
+
+    def test_opaque_fields_are_preserved_not_invented_as_runtime_protocol_or_timings(self):
+        _, candidates = self.candidates(fixture()[0])
+        c = candidates[0]
+        self.assertIsNone(c["runtime"])
+        self.assertTrue(c["blockers"])
+        self.assertEqual("10400", c["metadata"]["baudRaw"])
+        self.assertIn("1234", c["metadata"]["addresses"])
+        self.assertIn("053c001919", c["metadata"]["timing"])
+        self.assertIn("Unmapped native transport", c["metadata"]["protocol"])
+        self.assertIn("not cross-vehicle applicability", c["metadata"]["supportBasis"])
+
+    def test_missing_exact_selector_still_lists_evidence_but_blocks_all_alternatives(self):
+        sources = self.alternatives()
+        raw = bytearray(sources["SYSLIST_EU.BIN"]); raw[14 + 27] = 0x31; sources["SYSLIST_EU.BIN"] = bytes(raw)
+        system, candidates = self.candidates(sources)
+        self.assertIsNone(system["entrySource"])
+        self.assertEqual(2, len(candidates))
+        self.assertTrue(all(any("Selector differs" in why for why in c["blockers"]) for c in candidates))
+        self.assertTrue(all(c["runtime"] is None for c in candidates))
+
+    def test_no_function_directory_never_substitutes_another_ecu(self):
+        sources, _ = fixture()
+        raw = bytearray(sources["SYSLIST_EU.BIN"]); struct.pack_into("<I", raw, 14, 99); sources["SYSLIST_EU.BIN"] = bytes(raw)
+        system, candidates = self.candidates(sources)
+        self.assertEqual([], candidates)
+        self.assertEqual([], system["bringUpPages"])
+
+
 class HierarchyReviewTest(unittest.TestCase):
     def test_exact_reviewed_path_not_numeric_task_coincidence(self):
         record = {"id": "MENU.BIN@00871ee2", "region": "EU", "sourceKey": 433,

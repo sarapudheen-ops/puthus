@@ -1,5 +1,8 @@
 package com.bod3.app.vehiclepack
 
+import com.bod3.app.bringup.BringUpCandidate
+import com.bod3.app.bringup.BringUpCodec
+import com.bod3.app.bringup.BringUpRuntime
 import com.bod3.app.catalog.CatalogCodec
 import com.bod3.app.catalog.CatalogData
 import com.bod3.app.catalog.CatalogLevel
@@ -65,7 +68,7 @@ class PackVehicle internal constructor(
 class PackSystem internal constructor(
     val id: String, val name: String, val enabled: Boolean, val reasons: List<String>,
     val counts: Map<String, FeatureCount>, val sourceRecords: List<String>, val data: CatalogData,
-    val unresolvedPages: List<PackRange>,
+    val unresolvedPages: List<PackRange>, val bringUpPages: List<PackRange> = emptyList(),
 )
 
 /** Range-by-range loading. Navigation never chooses a vehicle or sends diagnostic requests. */
@@ -165,7 +168,32 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         val function = m["functionSource"] as? Map<*, *>
         val entry = m["entrySource"] as? Map<*, *>
         val pages = listOfNotNull(entry?.get("pages") as? List<*>, ecu?.get("pages") as? List<*>, function?.get("livePages") as? List<*>).flatten().map(::range)
-        return PackSystem(choice.id, choice.name, choice.enabled, why, counts, sources, trusted, pages)
+        val bringUpPages = (m["bringUpPages"] as? List<*>)?.map(::range).orEmpty()
+        require(bringUpPages.size <= 2) { "Excessive bring-up candidate pages" }
+        return PackSystem(choice.id, choice.name, choice.enabled, why, counts, sources, trusted, pages, bringUpPages)
+    }
+
+    /** All alternatives from this exact source function, including explicitly blocked selectors. */
+    fun bringUpCandidates(system: PackSystem, checkCancelled: () -> Unit = {}): List<BringUpCandidate> {
+        val candidates = system.bringUpPages.flatMap { ref ->
+            val page = load(ref, checkCancelled)
+            require(page["kind"] == "bring-up-candidates")
+            val rows = page["candidates"] as? List<*> ?: error("Missing bring-up candidates")
+            require(rows.size <= 128)
+            rows.map { BringUpCodec.candidate(it, pinned = true) }
+        }
+        if (candidates.isNotEmpty() || !system.enabled) return BringUpCandidate.ranked(candidates)
+        // Backward-compatible for future fully converted pinned systems. Never synthesize reads:
+        // this candidate uses only that system's explicit identification/live/DTC definitions.
+        val ecu = system.data.ecus.singleOrNull() ?: return emptyList()
+        val id = ecu.diagnostics?.identification?.firstOrNull()?.read ?: return emptyList()
+        val pid = system.data.pids.firstOrNull() ?: return emptyList()
+        if (ecu.diagnostics.faults == null || ecu.link == null) return emptyList()
+        val runtime = BringUpRuntime(system.data, id.id, pid.id)
+        if (runtime.problems().isNotEmpty()) return emptyList()
+        return BringUpCandidate.ranked(listOf(BringUpCandidate(system.id + "#translated-entry", system.name,
+            system.sourceRecords, system.sourceRecords, mapOf("supportBasis" to "Distinct source records attached to this translated system"),
+            emptyList(), runtime, pinned = true)))
     }
 
     fun unresolved(page: PackRange, checkCancelled: () -> Unit = {}): List<Map<*, *>> {

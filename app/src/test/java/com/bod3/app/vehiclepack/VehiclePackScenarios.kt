@@ -46,7 +46,7 @@ object VehiclePackScenarios {
         val folder = Files.createTempDirectory("bod3-pack-test").toFile()
         try { block(folder) } finally { folder.deleteRecursively() }
     }
-    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null) {
+    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -72,9 +72,11 @@ object VehiclePackScenarios {
         private val counts = listOf("pids", "dtcs", "tests", "coding", "specialFunctions", "ecuInfo").associateWith {
             mapOf("converted" to if (enabled && it in setOf("pids", "tests", "coding")) 1 else 0, "unresolved" to if (enabled) 0 else null)
         }
+        private val bringUpPage = if (bringUp) add(mapOf("kind" to "bring-up-candidates", "candidates" to listOf(
+            com.bod3.app.bringup.BringUpCodec.candidateMap(com.bod3.app.bringup.BringUpScenarios.candidate())))) else null
         private val system = add(mapOf("kind" to "vehicle-system", "id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
             "reasons" to why, "sourceVerified" to true, "sourceRecords" to listOf("synthetic:system"), "counts" to counts,
-            "data" to CatalogCodec.dataMap(original)))
+            "bringUpPages" to listOfNotNull(bringUpPage), "data" to CatalogCodec.dataMap(original)))
         private val systemChoice = mapOf("id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled, "reasons" to why, "counts" to counts, "object" to system)
         val path = CatalogPack("synthetic-path", "Synthetic path", nodes = listOf(
             CatalogNode("make", null, CatalogLevel.MAKE, "Synthetic make"), CatalogNode("model", "make", CatalogLevel.MODEL, "Synthetic model"),
@@ -160,6 +162,21 @@ object VehiclePackScenarios {
         check(s.data.pids.single().decode(listOf(0x62, 0x12, 0x34, 0x10, 0)) == 1024.0)
         val imported = CatalogCodec.dataOrThrow(JsonWriter.write(CatalogCodec.dataMap(s.data)))
         check(!imported.actuators.single().verified && !imported.coding.single().verified)
+    }
+
+    fun pinnedBringUpCandidatesAreSeparateFromExecutableSystemFlags() = temporary { cache ->
+        val fixture = Fixture(bringUp = true); val client = fixture.client(cache)
+        val vehicle = client.selectedVehicle(listOf("make", "model", "generation", "variant"))
+        val system = client.system(vehicle, vehicle.systems.single())
+        val candidates = client.bringUpCandidates(system)
+        check(!system.enabled && system.data.count == 0 && candidates.single().runnable)
+        check(candidates.single().runtime!!.data.actuators.all { it.verified })
+        val imported = com.bod3.app.bringup.BringUpCodec.candidate(
+            com.bod3.app.bringup.BringUpCodec.candidateMap(candidates.single()))
+        check(!imported.runnable && imported.runtime!!.data.actuators.none { it.verified })
+        val count = fixture.fetches
+        client.bringUpCandidates(system)
+        check(fixture.fetches == count) // Exact selected-system candidate pages are cached for offline use.
     }
 
     fun crossEcuDefinitionRejected() = temporary { cache ->

@@ -1,5 +1,7 @@
 package com.bod3.app.packs
 
+import com.bod3.app.bringup.BringUpCodec
+import com.bod3.app.bringup.VerifiedSetupStore
 import com.bod3.app.catalog.CatalogCodec
 import com.bod3.app.catalog.CatalogCsv
 import com.bod3.app.catalog.CatalogData
@@ -25,6 +27,7 @@ enum class PackKind(val label: String, val format: String) {
     ACTUATORS("Bidirectional test recipes", ActuatorRecipeCodec.FORMAT),
     CODING("Coding recipes", CodingRecipeCodec.FORMAT),
     PROFILE("Saved vehicle profile", ProfileTransferCodec.FORMAT),
+    VERIFIED_SETUPS("Verified ECU setups (read-only bring-up evidence)", BringUpCodec.PACK_FORMAT),
 }
 
 /** What a file is, or why it cannot be read at all. */
@@ -112,6 +115,7 @@ class PackTransfer(
     private val actuators: ActuatorLibrary,
     private val coding: CodingLibrary,
     private val catalog: CatalogRepository? = null,
+    private val verifiedSetups: VerifiedSetupStore? = null,
 ) {
 
     fun preview(text: String): ImportPreview = when (val detection = PackFiles.detect(text)) {
@@ -121,11 +125,26 @@ class PackTransfer(
             PackKind.DATA -> previewData(text)
             PackKind.ACTUATORS -> previewActuators(text)
             PackKind.CODING -> previewCoding(text)
+            PackKind.VERIFIED_SETUPS -> previewVerifiedSetups(text)
             PackKind.PROFILE -> ImportPreview(
                 PackKind.PROFILE, "Saved vehicle profile",
                 summary = listOf("A vehicle profile (modules, identification, scan log). It is imported into Saved vehicles."),
             )
         }
+    }
+
+    private fun previewVerifiedSetups(text: String): ImportPreview = try {
+        val reports = BringUpCodec.readPack(text)
+        val store = requireNotNull(verifiedSetups) { "Verified setup storage is not available in this host" }
+        require(reports.isNotEmpty()) { "This verified-setup pack is empty" }
+        ImportPreview(PackKind.VERIFIED_SETUPS, "Verified ECU setups",
+            summary = reports.map { "${it.scope.vehicleInstance} · ${it.scope.systemId} · ${it.workingCandidate?.name} · ${it.exchanges.size} raw exchanges" },
+            warnings = listOf("Reports can contain VINs, ECU identifiers and other private vehicle data.",
+                "Imported verification is transferred evidence, NOT verification on this vehicle/connection. Select the exact vehicle/system and run read-only bring-up again.",
+                "Definitions must match the app's pinned source candidate. No imported flag approves formulas, active tests, coding, security or write trust. Nothing is automatically selected."),
+            apply = { "Imported ${store.importPack(text)} transferred ECU setup report(s); re-verify on the selected vehicle before use" })
+    } catch (e: Exception) {
+        ImportPreview(PackKind.VERIFIED_SETUPS, "Invalid verified-setup pack", errors = listOf(e.message ?: "Invalid bring-up evidence"))
     }
 
     /** Imports a previewed file; returns a one-line result. */
@@ -332,6 +351,7 @@ class PackTransfer(
         PackKind.ACTUATORS -> exportBundledActuators(pack.id)
         PackKind.CODING -> exportBundledCoding(pack.id)
         PackKind.PROFILE -> null
+        PackKind.VERIFIED_SETUPS -> verifiedSetups?.exportPack()
         PackKind.CATALOG -> catalog?.base?.let(CatalogCodec::encode)
     }
 

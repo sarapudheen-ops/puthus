@@ -1,5 +1,7 @@
 package com.bod3.app.ui
 
+import com.bod3.app.bringup.BringUpController
+import com.bod3.app.bringup.VerifiedSetupStore
 import com.bod3.app.catalog.CatalogAccess
 import com.bod3.app.catalog.CatalogCodec
 import com.bod3.app.catalog.CatalogCsv
@@ -339,6 +341,13 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         VehiclePacksController(viewModelScope, { vehiclePackCatalog }, { catalog.state().selectedId },
             ::selectDownloadedVehicle, ::prepareSystemChange, ::refreshDownloadedSystem)
     }
+    private val verifiedSetupStore = VerifiedSetupStore(File(application.filesDir, "ecu-bring-up"))
+    val bringUp: BringUpController by lazy {
+        BringUpController(viewModelScope, verifiedSetupStore, preferences, environment = {
+            val current = session; val recording = recorder
+            if (_state.value.isConnected && current != null && recording != null) current to recording else null
+        }, accessChanged = { refreshData(); actuators.refresh(); coding.refresh() })
+    }
     private val catalogAccess = CatalogAccess(catalog, ::downloadedScope)
     private val actuatorLibrary = ActuatorLibrary(bundledActuators.packs, preferences, catalogAccess)
     private val codingLibrary = CodingLibrary(bundledCoding.packs, preferences, catalogAccess)
@@ -396,7 +405,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     /** Theme, units, keep-screen-on and onboarding state. */
     val appSettings: StateFlow<AppSettings> = _appSettings.asStateFlow()
 
-    private val packTransfer = PackTransfer(bundledPacks.packs, dataStore, actuatorLibrary, codingLibrary, catalog)
+    private val packTransfer = PackTransfer(bundledPacks.packs, dataStore, actuatorLibrary, codingLibrary, catalog, verifiedSetupStore)
     private val _packs = MutableStateFlow(PacksState())
     val packs: StateFlow<PacksState> = _packs.asStateFlow()
     private var appSettingsReturn: Screen = Screen.DEVICES
@@ -506,7 +515,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Re-runs protocol detection and the vehicle reads (e.g. after the ignition was turned on). */
     fun detectVehicle() {
-        if (infoJob?.isActive == true || scanJob?.isActive == true) return
+        if (bringUp.state.value.running || infoJob?.isActive == true || scanJob?.isActive == true) return
         val currentDriver = driver ?: return
         val address = adapterAddress ?: return
         val profile = _state.value.connectedProfile ?: connectionStore.activeProfile()
@@ -532,7 +541,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openLiveData() {
         if (isDownloadedSelection()) {
-            if (vehiclePacks.selectedSystem()?.enabled == true) openSelectedSystemLive() else openSelectedSystems()
+            if (bringUp.data(session) != null) openSelectedSystemLive() else openSelectedSystems()
             return
         }
         liveReturn = Screen.DASHBOARD; liveSelectionScope = null
@@ -566,6 +575,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startLiveLoop() {
+        if (bringUp.state.value.running || isDownloadedSelection() && bringUp.data(session) == null) return
         val currentSession = session ?: return
         val currentReader = reader ?: return
         val defs = liveDefs
@@ -815,7 +825,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openTerminal() {
         val currentDriver = driver ?: return
-        if (!connectionStore.expertModeEnabled || scanJob?.isActive == true || coding.state.value.busy || actuators.state.value.running) return
+        if (bringUp.state.value.running || !connectionStore.expertModeEnabled || scanJob?.isActive == true || coding.state.value.busy || actuators.state.value.running) return
         pauseLiveData()
         // The terminal talks to the adapter directly (not through the session's routing) and every
         // diagnostic request still passes the read-only policy.
@@ -916,6 +926,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     /** Creates the session for the negotiated protocol and reads VIN and supported PIDs. */
     private suspend fun applyNegotiation(negotiation: NegotiationResult) {
         val currentRecorder = recorder ?: return
+        bringUp.disconnected()
         val protocolInfo = negotiation.protocol
         // A new detection must not retain the previous VIN's manufacturer reference while VIN/vPIC loads.
         profileJob?.cancel()
@@ -937,7 +948,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
         // Requests go through the recorder so module scans can keep a raw request/response log.
         val options = (_state.value.connectedProfile ?: ConnectionProfile.DEFAULT).sessionOptions()
-        val newSession = Session(currentRecorder, protocolInfo.protocol, options)
+        val newSession = guardedSession(currentRecorder, protocolInfo.protocol, options)
         val newReader = VehicleReader(newSession, currentRecorder)
         session = newSession
         reader = newReader
@@ -966,6 +977,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
      * talks to it and reconnects with the policy's back-off; the remembered protocol is tried first.
      */
     private fun onLinkLost(device: PairedAdapter, reason: String) {
+        bringUp.disconnected()
         val wasLive = _state.value.screen == Screen.LIVE && _state.value.liveRunning
         appendLog("Connection lost: $reason")
         addReconnectNote("Link lost: $reason")
@@ -1050,7 +1062,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         voltageJob?.cancel()
         voltageJob = viewModelScope.launch {
             while (isActive) {
-                val busy = scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL || actuators.state.value.running || coding.state.value.busy
+                val busy = bringUp.state.value.running || scanJob?.isActive == true || _state.value.screen == Screen.TERMINAL || actuators.state.value.running || coding.state.value.busy
                 if (!busy) sampleVoltage()
                 delay(VOLTAGE_INTERVAL_MS)
             }
@@ -1059,6 +1071,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Battery voltage as measured by the adapter (`ATRV`); works even when the ignition is off. */
     private suspend fun sampleVoltage() {
+        if (bringUp.state.value.running) return
         val monitor = voltageMonitor ?: return
         val sample = readOrNull { monitor.sample() }
         _state.update {
@@ -1072,6 +1085,10 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     // ---- OBD fault codes --------------------------------------------------------------------------
 
     fun openDtcs() {
+        if (isDownloadedSelection()) {
+            if (bringUp.data(session) != null) openSelectedSystemDiagnostics() else openSelectedSystems()
+            return
+        }
         pauseLiveData()
         _state.update { it.copy(screen = Screen.DTCS) }
         if (_state.value.dtcs.isEmpty()) readDtcs()
@@ -1079,8 +1096,9 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Reads stored (03), pending (07) and permanent (0A) codes, then readiness (01 01) and freeze frame (02). */
     fun readDtcs() {
+        if (isDownloadedSelection()) return // Selected recovered systems never fall back to emissions reads.
         val currentSession = session ?: return
-        if (dtcJob?.isActive == true || scanJob?.isActive == true) return
+        if (bringUp.state.value.running || dtcJob?.isActive == true || scanJob?.isActive == true) return
         dtcJob = viewModelScope.launch {
             _state.update {
                 it.copy(dtcs = DtcKind.entries.associateWith { Readout.Loading }, readiness = Readout.Loading, freezeFrames = Readout.Loading)
@@ -1120,9 +1138,10 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
      * Refused while the engine is running (most ECUs reject it anyway, with NRC 22).
      */
     fun clearObdDtcs() {
+        if (isDownloadedSelection()) return // Only the exact system's documented clear path is available.
         val currentSession = session ?: return
         val currentReader = reader ?: return
-        if (dtcJob?.isActive == true || scanJob?.isActive == true) return
+        if (bringUp.state.value.running || dtcJob?.isActive == true || scanJob?.isActive == true) return
         pauseLiveData()
         dtcJob = viewModelScope.launch {
             _state.update { it.copy(obdClear = ClearState.Running) }
@@ -1219,7 +1238,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     fun startScan() {
         val currentSession = session ?: return
         val currentRecorder = recorder ?: return
-        if (scanJob?.isActive == true || !_state.value.canScan) return
+        if (bringUp.state.value.running || scanJob?.isActive == true || !_state.value.canScan) return
         liveJob?.cancel()
         val includeOtherBus = _state.value.scan.includeOtherBus
         val includeListed = _state.value.scan.includeListed
@@ -1345,9 +1364,10 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     /** Closed selected-system scope, including EMPTY while a pack/system is unresolved or unloaded. */
     private fun downloadedScope(): CatalogData? {
         if (!isDownloadedSelection()) return null
-        val system = vehiclePacks.selectedSystem()?.takeIf { it.enabled } ?: return CatalogData()
-        val ecu = system.data.ecus.singleOrNull() ?: return CatalogData()
-        val data = system.data.overlay(catalog.selected()?.data ?: CatalogData())
+        vehiclePacks.selectedSystem() ?: return CatalogData()
+        val verified = bringUp.data(session) ?: return CatalogData()
+        val ecu = verified.ecus.singleOrNull() ?: return CatalogData()
+        val data = verified.overlay(catalog.selected()?.data ?: CatalogData())
         return data.copy(ecus = listOf(ecu), pids = data.pids.filter { it.target == ecu.target },
             actuators = data.actuators.filter { it.module.target == ecu.target }, coding = data.coding.filter { it.module.target == ecu.target })
     }
@@ -1358,7 +1378,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun prepareSystemChange() {
-        require(!actuators.state.value.running && !coding.state.value.busy && scanJob?.isActive != true &&
+        require(!bringUp.state.value.running && !actuators.state.value.running && !coding.state.value.busy && scanJob?.isActive != true &&
             ecuJob?.isActive != true && dtcJob?.isActive != true && !_state.value.terminalBusy) { "Finish the active diagnostic operation before changing systems" }
         pauseLiveData()
         if (liveRecorder.isRecording) stopRecording()
@@ -1367,11 +1387,48 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun refreshDownloadedSystem() {
         pidScopeActive = false
+        val selected = vehiclePacks.state.value
+        bringUp.select(selected.vehicle?.path?.nodes?.map { it.id }.orEmpty(), selected.system?.id,
+            if (selected.system != null) selected.bringUpCandidates else emptyList())
         refreshData(); actuators.refresh(); coding.refresh()
     }
 
+    private fun guardedSession(recording: RecordingExecutor, protocol: com.bod3.app.obd.protocol.ObdProtocol,
+                               options: com.bod3.app.obd.session.SessionOptions): Session =
+        Session(recording, protocol, options, ecuOperationGuard = { current, target ->
+            if (isDownloadedSelection()) bringUp.requireSameEcu(current, target)
+        })
+
+    fun startBringUp() {
+        if (bringUp.state.value.running || !_state.value.offline && !_state.value.isConnected) return
+        if (scanJob?.isActive == true || ecuJob?.isActive == true || dtcJob?.isActive == true ||
+            infoJob?.isActive == true || actuators.state.value.running || coding.state.value.busy || _state.value.terminalBusy) return
+        pauseLiveData()
+        if (liveRecorder.isRecording) stopRecording()
+        // Enhanced-only ECUs need not answer a generic OBD negotiation. Use ONLY an explicit
+        // selected candidate's protocol to construct the session; never guess a base protocol.
+        if (session == null && _state.value.isConnected) {
+            val exact = bringUp.state.value.candidates.firstOrNull { it.runnable &&
+                (bringUp.state.value.manualCandidateId == null || it.id == bringUp.state.value.manualCandidateId) }
+            val recording = recorder
+            val protocol = exact?.target?.link?.protocol
+            if (recording != null && protocol != null) {
+                val exactSession = guardedSession(recording, protocol, (_state.value.connectedProfile ?: ConnectionProfile.DEFAULT).sessionOptions())
+                session = exactSession
+                reader = VehicleReader(exactSession, recording) // Constructor only; no generic probes.
+            }
+        }
+        bringUp.start()
+    }
+
+    suspend fun writeBringUpReport(): File = shareJson("bod3-bring-up-${System.currentTimeMillis()}.json",
+        withContext(Dispatchers.Default) { bringUp.reportText() }, "Run bring-up first")
+
+    suspend fun writeVerifiedSetups(): File = shareJson("bod3-verified-ecu-setups-${System.currentTimeMillis()}.json",
+        withContext(Dispatchers.IO) { verifiedSetupStore.exportPack() }, "No verified setups saved yet")
+
     fun openToyotaPacks() {
-        if (coding.state.value.busy || actuators.state.value.running || importApplying) return
+        if (bringUp.state.value.running || coding.state.value.busy || actuators.state.value.running || importApplying) return
         pauseLiveData()
         if (_state.value.screen != Screen.TOYOTA_PACKS) toyotaPacksReturn = _state.value.screen
         _state.update { it.copy(screen = Screen.TOYOTA_PACKS) }
@@ -1379,7 +1436,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSelectedSystems() {
-        if (!isDownloadedSelection() || coding.state.value.busy || actuators.state.value.running || importApplying) return
+        if (bringUp.state.value.running || !isDownloadedSelection() || coding.state.value.busy || actuators.state.value.running || importApplying) return
         pauseLiveData()
         if (_state.value.screen != Screen.TOYOTA_PACKS) toyotaPacksReturn = _state.value.screen
         val ids = catalog.selected()?.path?.map { it.id }.orEmpty()
@@ -1388,6 +1445,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeToyotaPacks() {
+        if (bringUp.state.value.running) { bringUp.stop(); return }
         if (!vehiclePacks.back()) {
             refreshData()
             _state.update { it.copy(screen = toyotaPacksReturn) }
@@ -1395,16 +1453,16 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSelectedSystemDiagnostics() {
-        val system = vehiclePacks.selectedSystem()?.takeIf { it.enabled } ?: return
-        val ecu = system.data.ecus.singleOrNull() ?: return
+        vehiclePacks.selectedSystem() ?: return
+        val ecu = bringUp.data(session)?.ecus?.singleOrNull() ?: return
         if (!canUseBus() || !_state.value.isConnected || ecu.diagnostics == null) return
         if (!EcuWorkbench.canReadIdentification(ecu) && !EcuWorkbench.canReadDtcs(ecu)) return
         openEcu(ecu)
     }
 
     fun openSelectedSystemLive() {
-        val system = vehiclePacks.selectedSystem()?.takeIf { it.enabled } ?: return
-        val ecu = system.data.ecus.singleOrNull() ?: return
+        val system = vehiclePacks.selectedSystem() ?: return
+        val ecu = bringUp.data(session)?.ecus?.singleOrNull() ?: return
         if (!canUseBus() || !_state.value.isConnected) return
         val available = LiveCatalog.forSystem(ecu, catalogAccess.customPids())
         if (available.isEmpty()) return
@@ -1499,7 +1557,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private fun requireCatalogEditable() {
         require(_state.value.offline) { "Disconnect before editing vehicle catalog configuration" }
         require(catalogErrors.isEmpty()) { "Resolve catalog migration problems before changing preserved data" }
-        require(!coding.state.value.busy && !actuators.state.value.running) { "Finish the active operation first" }
+        require(!bringUp.state.value.running && !coding.state.value.busy && !actuators.state.value.running) { "Finish the active operation first" }
     }
 
     fun browseCatalog(id: String?) {
@@ -1609,7 +1667,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Only one bus user at a time: scans, ECU reads, actuator tests and coding writes exclude each other. */
     private fun canUseBus(): Boolean =
-        session != null && scanJob?.isActive != true && ecuJob?.isActive != true && dtcJob?.isActive != true &&
+        !bringUp.state.value.running && session != null && scanJob?.isActive != true && ecuJob?.isActive != true && dtcJob?.isActive != true &&
             !_state.value.terminalBusy && !actuators.state.value.running && !coding.state.value.busy
 
     fun readEcu() {
@@ -1800,7 +1858,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Data packs: import / export --------------------------------------------------------------
 
     fun openDataPacks() {
-        if (importApplying || coding.state.value.busy || actuators.state.value.running) return
+        if (bringUp.state.value.running || importApplying || coding.state.value.busy || actuators.state.value.running) return
         pauseLiveData()
         importPreviewGeneration++
         _state.update {
@@ -1832,7 +1890,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Checks a chosen file completely and shows what it would import. Profiles go to Saved vehicles. */
     fun previewRecipeImport(text: String) {
-        if (importApplying || coding.state.value.busy || actuators.state.value.running) return
+        if (bringUp.state.value.running || importApplying || coding.state.value.busy || actuators.state.value.running) return
         openDataPacks()
         previewImport(text)
     }
@@ -1880,7 +1938,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 appendLog("Import ${preview.title}: $message")
                 runCatching {
-                    refreshData(); actuators.refresh(); coding.refresh(); refreshPacks()
+                    refreshData(); actuators.refresh(); coding.refresh(); refreshPacks(); bringUp.reloadSaved()
                 }.onFailure { appendLog("Refresh after import: ${it.message}") }
                 _packs.update { it.copy(preview = null, message = message) }
             } finally {
@@ -1953,7 +2011,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openActuators() {
-        if (coding.state.value.busy) return
+        if (bringUp.state.value.running || coding.state.value.busy) return
         featureReturn = if (_state.value.screen == Screen.TOYOTA_PACKS) Screen.TOYOTA_PACKS else if (_state.value.offline) Screen.DEVICES else Screen.DASHBOARD
         pauseLiveData()
         actuators.refresh()
@@ -1987,7 +2045,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Coding ------------------------------------------------------------------------------------
 
     fun openCoding() {
-        if (actuators.state.value.running || scanJob?.isActive == true) return
+        if (bringUp.state.value.running || actuators.state.value.running || scanJob?.isActive == true) return
         featureReturn = if (_state.value.screen == Screen.TOYOTA_PACKS) Screen.TOYOTA_PACKS else if (_state.value.offline) Screen.DEVICES else Screen.DASHBOARD
         pauseLiveData()
         coding.refresh()
@@ -2275,6 +2333,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun disconnectInternal() {
+        bringUp.disconnected()
         if (liveRecorder.isRecording) stopRecording()
         ecuJob?.cancel()
         reconnectJob?.cancel()

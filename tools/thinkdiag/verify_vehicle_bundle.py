@@ -83,6 +83,16 @@ def verify(directory, *, index_only=False, apk=None):
                     raise ValueError("This converter version has no resolved executable Toyota systems")
                 if any(c["converted"] != 0 for c in value["counts"].values()):
                     raise ValueError("Disabled system overstates its conversion coverage")
+            if value["kind"] == "bring-up-candidates":
+                candidates = value.get("candidates")
+                if not isinstance(candidates, list) or not 1 <= len(candidates) <= 128:
+                    raise ValueError("Invalid bring-up candidate page")
+                for candidate in candidates:
+                    support = candidate.get("supportRecords", [])
+                    if (candidate.get("runtime") is not None or not candidate.get("blockers")
+                            or not candidate.get("sourceRecords") or not support
+                            or len(set(support)) != len(support) or candidate.get("supportCount") != len(support)):
+                        raise ValueError("Untranslated bring-up candidates cannot become executable or overstate source support")
             seen[key] = ref
             objects += 1
             if objects > 1_000_000: raise ValueError("Too many vehicle-pack objects")

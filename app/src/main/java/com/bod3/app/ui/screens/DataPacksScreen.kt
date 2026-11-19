@@ -49,6 +49,7 @@ class DataPacksActions(
     val writeMyCoding: suspend () -> File,
     val writeBundled: suspend (String, PackKind) -> File,
     val writeSample: suspend (String) -> File,
+    val writeVerifiedSetups: suspend () -> File,
 )
 
 private const val JSON_MIME = "application/json"
@@ -86,6 +87,11 @@ fun DataPacksScreen(state: PacksState, actions: DataPacksActions) {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(onClick = pickFile, enabled = !state.importing) { Text("Choose file…") }
+            }
+
+            SectionCard("Verified ECU setups") {
+                Text("Share locally verified setups and their full read-only bring-up reports as one data pack. Import with Choose file above. Transferred evidence never selects a vehicle, approves formulas or unlocks writes; repeat read-only bring-up on the exact selected vehicle/system and current connection.", style = MaterialTheme.typography.bodySmall)
+                ShareButton("Verified ECU setup data pack", !state.importing) { actions.writeVerifiedSetups() }
             }
 
             SectionCard("Export catalog data") {

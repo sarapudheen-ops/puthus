@@ -1,5 +1,6 @@
 package com.bod3.app.vehiclepack
 
+import com.bod3.app.bringup.BringUpCandidate
 import com.bod3.app.catalog.CatalogData
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +23,7 @@ data class VehiclePacksState(
     val reasons: Map<String, String> = emptyMap(), val complete: Boolean = false,
     val executableDefinitions: Int = 0, val unresolvedPage: Int? = null,
     val unresolvedItems: List<UnresolvedPackItem> = emptyList(),
+    val bringUpCandidates: List<BringUpCandidate> = emptyList(),
 )
 
 /** UI-independent on-demand loading. Navigation and downloading have NO diagnostic-session access. */
@@ -109,12 +111,13 @@ class VehiclePacksController(
         if (_state.value.busy) return
         val vehicle = _state.value.vehicle?.takeIf { it.variantId == selectedId() } ?: return
         try { beforeSystemChange() } catch (e: Exception) { _state.update { it.copy(error = e.message) }; return }
-        _state.update { it.copy(system = null, unresolvedItems = emptyList(), unresolvedPage = null) }
+        _state.update { it.copy(system = null, bringUpCandidates = emptyList(), unresolvedItems = emptyList(), unresolvedPage = null) }
         systemChanged()
         fetch { client, check ->
             val system = withContext(Dispatchers.IO) { client.system(vehicle, choice, check) }
+            val candidates = withContext(Dispatchers.IO) { client.bringUpCandidates(system, check) }
             require(vehicle.variantId == selectedId()) { "Vehicle selection changed while its system was loading" }
-            _state.update { it.copy(system = system, view = PackView.FEATURES) }
+            _state.update { it.copy(system = system, bringUpCandidates = candidates, view = PackView.FEATURES) }
             systemChanged()
         }
     }

@@ -51,6 +51,8 @@ class AdapterDriver(
     private val prompts = Channel<String>(Channel.UNLIMITED)
     private val queue = CommandQueue()
     private var readerJob: Job? = null
+    private val replyLock = Any()
+    private val partialReply = StringBuilder()
 
     @Volatile
     private var resyncNeeded = false
@@ -157,7 +159,14 @@ class AdapterDriver(
         if (resyncNeeded) {
             // The previous command timed out; give its late reply a moment to arrive so it is not
             // mistaken for the answer to this command.
-            withTimeoutOrNull(RESYNC_WAIT_MS) { receivePrompt() }
+            val prompt = withTimeoutOrNull(RESYNC_WAIT_MS) { receivePrompt() }
+            if (prompt == null && command != "ATZ") {
+                // Never attribute a previous candidate's late ECU reply to a new setup. ATZ is
+                // the existing adapter-reset-only recovery exception; no ECU request is replayed.
+                val error = TransportException("Adapter did not return a prompt after a timed-out/cancelled command; reconnect before sending another request")
+                markLost(error)
+                throw error
+            }
             resyncNeeded = false
         }
         drainStalePrompts()
@@ -166,17 +175,21 @@ class AdapterDriver(
         logger("> $command")
         try {
             transport.write("$command\r".toByteArray(Charsets.US_ASCII))
+        } catch (e: CancellationException) {
+            resyncNeeded = true
+            throw e
         } catch (e: Exception) {
             val error = e as? TransportException ?: TransportException("Write to adapter failed", e)
             markLost(error)
             throw error
         }
 
-        val raw = withTimeoutOrNull(timeoutMs) { receivePrompt() }
+        val raw = try { withTimeoutOrNull(timeoutMs) { receivePrompt() } }
+        catch (e: CancellationException) { resyncNeeded = true; throw e }
         if (raw == null) {
             resyncNeeded = true
             logger("! no reply to $command after $timeoutMs ms")
-            throw CommandTimeoutException(command, timeoutMs)
+            throw CommandTimeoutException(command, timeoutMs, synchronized(replyLock) { partialReply.toString() })
         }
         val response = ElmResponseParser.parse(command, raw)
         logger("< " + response.lines.joinToString(" | ").ifEmpty { "(empty)" })
@@ -198,19 +211,21 @@ class AdapterDriver(
 
     private suspend fun readLoop() {
         val buffer = ByteArray(READ_BUFFER_SIZE)
-        val pending = StringBuilder()
         try {
             while (currentCoroutineContext().isActive) {
                 val count = transport.read(buffer)
                 if (count < 0) throw TransportException("Adapter closed the connection")
                 for (i in 0 until count) {
                     val char = (buffer[i].toInt() and 0xFF).toChar()
-                    if (char == '>') {
-                        prompts.send(pending.toString())
-                        pending.setLength(0)
-                    } else {
-                        pending.append(char)
+                    val completed = synchronized(replyLock) {
+                        if (char == '>') partialReply.toString().also { partialReply.setLength(0) }
+                        else {
+                            if (partialReply.length >= MAX_RESPONSE_CHARS) throw TransportException("Adapter response exceeded its bounded input budget")
+                            partialReply.append(char)
+                            null
+                        }
                     }
+                    if (completed != null) prompts.send(completed)
                 }
             }
         } catch (e: CancellationException) {
@@ -236,6 +251,7 @@ class AdapterDriver(
         const val PROBE_TIMEOUT_MS = 1_500L
         private const val RESYNC_WAIT_MS = 500L
         private const val READ_BUFFER_SIZE = 512
+        private const val MAX_RESPONSE_CHARS = 2 * 1024 * 1024
         private val REQUIRED_SETTINGS = setOf("ATH1", "ATSP0")
     }
 }

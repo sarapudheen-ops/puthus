@@ -25,7 +25,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.bod3.app.bringup.BringUpController
+import com.bod3.app.bringup.BringUpState
+import com.bod3.app.catalog.CatalogData
 import com.bod3.app.diagnostics.EcuWorkbench
+import java.io.File
 import com.bod3.app.vehiclepack.PackView
 import com.bod3.app.vehiclepack.VehiclePacksController
 import com.bod3.app.vehiclepack.VehiclePacksState
@@ -36,7 +40,9 @@ import com.bod3.app.vehiclepack.VehiclePacksState
 fun ToyotaVehiclePacksScreen(
     state: VehiclePacksState, controller: VehiclePacksController, offline: Boolean, connected: Boolean,
     onBack: () -> Unit, onLive: () -> Unit, onTests: () -> Unit, onCoding: () -> Unit,
-    onDiagnostics: () -> Unit,
+    onDiagnostics: () -> Unit, bringUp: BringUpState, bringUpController: BringUpController,
+    onStartBringUp: () -> Unit, writeBringUpReport: suspend () -> File, writeVerifiedSetups: suspend () -> File,
+    onImportSetups: () -> Unit,
 ) {
     fun reason(key: String) = state.reasons[key] ?: key
     Scaffold(topBar = {
@@ -107,6 +113,11 @@ fun ToyotaVehiclePacksScreen(
                 PackView.FEATURES -> {
                     val system = state.system
                     if (system != null) {
+                        val verified = bringUp.verifiedHere
+                        val runtime = bringUp.report?.workingCandidate?.runtime
+                        val rawData = if (verified) runtime?.data ?: CatalogData() else CatalogData()
+                        val data = if (runtime?.identityKind == com.bod3.app.bringup.EcuIdentityKind.ECU_SERIAL) rawData else rawData.copy(actuators = emptyList(), coding = emptyList())
+                        item { BringUpSection(bringUp, bringUpController, connected, onStartBringUp, writeBringUpReport, writeVerifiedSetups, onImportSetups) }
                         item {
                             SectionCard(system.name) {
                                 Text(state.vehicle?.title.orEmpty(), style = MaterialTheme.typography.bodySmall)
@@ -117,13 +128,13 @@ fun ToyotaVehiclePacksScreen(
                         }
                         item {
                             SectionCard("Live data") {
-                                Button(onClick = onLive, enabled = connected && system.enabled && system.data.pids.isNotEmpty()) { Text("Select values, graph and record") }
-                                if (!system.enabled || system.data.pids.isEmpty()) Text("No executable PID request/byte-position/formula mapping is available for this system.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Button(onClick = onLive, enabled = connected && verified && data.pids.isNotEmpty()) { Text("Select values, graph and record") }
+                                if (!verified || data.pids.isEmpty()) Text("No executable PID request/byte-position/formula mapping is available for this system.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         item {
                             SectionCard("Fault codes") {
-                                val available = system.enabled && system.data.ecus.singleOrNull()?.let(EcuWorkbench::canReadDtcs) == true
+                                val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadDtcs) == true
                                 OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("Read fault codes") }
                                 if (!available) Text("The selected system's DTC read request and record decoder have not been converted. No generic UDS or emissions request will be substituted here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Clearing requires a documented group and a separate confirmation. Freeze frames remain disabled without an exact record mapping.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -131,21 +142,21 @@ fun ToyotaVehiclePacksScreen(
                         }
                         item {
                             SectionCard("Active tests") {
-                                Button(onClick = onTests, enabled = system.enabled && system.data.actuators.isNotEmpty()) { Text("View this system's tests") }
-                                if (system.data.actuators.isEmpty()) Text("Start/stop/status and safety mappings remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Button(onClick = onTests, enabled = verified && data.actuators.isNotEmpty()) { Text("View this system's tests") }
+                                if (data.actuators.isEmpty()) Text("Start/stop/status and safety mappings remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Execution still requires Expert mode, one-time confirmation and passing safety checks. Output-off cleanup and audit remain mandatory.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         item {
                             SectionCard("Customize / Coding") {
-                                Button(onClick = onCoding, enabled = system.enabled && system.data.coding.isNotEmpty()) { Text("View this system's customizations") }
-                                if (system.data.coding.isEmpty()) Text("Read/write identifiers and value maps remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Button(onClick = onCoding, enabled = verified && data.coding.isNotEmpty()) { Text("View this system's customizations") }
+                                if (data.coding.isEmpty()) Text("Read/write identifiers and value maps remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Read → backup → diff → one-time confirmation → write → read-back. Rollback and audit use the existing guarded coding engine.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         item {
                             SectionCard("ECU information & special functions") {
-                                val available = system.enabled && system.data.ecus.singleOrNull()?.let(EcuWorkbench::canReadIdentification) == true
+                                val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadIdentification) == true
                                 OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("ECU information") }
                                 if (!available) Text("The exact identification definitions for this system have not been converted.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 OutlinedButton(onClick = {}, enabled = false) { Text("Special functions") }

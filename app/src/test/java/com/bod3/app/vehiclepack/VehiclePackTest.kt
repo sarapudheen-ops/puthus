@@ -8,6 +8,7 @@ class VehiclePackTest {
     @Test fun exactHttpRangeAndRedirectContract() = VehiclePackScenarios.rangeHttpContract()
     @Test fun onlyChosenPathIsFetchedAndThenWorksOffline() = VehiclePackScenarios.onlySelectedPathAndCache()
     @Test fun onlyPinnedConversionMayEnableWriteDefinitions() = VehiclePackScenarios.trustedConversionNotImportedFlags()
+    @Test fun bringUpCandidatesHaveIndependentPinnedProvenanceNotImportTrust() = VehiclePackScenarios.pinnedBringUpCandidatesAreSeparateFromExecutableSystemFlags()
     @Test fun crossEcuDefinitionIsRejectedAtomically() = VehiclePackScenarios.crossEcuDefinitionRejected()
     @Test fun convertedEcuCannotSubstituteLegacyGenericReads() = VehiclePackScenarios.convertedEcuCannotSubstituteLegacyGenericReads()
     @Test fun convertedPrerequisitesNeedTheirOwnProvenanceAndNeverGrantImportTrust() = VehiclePackScenarios.convertedPrerequisitesMustCarryTheirOwnProvenance()
