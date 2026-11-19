@@ -107,6 +107,20 @@ jobs:
               -F 'output[summary]=@.local/recon/brand-text-detail.md' || echo "detail skipped"
           fi
 
+      - name: Probe the label -> request/formula join
+        run: |
+          set -euo pipefail
+          python3 tools/thinkdiag/probe_members.py .local/recon/text \
+            --output .local/recon/record-shapes.md || echo "probe failed"
+          if [ -f .local/recon/record-shapes.md ]; then
+            cat .local/recon/record-shapes.md >> "$GITHUB_STEP_SUMMARY"
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name='Record shape probe' -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=success \
+              -f 'output[title]=Recovered record shapes' \
+              -F 'output[summary]=@.local/recon/record-shapes.md' || echo "probe publish skipped"
+          fi
+
       - name: Build app-importable DTC packs
         run: |
           set -euo pipefail
