@@ -1,5 +1,6 @@
 name: Inspect brand archives
 
+# Triggers on a push that touches this file so a feature branch can run a batch.
 # Brand-agnostic reconnaissance. Runs on GitHub's runners because release-asset
 # downloads are blocked from some build environments; no vendor code is executed.
 on:
