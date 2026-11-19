@@ -94,6 +94,37 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+      # Artifacts need a GitHub login to download and expire. A release asset is a plain
+      # link that installs straight onto the phone, so the mechanic can sideload without
+      # a workstation or a GitHub session. Debug-signed and personal-use only.
+      - name: Attach the debug APK to the rolling prerelease
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=apk-latest
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          NAME="bod3-debug-${GITHUB_SHA:0:7}.apk"
+          cp "$APK" "$NAME"
+          cat > notes.md <<EOF
+          Debug build from \`${GITHUB_SHA:0:7}\` on \`$GITHUB_REF_NAME\`.
+
+          Debug-signed, personal use only. Not a store build and not a support commitment.
+          Install by opening the APK on the phone (allow "install unknown apps" once).
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease --title "Latest debug APK" --notes-file notes.md
+          else
+            gh release create "$TAG" --prerelease --title "Latest debug APK" --notes-file notes.md
+          fi
+          # Keep the two most recent builds so the previous one can be reinstalled.
+          gh release upload "$TAG" "$NAME" --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep '^bod3-debug-' | \
+            sort | head -n -2 | while read -r old; do
+              gh release delete-asset "$TAG" "$old" --yes || true
+            done
+
       - name: Upload device-test APK
         uses: actions/upload-artifact@v7
         with:
