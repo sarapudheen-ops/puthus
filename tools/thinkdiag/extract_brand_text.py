@@ -164,7 +164,16 @@ def extract(archive_path: Path, output: Path, report_dir: Path) -> dict:
                 item["error"] = "No 15-byte window produced a valid permutation"
                 summary["members"].append(item)
                 continue
-            table, library = open_gag(member.data, tables)
+            try:
+                table, library = open_gag(member.data, tables)
+            except ValueError as error:
+                item["kind"] = "no_format_table"
+                item["error"] = str(error)[:200]
+                item["headHex"] = member.data[:16].hex(" ")
+                item["revisionHex"] = member.data[3:7].hex(" ")
+                item["bytes"] = len(member.data)
+                summary["members"].append(item)
+                continue
             records: dict[str, str] = {}
             invalid = 0
             for identity, raw in library.records():
