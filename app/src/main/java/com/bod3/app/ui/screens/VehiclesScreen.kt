@@ -51,6 +51,7 @@ class CatalogActions(
     val onOpenEcu: (EcuDefinition) -> Unit, val onImport: () -> Unit,
     val writeExport: suspend (String?, Boolean) -> File,
     val onLinkProfile: (String?) -> Unit, val onDismissMessage: () -> Unit,
+    val onToyotaPacks: () -> Unit, val onSystems: () -> Unit,
 )
 
 /** Hierarchical manual browsing, cross-level search, favorites and recents. Never driven by a VIN. */
@@ -83,6 +84,13 @@ fun VehiclesScreen(state: UiState, actions: CatalogActions) {
                     Text("Make → Model → Generation → Variant. Browsing, importing and reading a VIN never select a vehicle. No generic vehicle fallback.", style = MaterialTheme.typography.bodySmall)
                     if (!state.offline) Text("Disconnect before changing vehicle or editing catalog configuration. ECU reads still use the current connection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                     if (active != null) TextButton(onClick = { actions.onSelect(null) }, enabled = state.offline) { Text("Clear manual selection") }
+                }
+            }
+            item {
+                SectionCard("Recovered Toyota · on-demand vehicle packs") {
+                    Text("Choose an exact reviewed source branch, then load only that vehicle's systems. Unresolved mappings stay disabled with source IDs and reasons. The full source corpus is not bundled in the APK.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = actions.onToyotaPacks, modifier = Modifier.fillMaxWidth()) { Text("Choose Toyota vehicle pack") }
+                    if (catalog.downloadedSelection) Button(onClick = actions.onSystems, modifier = Modifier.fillMaxWidth()) { Text("Open selected vehicle's systems") }
                 }
             }
             catalog.message?.let { message -> item { MessageCard(message, actions.onDismissMessage) } }

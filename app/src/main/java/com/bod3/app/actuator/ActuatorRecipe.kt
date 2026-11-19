@@ -1,5 +1,8 @@
 package com.bod3.app.actuator
 
+import com.bod3.app.obd.kwp.DiagnosticLink
+import com.bod3.app.obd.kwp.DiagnosticDialect
+import com.bod3.app.obd.kwp.KwpServices
 import com.bod3.app.obd.session.EcuTarget
 import com.bod3.app.obd.session.WritePolicy
 import com.bod3.app.obd.session.WritePurpose
@@ -27,8 +30,11 @@ data class ActuatorModule(
     val address: String? = null,
     val requestId: String,
     val responseId: String,
+    val link: DiagnosticLink? = null,
 ) {
-    val target: EcuTarget.Physical get() = EcuTarget.Physical(requestId, responseId)
+    val dialect: DiagnosticDialect get() = link?.dialect ?: DiagnosticDialect.UDS
+    fun problems(): List<String> = com.bod3.app.datapack.EcuDefinition(name = name, requestId = requestId, responseId = responseId, link = link).problems()
+    val target: EcuTarget.Physical get() = EcuTarget.Physical(requestId, responseId, link = link)
     val display: String get() = name + (address?.let { " ($it)" } ?: "") + " $requestId/$responseId"
 }
 
@@ -63,6 +69,8 @@ data class Applicability(
 enum class ActuatorKind(val label: String) {
     IO_CONTROL("Output control (2F)"),
     ROUTINE("Routine (31)"),
+    LOCAL_IO_CONTROL("Local output control (30)"),
+    LOCAL_ROUTINE("Local routine (31/32/33)"),
 }
 
 /**
@@ -94,10 +102,13 @@ data class ActuatorRecipe(
     val notes: String? = null,
     /** True once the recipe was confirmed on a real vehicle; templates ship unverified. */
     val verified: Boolean = false,
+    val sourceRecords: List<String> = emptyList(),
+    val defaultSession: Int = WritePolicy.DEFAULT_SESSION,
 ) {
     val kind: ActuatorKind? get() = when (start.firstOrNull()) {
         WritePolicy.IO_CONTROL -> ActuatorKind.IO_CONTROL
-        WritePolicy.ROUTINE_CONTROL -> ActuatorKind.ROUTINE
+        WritePolicy.ROUTINE_CONTROL -> if (module.dialect == DiagnosticDialect.KWP2000) ActuatorKind.LOCAL_ROUTINE else ActuatorKind.ROUTINE
+        WritePolicy.LOCAL_IO_CONTROL -> ActuatorKind.LOCAL_IO_CONTROL
         else -> null
     }
 
@@ -105,21 +116,17 @@ data class ActuatorRecipe(
     fun problems(): List<String> = buildList {
         if (!ID.matches(id)) add("id: use lowercase letters, digits, '.', '_' or '-' (got \"$id\")")
         if (name.isBlank()) add("name: must not be empty")
-        val idLengths = setOf(module.requestId.length, module.responseId.length)
-        if (!HEX_ID.matches(module.requestId) || !HEX_ID.matches(module.responseId)) {
-            add("module: requestId and responseId must be 3-digit (11-bit) or 8-digit (29-bit) hex CAN IDs")
-        } else if (idLengths.size != 1) {
-            add("module: requestId and responseId must both be 11-bit or both 29-bit")
-        }
-        if (session !in WritePolicy.allowedSessions) add("session: only 01 (default) or 03 (extended) are allowed")
+        addAll(module.problems().map { "module.$it" })
+        if (!WritePolicy.isAllowed(WritePurpose.ACTUATOR_TEST, listOf(0x10, session), module.dialect)) add("session: unsupported session")
+        if (!WritePolicy.isAllowed(WritePurpose.ACTUATOR_TEST, listOf(0x10, defaultSession), module.dialect)) add("defaultSession: unsupported session")
         security?.problems()?.forEach { add("securityAccess: $it") }
         if (safetyNotes.none { it.isNotBlank() }) add("safety: at least one safety note is required")
         if (durationSeconds !in 1..MAX_DURATION_SECONDS) add("durationSeconds: must be 1-$MAX_DURATION_SECONDS")
         if (pollIntervalMs !in 200..10_000) add("pollIntervalMs: must be 200-10000")
         if (preconditions.minVoltage !in 9.0..16.0) add("preconditions.minVoltage: must be 9-16 V")
 
-        if (!WritePolicy.isAllowed(WritePurpose.ACTUATOR_TEST, start) ||
-            start[0] !in setOf(WritePolicy.IO_CONTROL, WritePolicy.ROUTINE_CONTROL)
+        if (!WritePolicy.isAllowed(WritePurpose.ACTUATOR_TEST, start, module.dialect) ||
+            start[0] !in setOf(WritePolicy.IO_CONTROL, WritePolicy.ROUTINE_CONTROL, WritePolicy.LOCAL_IO_CONTROL)
         ) {
             add("start: must be \"2F <DID> <01|02|03> …\" or \"31 01 <routine id> …\" (got ${Hex.format(start)})")
             return@buildList
@@ -142,6 +149,15 @@ data class ActuatorRecipe(
                     val isRead = status.size == 3 && status[0] == 0x22
                     if (!isResults && !isRead) add("status: must be \"31 03 ${Hex.format(start.subList(2, 4))}\" or a read \"22 <DID>\"")
                 }
+            }
+            ActuatorKind.LOCAL_IO_CONTROL -> {
+                if (start[2] == 0) add("start: control 00 returns control; use 01-03")
+                if (stop != listOf(0x30, start[1], 0x00)) add("stop: must return control to the same local identifier")
+                if (status != null && !KwpServices.readAllowed(status)) add("status: must be a KWP read")
+            }
+            ActuatorKind.LOCAL_ROUTINE -> {
+                if (stop != listOf(0x32, start[1])) add("stop: must stop the same local routine with 32")
+                if (status != null && status != listOf(0x33, start[1]) && !KwpServices.readAllowed(status)) add("status: must read results of the same local routine")
             }
             null -> Unit
         }

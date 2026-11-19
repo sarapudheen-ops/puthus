@@ -45,6 +45,10 @@ object LiveCatalog {
         Pids.all.filter { supported.isEmpty() || it.pid in supported }.map { LiveValueDef.Standard(it) } +
             customPids.filter { it.isValid }.map { LiveValueDef.Custom(it) }
 
+    /** A selected converted system is a closed scope: no global PIDs or broadcast fallback. */
+    fun forSystem(ecu: com.bod3.app.datapack.EcuDefinition, pids: List<CustomPid>): List<LiveValueDef> =
+        pids.filter { it.isValid && it.target == ecu.target }.map { LiveValueDef.Custom(it) }
+
     /** Default selection: the classic dashboard PIDs the vehicle supports. */
     fun defaultKeys(supported: Set<Int>): List<String> =
         Pids.live.filter { supported.isEmpty() || it.pid in supported }.map { it.key }
@@ -52,12 +56,52 @@ object LiveCatalog {
 
 /** Reads one live value per call. Standard PIDs use the primary ECU target; custom PIDs their own. */
 class LiveReader(private val session: Session, private val vehicleReader: VehicleReader) {
+    // A new reader is created for each poll run. Cache the prerequisite REPLIES, not a guessed
+    // sensor-nonzero rule: Toyota's A801 support bytes are not the 21xx sensor sample bytes.
+    private var scope: Pair<EcuTarget.Physical, Long>? = null
+    private val supportReplies = linkedMapOf<List<Int>, List<Int>?>()
+
+    private suspend fun reply(target: EcuTarget, request: List<Int>, prerequisite: Boolean = false): List<Int>? {
+        val response = session.request(target, request)
+        if (!response.complete || response.negativeResponses.isNotEmpty()) return null
+        return if (prerequisite) com.bod3.app.datapack.PidSupportCheck.normalizeReply(request, response.messages.map { it.payload })
+            else response.messages.singleOrNull()?.payload
+    }
 
     suspend fun read(def: LiveValueDef, standardTarget: EcuTarget, preferredEcu: String?): Double? = when (def) {
         is LiveValueDef.Standard -> vehicleReader.readPid(def.definition, standardTarget, preferredEcu)?.value
-        is LiveValueDef.Custom -> {
-            val response = session.request(def.pid.target, def.pid.requestBytes)
-            response.messages.firstNotNullOfOrNull { def.pid.decode(it.payload) }
+        is LiveValueDef.Custom -> if (!def.pid.isValid) null else readCustom(def.pid)
+    }
+
+    private suspend fun readCustom(pid: CustomPid): Double? {
+        if (pid.supportChecks.isEmpty()) return reply(pid.target, pid.requestBytes)?.let(pid::decode)
+        val target = pid.target as? EcuTarget.Physical ?: return null
+        return session.withEcuOperation(target) {
+            val current = session.currentLinkEpoch(target)?.let { target to it }
+            if (current == null || scope != current) { supportReplies.clear(); scope = current }
+            for (check in pid.supportChecks) {
+                val request = check.requestBytes
+                if (request !in supportReplies) {
+                    val before = scope
+                    val value = reply(target, request, prerequisite = true)
+                    val after = session.currentLinkEpoch(target)?.let { target to it }
+                    if (after == null) { supportReplies.clear(); scope = null; return@withEcuOperation null }
+                    if (before != after) {
+                        supportReplies.clear(); scope = after
+                        // Initial routing is expected. A reset halfway through discovery must
+                        // NOT combine bits from two ECU sessions; the next poll starts afresh.
+                        if (before != null) return@withEcuOperation null
+                    }
+                    if (supportReplies.size >= 512) supportReplies.remove(supportReplies.keys.first())
+                    supportReplies[request] = value
+                }
+                val reply = supportReplies[request] ?: return@withEcuOperation null
+                if (!check.accepts(reply)) return@withEcuOperation null
+            }
+            val payload = reply(target, pid.requestBytes)
+            if (session.currentLinkEpoch(target)?.let { target to it } != scope) {
+                supportReplies.clear(); scope = null; null
+            } else payload?.let(pid::decode)
         }
     }
 }

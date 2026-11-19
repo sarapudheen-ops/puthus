@@ -1,6 +1,7 @@
 package com.bod3.app.obd.session
 
 import com.bod3.app.obd.protocol.HeaderFormat
+import com.bod3.app.obd.kwp.DiagnosticLink
 
 /** Who an OBD/UDS request is addressed to. */
 sealed interface EcuTarget {
@@ -27,8 +28,12 @@ sealed interface EcuTarget {
         val responseHeader: String? = null,
         val responseMask: String? = null,
         val flowControl: Boolean = true,
+        /** Explicit per-system link. Null preserves existing connection-profile CAN behavior. */
+        val link: DiagnosticLink? = null,
     ) : EcuTarget {
         init {
+            require(link?.problems().orEmpty().isEmpty()) { link?.problems().orEmpty().joinToString() }
+            require(link?.addressProblems(requestHeader, responseHeader.orEmpty()).orEmpty().isEmpty()) { "Invalid per-ECU address pair" }
             require(requestHeader.isHex()) { "Request header must be hex: $requestHeader" }
             require(responseHeader == null || responseHeader.isHex()) { "Response header must be hex: $responseHeader" }
             require(responseMask == null || (responseMask.isHex() && responseHeader != null)) {

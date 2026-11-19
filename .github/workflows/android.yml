@@ -15,6 +15,9 @@ jobs:
   build:
     name: Assemble, lint & test (debug)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Publish immutable, content-addressed data objects on push; never on PRs.
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -30,13 +33,19 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Prepare on-demand Toyota vehicle packs (APK index only)
+        uses: ./.github/actions/prepare-vehicle-packs
+
+      - name: Test converters, pack bounds, source provenance and delivery contract
+        run: python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py' -v
+
       - name: Verify names-only catalog seed
         run: python3 tools/generate_catalog_seed.py --check
 
       - name: Build debug APK, run lint and unit tests
         run: |
           set -o pipefail
-          ./gradlew assembleDebug lintDebug testDebugUnitTest --continue --stacktrace 2>&1 | tee build.log
+          ./gradlew assembleDebug assembleDebugAndroidTest lintDebug testDebugUnitTest --continue --stacktrace 2>&1 | tee build.log
 
       - name: Summarise unit tests
         if: always()
@@ -52,11 +61,44 @@ jobs:
         if: failure()
         run: .github/scripts/annotate-build-failures.sh build.log
 
+      - name: Verify APK contains the exact small pin, not the corpus or vendor code
+        run: |
+          python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs \
+            --apk app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish immutable data container for on-demand downloads
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=toyota-vehicle-packs-v1
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title 'Toyota vehicle pack data — conversion in progress' \
+              --notes 'Content-addressed data-only objects for the APK-pinned on-demand loader. Unresolved mappings stay disabled. This is NOT a declaration of completed Toyota support or physical vehicle validation.'
+          fi
+          container=$(python3 -c 'import json; print(json.load(open(".local/toyota-vehicle-packs/index.json"))["container"])')
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets > .local/pack-release-assets.json
+          if ! python3 -c 'import json,sys; sys.exit(0 if sys.argv[1] in [a["name"] for a in json.load(open(".local/pack-release-assets.json"))["assets"]] else 1)' "$container"; then
+            # Never --clobber: an old APK must keep retrieving its exact original hash tree.
+            gh release upload "$tag" ".local/toyota-vehicle-packs/$container" --repo "$GITHUB_REPOSITORY"
+          fi
+          python3 tools/thinkdiag/check_pack_delivery.py --directory .local/toyota-vehicle-packs
+          cat .local/toyota-vehicle-packs/conversion-report.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload device-test APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-debug-device-tests
+          path: app/build/outputs/apk/androidTest/debug/*.apk
           if-no-files-found: error
 
       - name: Upload build reports
@@ -69,4 +111,73 @@ jobs:
             app/build/reports/
             app/build/test-results/
             build/reports/
+          if-no-files-found: warn
+
+  selected-vehicle-device:
+    name: On-demand selected vehicle packs (Android 24)
+    # One real minSdk run per push, rather than duplicating an emulator on the PR event.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: app-debug-apk
+          path: .local/device/app
+      - uses: actions/download-artifact@v8
+        with:
+          name: app-debug-device-tests
+          path: .local/device/tests
+      - name: Enable KVM for the Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install actual small APK and verify range delivery plus offline cache on minSdk
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          target: default
+          arch: x86_64
+          disk-size: 2048M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -writable-system
+          script: |
+            mkdir -p .local/device/reports
+            bash .github/scripts/sync-emulator-ca.sh
+            adb install -r -t .local/device/app/app-debug.apk
+            adb install -r -t .local/device/tests/app-debug-androidTest.apk
+            adb shell am instrument -w -r -e class com.bod3.app.vehiclepack.VehiclePackInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
+            adb logcat -d > .local/device/reports/logcat.txt
+            grep -Eq '^OK \([1-9][0-9]* tests?\)' .local/device/reports/instrumentation.txt
+            ! grep -q 'FAILURES!!!' .local/device/reports/instrumentation.txt
+      - name: Publish Android smoke evidence for API inspection
+        if: always() && hashFiles('.local/device/reports/instrumentation.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('.local/device/reports/instrumentation.txt').read_bytes()
+          text = source[:48000].decode('utf-8', errors='replace')
+          trust = Path('.local/device/reports/tls-trust.md')
+          tls = trust.read_text() if trust.exists() else 'Emulator trust setup did not complete; inspect the failing setup step.\n'
+          Path('.local/device/reports/summary.md').write_text('Android 24 actual-APK, pinned range delivery and private offline-cache smoke tests. No ECU requests.\n\n' + tls + '\n```text\n' + text + '\n```\n')
+          PY
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name='Toyota Android 24 on-demand pack evidence' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion='${{ job.status }}' \
+            -f 'output[title]=Small APK / exact HTTP ranges / offline selected path' \
+            -F 'output[summary]=@.local/device/reports/summary.md'
+      - name: Upload Android on-demand pack smoke results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vehicle-packs-android24-results
+          path: .local/device/reports/
           if-no-files-found: warn

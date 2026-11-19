@@ -1,5 +1,6 @@
 package com.bod3.app.datapack
 
+import com.bod3.app.obd.kwp.DiagnosticLinkCodec
 import com.bod3.app.profile.JsonWriter
 import com.bod3.app.profile.MiniJson
 
@@ -30,12 +31,18 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
  */
 object DataPackCodec {
     const val FORMAT = "bod3-datapack"
-    const val FORMAT_VERSION = 2
+    const val FORMAT_VERSION = 4
 
     fun encode(pack: DataPack): String = JsonWriter.write(
         linkedMapOf(
             "format" to FORMAT,
-            "formatVersion" to if (pack.dtcGroups.isEmpty()) 1 else FORMAT_VERSION,
+            "formatVersion" to when {
+                pack.pids.any { it.supportChecks.isNotEmpty() || it.link?.testerPresent == listOf(0x3E) } ||
+                    pack.vehicles.any { v -> v.ecus.any { it.link?.testerPresent == listOf(0x3E) } } -> 4
+                pack.vehicles.any { v -> v.ecus.any { it.diagnostics != null } } -> 3
+                pack.dtcGroups.isNotEmpty() -> 2
+                else -> 1
+            },
             "id" to pack.id,
             "name" to pack.name,
             "version" to pack.version,
@@ -62,7 +69,12 @@ object DataPackCodec {
     fun encodePid(p: CustomPid): Map<String, Any?> = linkedMapOf(
         "id" to p.id, "name" to p.name, "request" to p.request, "formula" to p.formula, "unit" to p.unit,
         "min" to p.min, "max" to p.max, "decimals" to p.decimals, "header" to p.header,
-        "responseHeader" to p.responseHeader, "notes" to p.notes,
+        "responseHeader" to p.responseHeader, "notes" to p.notes, "link" to p.link?.let(DiagnosticLinkCodec::encode),
+        "dataOffset" to p.dataOffset.takeIf { it != 0 }, "sourceRecords" to p.sourceRecords.takeIf { it.isNotEmpty() },
+        "supportChecks" to p.supportChecks.takeIf { it.isNotEmpty() }?.map { check -> linkedMapOf(
+            "request" to check.request, "formula" to check.formula, "recordId" to check.recordId,
+            "dataOffset" to check.dataOffset.takeIf { it != 0 }, "sourceRecords" to check.sourceRecords.takeIf { it.isNotEmpty() },
+        ).filterValues { it != null } },
     ).filterValues { it != null }
 
     fun encodeVehicle(v: VehicleDefinition): Map<String, Any?> = linkedMapOf(
@@ -72,7 +84,9 @@ object DataPackCodec {
 
     fun encodeEcu(e: EcuDefinition): Map<String, Any?> = linkedMapOf(
         "address" to e.address, "name" to e.name, "requestId" to e.requestId, "responseId" to e.responseId,
-        "protocol" to e.protocol.name, "addressing" to if (e.is29Bit) "29" else "11", "notes" to e.notes,
+        "protocol" to e.protocol.name, "addressing" to (if (e.link?.kLine != null) null else if (e.is29Bit) "29" else "11"), "notes" to e.notes,
+        "link" to e.link?.let(DiagnosticLinkCodec::encode), "sourceRecords" to e.sourceRecords.takeIf { it.isNotEmpty() },
+        "diagnostics" to e.diagnostics?.let(com.bod3.app.diagnostics.EcuReadDefinitionsCodec::encode),
     ).filterValues { it != null }
 
     /** Parses and validates [json]. Never throws for bad input; problems are listed in the result. */
@@ -88,6 +102,7 @@ object DataPackCodec {
         val format = root["format"]
         if (format != null && format != FORMAT) errors += "format: expected \"$FORMAT\", got \"$format\""
         val formatVersion = reader.int(root, "formatVersion", "", required = false) ?: 1
+        if (formatVersion < 1) errors += "formatVersion: must be at least 1"
         if (formatVersion > FORMAT_VERSION) errors += "formatVersion: $formatVersion is newer than this app supports ($FORMAT_VERSION); update the app"
 
         val pids = reader.list(root, "pids", "").mapIndexedNotNull { i, item -> reader.pid(item, "pids[$i]") }
@@ -96,6 +111,10 @@ object DataPackCodec {
         val dtcs = reader.descriptions(root["dtcs"], "dtcs")
         val dtcGroups = reader.list(root, "dtcGroups", "").mapIndexedNotNull { i, item -> reader.dtcGroup(item, "dtcGroups[$i]") }
         if (dtcGroups.isNotEmpty() && formatVersion < 2) errors += "dtcGroups: requires formatVersion 2 so older apps cannot silently lose manufacturer scoping"
+        if (vehicles.any { v -> v.ecus.any { it.diagnostics != null } } && formatVersion < 3) errors += "diagnostics: requires formatVersion 3 so older apps cannot silently substitute generic ECU reads"
+        if (formatVersion < 4 && (pids.any { it.supportChecks.isNotEmpty() || it.link?.testerPresent == listOf(0x3E) } ||
+                vehicles.any { v -> v.ecus.any { it.link?.testerPresent == listOf(0x3E) } }))
+            errors += "supportChecks/testerPresent: requires formatVersion 4 so older apps cannot silently discard prerequisites or change the keepalive"
         val id = reader.string(root, "id", "")
         val name = reader.string(root, "name", "")
         if (id == null || name == null) return DataPackResult(null, errors)
@@ -190,7 +209,22 @@ object DataPackCodec {
             val responseHeader = string(m, "responseHeader", p, required = false)?.uppercase()?.ifEmpty { null }
             val notes = string(m, "notes", p, required = false)
             if (errors.size > before || id == null || name == null || request == null || formula == null) return null
-            return CustomPid(id, name, request.uppercase(), formula, unit, min, max, decimals, header, responseHeader, notes)
+            val link = DiagnosticLinkCodec.decode(m["link"], "$p.link", errors)
+            val offset = int(m, "dataOffset", p, false) ?: 0
+            val records = com.bod3.app.recipe.JsonFields(errors).strings(m, "sourceRecords", p)
+            m.keys.filterNot { it in setOf("id", "name", "request", "formula", "unit", "min", "max", "decimals", "header", "responseHeader", "notes", "link", "dataOffset", "sourceRecords", "supportChecks") }
+                .forEach { errors += "$p.$it: unknown PID field (nothing is silently discarded)" }
+            val support = list(m, "supportChecks", p).mapIndexedNotNull { i, raw ->
+                val cp = "$p.supportChecks[$i]"; val c = obj(raw, cp) ?: return@mapIndexedNotNull null
+                c.keys.filterNot { it in setOf("request", "formula", "dataOffset", "sourceRecords", "recordId") }
+                    .forEach { errors += "$cp.$it: unknown prerequisite field" }
+                val cr = string(c, "request", cp); val cf = string(c, "formula", cp)
+                val co = int(c, "dataOffset", cp, false) ?: 0
+                val record = int(c, "recordId", cp, false)
+                val sources = com.bod3.app.recipe.JsonFields(errors).strings(c, "sourceRecords", cp)
+                if (cr == null || cf == null) null else PidSupportCheck(cr.uppercase(), cf, co, sources, record)
+            }
+            return CustomPid(id, name, request.uppercase(), formula, unit, min, max, decimals, header, responseHeader, notes, link, offset, records, support)
         }
 
         fun ecu(item: Any?, p: String): EcuDefinition? {
@@ -218,6 +252,9 @@ object DataPackCodec {
                 address = string(m, "address", p, required = false)?.ifEmpty { null },
                 name = name, requestId = request.uppercase(), responseId = response.uppercase(), protocol = protocol,
                 notes = string(m, "notes", p, required = false),
+                link = DiagnosticLinkCodec.decode(m["link"], "$p.link", errors),
+                sourceRecords = com.bod3.app.recipe.JsonFields(errors).strings(m, "sourceRecords", p),
+                diagnostics = com.bod3.app.diagnostics.EcuReadDefinitionsCodec.decode(m["diagnostics"], "$p.diagnostics", errors),
             )
         }
 

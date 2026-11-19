@@ -15,6 +15,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiveDataTest {
+    @Test fun reviewedNumericDecodersAgreeAcrossAllUnsignedByteInputs() = NativeLiveScenarios.reviewedUnsignedArithmeticCoversItsEntireByteDomain()
+    @Test fun nativeSupportChecksArePerPollRunAndExactEcu() = runBlocking { NativeLiveScenarios.supportIsScopedToPollRunAndExactDefinition() }
+    @Test fun nativeSupportMetadataRoundTripsWithoutLegacyDowngrade() = NativeLiveScenarios.supportAndKeepAliveRoundTripsAndVersionGates()
+    @Test fun nativeSupportRecordsAreValidatedAtomically() = NativeLiveScenarios.supportRecordsAreAtomicAndNotSensorData()
+    @Test fun ambiguousOrNegativePrerequisitesAndSamplesFailClosed() = runBlocking { NativeLiveScenarios.ambiguousOrNegativeSupportAndSamplesFailClosed() }
+    @Test fun resetAndExpiredLinksDiscardPrerequisiteSnapshots() = runBlocking { NativeLiveScenarios.resetsAndExpiredKlineNeverReuseSupportSnapshot() }
+    @Test fun repeatedA801RepliesFormOneCompleteSupportTableOnKlineAndCan() = runBlocking { NativeLiveScenarios.a801MultiMessageReplyIsOneAtomicSupportTable() }
+    @Test fun explicitStartCommunicationAndDisconnectDiscardSupport() = runBlocking { NativeLiveScenarios.communicationRestartAndDisconnectExpireSameEcuSupport() }
+    @Test fun incompleteCanExchangeCannotAuthorizeFromItsValidSubset() = NativeLiveScenarios.incompleteCanMessagesCannotHideBehindValidReplies()
+    @Test fun bareKwpKeepaliveUsesOnlyItsCurrentEcuDefinition() = runBlocking { NativeLiveScenarios.exactBareKwpKeepAliveDoesNotSwitchOrInitialize() }
 
     @Test
     fun customPidDecodeChecksTheEcho() {

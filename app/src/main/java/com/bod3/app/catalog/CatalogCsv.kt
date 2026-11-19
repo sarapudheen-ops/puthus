@@ -127,6 +127,9 @@ object CatalogCsv {
     }
 
     fun encode(pack: CatalogPack): String {
+        require((pack.nodes.map { it.data } + pack.platforms.map { it.data } + pack.library).none { d -> d.ecus.any { it.link != null || it.diagnostics != null } }) {
+            "CSV cannot preserve enhanced ECU links/read definitions. Export JSON instead; nothing was exported or changed."
+        }
         val tree = CatalogTree(pack)
         val rows = mutableListOf(COLUMNS)
         fun quoted(value: String): String = if (value.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) "\"${value.replace("\"", "\"\"")}\"" else value

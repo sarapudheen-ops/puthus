@@ -59,7 +59,13 @@ data class CodingRecipe(
     val source: String? = null,
     val notes: String? = null,
     val verified: Boolean = false,
+    val readService: Int = 0x22,
+    val writeService: Int = 0x2E,
+    val sourceRecords: List<String> = emptyList(),
+    val defaultSession: Int = WritePolicy.DEFAULT_SESSION,
 ) {
+    val identifierBytes: List<Int> get() = if (readService == 0x21) listOf(did) else listOf(did shr 8, did and 255)
+    val readRequest: List<Int> get() = listOf(readService) + identifierBytes
     val field: CodingField get() = CodingField(byteIndex, length, mask)
 
     /** Largest raw value the field can hold. */
@@ -88,12 +94,10 @@ data class CodingRecipe(
     fun problems(): List<String> = buildList {
         if (!ID.matches(id)) add("id: use lowercase letters, digits, '.', '_' or '-' (got \"$id\")")
         if (name.isBlank()) add("name: must not be empty")
-        val ids = listOf(module.requestId, module.responseId)
-        if (!ids.all { HEX_ID.matches(it) }) {
-            add("module: requestId and responseId must be 3-digit (11-bit) or 8-digit (29-bit) hex CAN IDs")
-        } else if (module.requestId.length != module.responseId.length) {
-            add("module: requestId and responseId must both be 11-bit or both 29-bit")
-        }
+        addAll(module.problems().map { "module: $it" })
+        val local = readService == 0x21 && writeService == 0x3B
+        if (!(readService == 0x22 && writeService == 0x2E) && !(local && module.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000)) add("readService/writeService: needs 22/2E or explicit KWP 21/3B")
+        if (local && did !in 0..255) add("did: local identifier must be one byte")
         if (did !in 0..0xFFFF) add("did: must be 0000-FFFF")
         if (did in PROTECTED_DIDS) add("did: %04X is an identification record and is never written".format(did))
         if (byteIndex !in 0..MAX_BYTE_INDEX) add("byte: must be 0-$MAX_BYTE_INDEX")
@@ -103,7 +107,8 @@ data class CodingRecipe(
             if (length != 1) add("mask: only allowed with length 1")
         }
         if (method == CodingMethod.LONG_CODING && mask == null) add("mask: long coding needs a bit mask, e.g. \"01\"")
-        if (session !in WritePolicy.allowedSessions) add("session: only 01 (default) or 03 (extended) are allowed")
+        if (!WritePolicy.isAllowed(com.bod3.app.obd.session.WritePurpose.CODING, listOf(0x10, session), module.dialect)) add("session: unsupported session")
+        if (!WritePolicy.isAllowed(com.bod3.app.obd.session.WritePurpose.CODING, listOf(0x10, defaultSession), module.dialect)) add("defaultSession: unsupported session")
         security?.problems()?.forEach { add("securityAccess: $it") }
         if (preconditions.minVoltage !in 9.0..16.0) add("preconditions.minVoltage: must be 9-16 V")
         if (factor == 0.0) add("factor: must not be 0")

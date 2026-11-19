@@ -16,6 +16,7 @@ import com.bod3.app.audit.AuditStore
 import com.bod3.app.obd.session.ExpertModeRequiredException
 import com.bod3.app.obd.session.ObdRequestException
 import com.bod3.app.obd.session.Session
+import com.bod3.app.obd.session.WriteScope
 import com.bod3.app.obd.session.WriteGate
 import com.bod3.app.obd.session.WritePolicy
 import com.bod3.app.obd.session.WritePurpose
@@ -29,7 +30,10 @@ import com.bod3.app.recipe.Hex
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /** The module's current value, read (and backed up) before anything is written. */
@@ -136,7 +140,10 @@ class CodingEngine(
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
 
-    suspend fun read(recipe: CodingRecipe, vehicle: VehicleContext = VehicleContext(), overrideVersion: Boolean = false): ReadResult {
+    suspend fun read(recipe: CodingRecipe, vehicle: VehicleContext = VehicleContext(), overrideVersion: Boolean = false): ReadResult =
+        session.withDiagnosticOperation { readPrepared(recipe, vehicle, overrideVersion) }
+
+    private suspend fun readPrepared(recipe: CodingRecipe, vehicle: VehicleContext, overrideVersion: Boolean): ReadResult {
         val problems = recipe.problems()
         if (problems.isNotEmpty()) return ReadResult.Refused("Invalid recipe: ${problems.first()}")
         val target = recipe.module.target
@@ -152,7 +159,7 @@ class CodingEngine(
                 report,
             )
         }
-        val data = when (val outcome = readDid(recipe.module, recipe.did)) {
+        val data = when (val outcome = readDid(recipe.module, recipe.did, recipe.readService)) {
             is DidRead.Data -> outcome.data
             is DidRead.Failed -> return ReadResult.Refused("Could not read %04X: %s".format(recipe.did, outcome.message), report)
         }
@@ -167,6 +174,7 @@ class CodingEngine(
             id = newId(), createdAtMs = now, recipeId = recipe.id, recipeName = recipe.name, vin = vehicle.vin,
             module = recipe.module, session = recipe.session, security = recipe.security, preconditions = recipe.preconditions,
             did = recipe.did, data = data, partNumber = partNumber, softwareVersion = software,
+            readService = recipe.readService, writeService = recipe.writeService, defaultSession = recipe.defaultSession, sourceRecords = recipe.sourceRecords,
         )
         backups.add(backup)
         return ReadResult.Ready(CodingReading(recipe, data, recipe.field.read(data), partNumber, software, report, backup, overrideVersion, now))
@@ -180,22 +188,28 @@ class CodingEngine(
         confirmation: CodingConfirmation,
         vehicle: VehicleContext = VehicleContext(),
         onStep: (CodingStep) -> Unit = {},
+    ): CodingResult = writePrepared(reading, newValue, confirmation, vehicle, onStep)
+
+    private suspend fun writePrepared(
+        reading: CodingReading, newValue: Long, confirmation: CodingConfirmation,
+        vehicle: VehicleContext, onStep: (CodingStep) -> Unit,
     ): CodingResult {
         val recipe = reading.recipe
         val log = AuditRecorder(clock)
         log.step("Recipe ${recipe.id}: ${recipe.name} – %04X byte %d%s".format(recipe.did, recipe.byteIndex, recipe.mask?.let { " mask %02X".format(it) } ?: ""))
         log.step("Module ${reading.partNumber ?: "?"} / ${reading.softwareVersion ?: "?"}" + if (reading.versionOverridden) " (version check overridden)" else "")
         val problem = recipe.problems().firstOrNull()?.let { "Invalid recipe: $it" } ?: recipe.valueProblem(newValue)
+        var cancelled: CancellationException? = null
         val result = if (problem != null) {
             refused(log, problem)
         } else {
             val diff = diff(reading, newValue)
             log.step("Change: ${diff.beforeText} → ${diff.afterText}")
             perform(
-                Target(recipe.module, recipe.session, recipe.security, recipe.preconditions, recipe.did),
+                Target(recipe.module, recipe.session, recipe.security, recipe.preconditions, recipe.did, recipe.readService, recipe.writeService, recipe.defaultSession),
                 expected = reading.data, intended = diff.after, backupId = reading.backup.id,
                 confirmation = confirmation, confirmationKey = Triple(reading.backup.id, reading.data, newValue),
-                vehicle = vehicle, log = log, onStep = onStep,
+                vehicle = vehicle, log = log, onStep = onStep, onCancelled = { cancelled = it },
             )
         }
         val details = linkedMapOf(
@@ -209,7 +223,9 @@ class CodingEngine(
             "Backup" to reading.backup.id,
             "Version override" to if (reading.versionOverridden) "yes" else "no",
         )
-        return finish(AuditKind.CODING_WRITE, recipe.name, recipe.id, recipe.module, vehicle.vin ?: reading.backup.vin, log, result, details)
+        val finished = finish(AuditKind.CODING_WRITE, recipe.name, recipe.id, recipe.module, vehicle.vin ?: reading.backup.vin, log, result, details)
+        cancelled?.let { throw it } // Backup status and audit are durable before cancellation propagates.
+        return finished
     }
 
     suspend fun rollback(
@@ -217,14 +233,19 @@ class CodingEngine(
         confirmation: CodingConfirmation,
         vehicle: VehicleContext = VehicleContext(),
         onStep: (CodingStep) -> Unit = {},
+    ): CodingResult = rollbackPrepared(backup, confirmation, vehicle, onStep)
+
+    private suspend fun rollbackPrepared(
+        backup: CodingBackup, confirmation: CodingConfirmation, vehicle: VehicleContext, onStep: (CodingStep) -> Unit,
     ): CodingResult {
         val log = AuditRecorder(clock)
         log.step("Rollback of ${backup.recipeName} to backup ${backup.id} (%04X = %s)".format(backup.did, Hex.format(backup.data)))
+        var cancelled: CancellationException? = null
         val result = perform(
-            Target(backup.module, backup.session, backup.security, backup.preconditions, backup.did),
+            Target(backup.module, backup.session, backup.security, backup.preconditions, backup.did, backup.readService, backup.writeService, backup.defaultSession),
             expected = null, intended = backup.data, backupId = backup.id,
             confirmation = confirmation, confirmationKey = "rollback:${backup.id}",
-            vehicle = vehicle, log = log, onStep = onStep,
+            vehicle = vehicle, log = log, onStep = onStep, onCancelled = { cancelled = it },
         )
         if (result.outcome == CodingOutcome.VERIFIED || result.outcome == CodingOutcome.NO_CHANGE) {
             backups.updateStatus(backup.id, BackupStatus.ROLLED_BACK, clock())
@@ -236,8 +257,10 @@ class CodingEngine(
             "Read back" to (result.readBack?.let { Hex.format(it) } ?: "-"),
             "Backup" to backup.id,
         )
-        return finish(AuditKind.CODING_ROLLBACK, "Rollback: ${backup.recipeName}", backup.recipeId, backup.module, vehicle.vin ?: backup.vin, log, result, details)
+        val finished = finish(AuditKind.CODING_ROLLBACK, "Rollback: ${backup.recipeName}", backup.recipeId, backup.module, vehicle.vin ?: backup.vin, log, result, details)
             .copy(backupId = backup.id)
+        cancelled?.let { throw it }
+        return finished
     }
 
     // ---- internals --------------------------------------------------------------------------------
@@ -248,18 +271,24 @@ class CodingEngine(
         val security: SecurityAccessSpec?,
         val preconditions: CodingPreconditions,
         val did: Int,
-    )
+        val readService: Int,
+        val writeService: Int,
+        val defaultSession: Int,
+    ) {
+        val identifier: List<Int> get() = if (readService == 0x21) listOf(did) else listOf(did shr 8, did and 255)
+        val readRequest: List<Int> get() = listOf(readService) + identifier
+    }
 
     private sealed interface DidRead {
         data class Data(val data: List<Int>) : DidRead
         data class Failed(val message: String, val connectionLost: Boolean = false) : DidRead
     }
 
-    private suspend fun readDid(module: ActuatorModule, did: Int): DidRead {
-        val request = listOf(0x22, (did shr 8) and 0xFF, did and 0xFF)
+    private suspend fun readDid(module: ActuatorModule, did: Int, readService: Int = 0x22): DidRead {
+        val request = listOf(readService) + if (readService == 0x21) listOf(did) else listOf((did shr 8) and 0xFF, did and 0xFF)
         return try {
             val response = session.request(module.target, request, UdsWriteClient.DEFAULT_TIMEOUT_MS)
-            response.messages.firstOrNull()?.let { return DidRead.Data(it.payload.drop(3)) }
+            response.messages.firstOrNull()?.let { return DidRead.Data(it.payload.drop(request.size)) }
             val nrc = response.negativeResponses.map { it.payload[2] }.firstOrNull { it != Nrc.RESPONSE_PENDING }
             DidRead.Failed(nrc?.let { "refused: ${Nrc.describe(it)}${Nrc.hint(it)}" } ?: "no response from the module")
         } catch (e: ObdRequestException) {
@@ -282,6 +311,28 @@ class CodingEngine(
     }
 
     private suspend fun perform(
+        target: Target, expected: List<Int>?, intended: List<Int>, backupId: String,
+        confirmation: CodingConfirmation, confirmationKey: Any, vehicle: VehicleContext,
+        log: AuditRecorder, onStep: (CodingStep) -> Unit, onCancelled: (CancellationException) -> Unit,
+    ): CodingResult {
+        // Save the outcome before returning across a cancellable routing context. Otherwise prompt
+        // cancellation can erase a completed write/read-back result before it reaches the audit.
+        var prepared: CodingResult? = null
+        try {
+            session.withDiagnosticOperation {
+                prepared = performGuarded(target, expected, intended, backupId, confirmation, confirmationKey,
+                    vehicle, log, onStep, onCancelled) { prepared = it }
+            }
+        } catch (e: CancellationException) {
+            onCancelled(e)
+        } catch (e: Exception) {
+            log.step("Operation failed before writing: ${e.message}", ok = false)
+        }
+        return prepared ?: CodingResult(CodingOutcome.ABORTED, "Operation interrupted before writing; nothing was written",
+            before = expected, intended = intended, backupId = backupId)
+    }
+
+    private suspend fun performGuarded(
         target: Target,
         expected: List<Int>?,
         intended: List<Int>,
@@ -291,6 +342,8 @@ class CodingEngine(
         vehicle: VehicleContext,
         log: AuditRecorder,
         onStep: (CodingStep) -> Unit,
+        onCancelled: (CancellationException) -> Unit,
+        onPreparedResult: (CodingResult) -> Unit,
     ): CodingResult {
         if (!expertMode()) return refused(log, ExpertModeRequiredException(WritePurpose.CODING).message!!)
         confirmation.consume(confirmationKey)?.let { return refused(log, it) }
@@ -304,15 +357,25 @@ class CodingEngine(
             return refused(log, "Safety checks failed: ${report.summary}$hint", report)
         }
 
+        return session.withEcuOperation(target.module.target) {
+            performPrepared(target, expected, intended, backupId, log, onStep, report, onCancelled).also(onPreparedResult)
+        }
+    }
+
+    private suspend fun performPrepared(
+        target: Target, expected: List<Int>?, intended: List<Int>, backupId: String,
+        log: AuditRecorder, onStep: (CodingStep) -> Unit, report: PreconditionReport,
+        onCancelled: (CancellationException) -> Unit,
+    ): CodingResult {
         onStep(CodingStep.REREAD)
-        val current = when (val read = readDid(target.module, target.did)) {
+        val current = when (val read = readDid(target.module, target.did, target.readService)) {
             is DidRead.Data -> read.data
             is DidRead.Failed -> {
-                log.step("Re-read failed: ${read.message}", "22 %04X".format(target.did), ok = false)
+                log.step("Re-read failed: ${read.message}", Hex.format(target.readRequest), ok = false)
                 return CodingResult(CodingOutcome.ABORTED, "Could not re-read the value (${read.message}); nothing was written", backupId = backupId, preconditions = report)
             }
         }
-        log.step("Current value", "22 %04X".format(target.did), Hex.format(current))
+        log.step("Current value", Hex.format(target.readRequest), Hex.format(current))
         if (expected != null && current != expected) {
             log.step("Value changed since it was read and backed up", ok = false)
             return CodingResult(
@@ -330,7 +393,8 @@ class CodingEngine(
         }
 
         val grant = try {
-            WriteGate.issue(WritePurpose.CODING, target.module.target, expertMode(), clock, maxDurationMs = GRANT_DURATION_MS)
+            WriteGate.issue(WritePurpose.CODING, target.module.target, expertMode(), clock, maxDurationMs = GRANT_DURATION_MS,
+                scope = WriteScope(target.identifier, target.session, target.security?.level, target.defaultSession))
         } catch (e: ExpertModeRequiredException) {
             return refused(log, e.message!!)
         }
@@ -340,13 +404,18 @@ class CodingEngine(
             log.step(label, Hex.format(request), outcome.display, outcome.isPositive)
             return outcome
         }
-        var sessionOpened = false
+        var sessionAttempted = false
+        var writeAttempted = false
         try {
-            if (target.session != WritePolicy.DEFAULT_SESSION) {
+            if (target.session != target.defaultSession) {
                 onStep(CodingStep.SESSION)
+                currentCoroutineContext().ensureActive()
+                sessionAttempted = true // A lost acknowledgement does not prove the ECU stayed in default session.
                 val outcome = send("Open session %02X".format(target.session), listOf(WritePolicy.SESSION_CONTROL, target.session))
+                // An explicit refusal proves this request did not open the session. Silence, pending,
+                // cancellation or an adapter error do not, so those still need a cleanup attempt.
+                if (outcome is UdsOutcome.Negative) sessionAttempted = false
                 if (!outcome.isPositive) return aborted("Could not open the diagnostic session: ${outcome.display}", current, backupId, report)
-                sessionOpened = true
             }
             target.security?.let { spec ->
                 onStep(CodingStep.SECURITY)
@@ -355,7 +424,9 @@ class CodingEngine(
             }
 
             onStep(CodingStep.WRITE)
-            val writeRequest = listOf(WritePolicy.WRITE_DATA_BY_IDENTIFIER, (target.did shr 8) and 0xFF, target.did and 0xFF) + intended
+            val writeRequest = listOf(target.writeService) + target.identifier + intended
+            currentCoroutineContext().ensureActive()
+            writeAttempted = true
             val written = send("Write", writeRequest)
             if (written is UdsOutcome.ConnectionLost) {
                 return CodingResult(
@@ -365,16 +436,17 @@ class CodingEngine(
                 )
             }
 
+            currentCoroutineContext().ensureActive()
             onStep(CodingStep.VERIFY)
-            val readBack = when (val read = readDid(target.module, target.did)) {
+            val readBack = when (val read = readDid(target.module, target.did, target.readService)) {
                 is DidRead.Data -> read.data
                 is DidRead.Failed -> {
-                    log.step("Read-back failed: ${read.message}", "22 %04X".format(target.did), ok = false)
+                    log.step("Read-back failed: ${read.message}", Hex.format(target.readRequest), ok = false)
                     val what = if (written.isPositive) "The module accepted the write, but it could not be read back" else "The write was not confirmed and the value could not be read back"
                     return CodingResult(CodingOutcome.UNKNOWN, "$what (${read.message}). Read it again and roll back if needed.", current, intended, null, backupId, preconditions = report)
                 }
             }
-            log.step("Read back", "22 %04X".format(target.did), Hex.format(readBack), ok = readBack == intended)
+            log.step("Read back", Hex.format(target.readRequest), Hex.format(readBack), ok = readBack == intended)
             return when {
                 readBack == intended -> CodingResult(
                     CodingOutcome.VERIFIED,
@@ -392,13 +464,29 @@ class CodingEngine(
                     current, intended, readBack, backupId, preconditions = report,
                 )
             }
+        } catch (e: CancellationException) {
+            onCancelled(e)
+            log.step("Cancelled${if (writeAttempted) " during/after the write; outcome is unknown" else " before writing"}", ok = false)
+            return CodingResult(if (writeAttempted) CodingOutcome.UNKNOWN else CodingOutcome.ABORTED,
+                if (writeAttempted) "Cancelled after the write may have been sent. Reconnect, read again and roll back from the backup if needed."
+                else "Cancelled before writing; nothing was written", current, intended, null, backupId, preconditions = report)
+        } catch (e: Exception) {
+            log.step("Operation failed: ${e.message ?: e.javaClass.simpleName}", ok = false)
+            return CodingResult(if (writeAttempted) CodingOutcome.UNKNOWN else CodingOutcome.ABORTED,
+                if (writeAttempted) "Unexpected error after the write may have been sent. Read again and use the backup if needed: ${e.message}"
+                else "Operation failed before writing; nothing was written: ${e.message}", current, intended, null, backupId, preconditions = report)
         } finally {
             withContext(NonCancellable) {
-                if (sessionOpened) {
-                    onStep(CodingStep.CLOSE)
-                    send("Return to default session", listOf(WritePolicy.SESSION_CONTROL, WritePolicy.DEFAULT_SESSION))
+                try {
+                    if (sessionAttempted) {
+                        try { onStep(CodingStep.CLOSE) }
+                        catch (e: Exception) { log.step("Closing display failed: ${e.message}", ok = false) }
+                        try { send("Return to default session", listOf(WritePolicy.SESSION_CONTROL, target.defaultSession)) }
+                        catch (e: Exception) { log.step("Default session not confirmed: ${e.message}", ok = false) }
+                    }
+                } finally {
+                    grant.revoke()
                 }
-                grant.revoke()
             }
         }
     }

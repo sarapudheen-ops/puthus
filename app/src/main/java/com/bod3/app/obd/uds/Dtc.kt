@@ -1,15 +1,19 @@
 package com.bod3.app.obd.uds
 
-/** A diagnostic trouble code with its UDS status byte (status is null for OBD service 03 codes). */
-data class DtcRecord(val code: String, val status: Int?, val raw: List<Int>) {
-    val testFailed: Boolean get() = status != null && status and 0x01 != 0
-    val pending: Boolean get() = status != null && status and 0x04 != 0
-    val confirmed: Boolean get() = status == null || status and 0x08 != 0
-    val warningLamp: Boolean get() = status != null && status and 0x80 != 0
+/** KWP/manufacturer status bits are not implicitly UDS status bits. */
+enum class DtcStatusMeaning { UDS, RAW }
+
+/** A diagnostic trouble code; RAW status remains opaque unless its bit meanings are documented. */
+data class DtcRecord(val code: String, val status: Int?, val raw: List<Int>, val statusMeaning: DtcStatusMeaning = DtcStatusMeaning.UDS) {
+    val testFailed: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x01 != 0
+    val pending: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x04 != 0
+    val confirmed: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && (status == null || status and 0x08 != 0)
+    val warningLamp: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x80 != 0
 
     /** Short status summary, e.g. "confirmed, MIL". */
     val statusText: String
         get() {
+            if (statusMeaning == DtcStatusMeaning.RAW) return status?.let { "raw status 0x%02X".format(it) } ?: "stored"
             if (status == null) return "stored (OBD)"
             val parts = buildList {
                 if (testFailed) add("failing now")

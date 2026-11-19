@@ -2,6 +2,7 @@ package com.bod3.app.actuator
 
 import com.bod3.app.obd.uds.SecurityAccessSpec
 import com.bod3.app.obd.uds.SecurityAlgorithm
+import com.bod3.app.obd.kwp.DiagnosticLinkCodec
 import com.bod3.app.profile.JsonWriter
 import com.bod3.app.profile.MiniJson
 import com.bod3.app.recipe.Hex
@@ -64,7 +65,7 @@ object ActuatorRecipeCodec {
 
     fun encodeRecipe(r: ActuatorRecipe): Map<String, Any?> = linkedMapOf(
         "id" to r.id, "name" to r.name, "description" to r.description,
-        "module" to linkedMapOf("name" to r.module.name, "address" to r.module.address, "requestId" to r.module.requestId, "responseId" to r.module.responseId)
+        "module" to linkedMapOf("name" to r.module.name, "address" to r.module.address, "requestId" to r.module.requestId, "responseId" to r.module.responseId, "link" to r.module.link?.let(DiagnosticLinkCodec::encode))
             .filterValues { it != null },
         "session" to "%02X".format(r.session),
         "securityAccess" to r.security?.let {
@@ -82,6 +83,7 @@ object ActuatorRecipeCodec {
             "partNumbers" to r.applicability.partNumbers, "softwareVersions" to r.applicability.softwareVersions,
         ),
         "source" to r.source, "notes" to r.notes, "verified" to r.verified,
+        "sourceRecords" to r.sourceRecords.takeIf { it.isNotEmpty() }, "defaultSession" to "%02X".format(r.defaultSession),
     ).filterValues { it != null }
 
     /** Parses and validates [json]. Never throws for bad input; every problem is listed with its path. */
@@ -132,7 +134,7 @@ object ActuatorRecipeCodec {
             val req = f.string(mod, "requestId", mp)?.uppercase()
             val res = f.string(mod, "responseId", mp)?.uppercase()
             if (modName == null || req == null || res == null) null
-            else ActuatorModule(modName, f.string(mod, "address", mp, required = false)?.ifEmpty { null }, req, res)
+            else ActuatorModule(modName, f.string(mod, "address", mp, required = false)?.ifEmpty { null }, req, res, DiagnosticLinkCodec.decode(mod["link"], "$mp.link", f.errors))
         }
         val session = f.hexInt(m, "session", p, required = false, max = 0xFF) ?: 0x03
         val security = f.obj(m, "securityAccess", p, required = false)?.let { sec ->
@@ -178,7 +180,8 @@ object ActuatorRecipeCodec {
             id = id, name = name, description = description, module = module, session = session, security = security,
             start = start, stop = stop, status = status, durationSeconds = duration, pollIntervalMs = poll.toLong(),
             preconditions = preconditions, safetyNotes = safety, applicability = applicability, source = source,
-            notes = notes, verified = verified,
+            notes = notes, verified = verified, sourceRecords = f.strings(m, "sourceRecords", p),
+            defaultSession = f.hexInt(m, "defaultSession", p, false, 0xFF) ?: 0x01,
         )
     }
 }

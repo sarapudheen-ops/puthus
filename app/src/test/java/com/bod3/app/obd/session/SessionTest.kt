@@ -130,7 +130,7 @@ class SessionTest {
 
     @Test
     fun failedHeaderChangeIsRetriedOnNextRequest() = runBlocking<Unit> {
-        val exec = ScriptedExecutor(mapOf("ATSH 7E0" to "OK", "ATCRA 7E8" to "?", "010C" to "7E804410C1AF8"))
+        val exec = ScriptedExecutor(mapOf("ATSH 7E0" to "OK", "ATCRA 7E8" to "?", "ATFCSM0" to "OK", "010C" to "7E804410C1AF8"))
         val session = Session(exec, ObdProtocol.ISO_15765_4_CAN_11_500)
         val engine = EcuTarget.Physical("7E0", "7E8")
 
@@ -139,6 +139,8 @@ class SessionTest {
 
         exec.reply("ATCRA 7E8", "OK")
         session.request(engine, 0x01, 0x0C)
-        assertEquals(listOf("ATSH 7E0", "ATCRA 7E8", "ATSH 7E0", "ATCRA 7E8", "010C"), exec.sent)
+        // A failed exchange now forgets ALL routing groups, including flow control:
+        // a partial adapter change cannot leave a prerequisite snapshot or FC state trusted.
+        assertEquals(listOf("ATSH 7E0", "ATCRA 7E8", "ATSH 7E0", "ATCRA 7E8", "ATFCSM0", "010C"), exec.sent)
     }
 }

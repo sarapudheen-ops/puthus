@@ -17,7 +17,7 @@ jobs:
   inspect:
     name: Inspect Toyota archive (no vendor code execution)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -45,12 +45,43 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Sweep every diagnostic-table family and native reader
+        run: |
+          python3 tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/sweep --report .local/thinkdiag/report
+      - name: Convert source-bound, on-demand vehicle packs in Actions
+        run: |
+          python3 tools/thinkdiag/convert_vehicle_packs.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/thinkdiag/vehicle-packs
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota vehicle conversion accounting' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Partial conversion: unresolved items remain disabled' \
+            -F 'output[summary]=@.local/thinkdiag/vehicle-packs/conversion-report.md'
+      - name: Upload on-demand packs and exact per-item conversion ledgers
+        uses: actions/upload-artifact@v7
+        with:
+          name: toyota-vehicle-packs
+          path: .local/thinkdiag/vehicle-packs/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
       - name: Convert unambiguous English DTC descriptions (no vehicle commands)
         run: |
           python3 tools/thinkdiag/convert_dtcs.py .local/thinkdiag/english/TCODE_EN.GAG.json \
             --output .local/thinkdiag/converted --report .local/thinkdiag/report
       - name: Verify the bundled reference is exactly reproducible
         run: cmp .local/thinkdiag/converted/toyota-lexus-dtcs.json app/src/main/assets/datapacks/toyota-lexus-dtcs.json
+      - name: Publish exhaustive sweep evidence
+        if: always() && hashFiles('.local/thinkdiag/report/sweep-reports.json') != ''
+        run: |
+          python3 tools/thinkdiag/sweep_reports.py publish \
+            --reports .local/thinkdiag/report --output .local/thinkdiag/report/evidence-bundle
       - name: Publish static-analysis reports
         if: always()
         run: |
@@ -73,6 +104,7 @@ jobs:
               -F "output[summary]=@$data"
           done
       - name: Upload recovered data (no vendor libraries or executables)
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: toyota-recovered-data
@@ -80,6 +112,7 @@ jobs:
             .local/thinkdiag/decoded/
             .local/thinkdiag/english/
             .local/thinkdiag/converted/
+            .local/thinkdiag/sweep/
             .local/thinkdiag/report/decoded-manifest.json
             .local/thinkdiag/report/english-text.json
           retention-days: 14
@@ -93,6 +126,7 @@ jobs:
             -f 'output[title]=Toyota release asset inspection' \
             -F 'output[summary]=@.local/thinkdiag/report/summary.md'
       - name: Upload the inspection report (not the raw vendor archive)
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: toyota-data-inspection

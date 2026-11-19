@@ -23,6 +23,7 @@ class SimModule(
     val responseId: String,
     val obd: Boolean = false,
     val truncateMultiFrame: Boolean = false,
+    val dialect: com.bod3.app.obd.kwp.DiagnosticDialect = com.bod3.app.obd.kwp.DiagnosticDialect.UDS,
     val respond: (List<Int>) -> List<List<Int>>,
 )
 
@@ -114,9 +115,11 @@ class SimulatedCanAdapter(
         val tx = header ?: if (is29) "18DB33F1" else "7DF"
         val sent = SentRequest(protocolCode, tx, payload)
         requests += sent
+        val kwpTarget = modules.singleOrNull { it.protocolCode == protocolCode && it.requestId == tx }
+            ?.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000
         when {
             ReadOnlyPolicy.isClearRequest(payload) -> clears += sent
-            ReadOnlyPolicy.isAllowed(payload) -> Unit
+            ReadOnlyPolicy.isAllowed(payload) || (kwpTarget && com.bod3.app.obd.kwp.KwpServices.readAllowed(payload)) -> Unit
             payload[0] in WritePolicy.allServices -> writes += sent
             else -> violations += "$tx $c"
         }

@@ -65,8 +65,8 @@ class DataPackStore(private val store: KeyValueStore) {
         get() = store.get(KEY_SELECTED_VEHICLE)
         set(value) = store.put(KEY_SELECTED_VEHICLE, value)
 
-    fun liveSelection(): LiveSelection? {
-        val map = store.get(KEY_LIVE_SELECTION)?.let { runCatching { MiniJson.parse(it) as? Map<*, *> }.getOrNull() } ?: return null
+    fun liveSelection(scope: String? = null): LiveSelection? {
+        val map = store.get(liveKey(scope))?.let { runCatching { MiniJson.parse(it) as? Map<*, *> }.getOrNull() } ?: return null
         val keys = (map["keys"] as? List<*>)?.filterIsInstance<String>() ?: return null
         val display = (map["display"] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
             val mode = LiveDisplay.entries.firstOrNull { it.name == v } ?: return@mapNotNull null
@@ -75,9 +75,12 @@ class DataPackStore(private val store: KeyValueStore) {
         return LiveSelection(keys, display)
     }
 
-    fun saveLiveSelection(selection: LiveSelection) {
+    private fun liveKey(scope: String?): String = if (scope == null) KEY_LIVE_SELECTION else KEY_LIVE_SELECTION + ".system." +
+        java.security.MessageDigest.getInstance("SHA-256").digest(scope.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
+    fun saveLiveSelection(selection: LiveSelection, scope: String? = null) {
         store.put(
-            KEY_LIVE_SELECTION,
+            liveKey(scope),
             JsonWriter.write(mapOf("keys" to selection.keys, "display" to selection.display.mapValues { it.value.name })),
         )
     }

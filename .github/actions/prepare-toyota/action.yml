@@ -1,0 +1,34 @@
+name: Prepare complete offline Toyota app library
+description: Recover the SHA-pinned archive as indexed, inert data, never vendor executable code.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - uses: actions/cache@v5
+      id: source-cache
+      with:
+        path: .local/toyota-app-assets
+        key: toyota-source-v1-${{ runner.os }}-${{ hashFiles('tools/thinkdiag/*.py', 'tools/thinkdiag/schema/*.sql', 'tools/thinkdiag/requirements.txt') }}
+    - name: Recover complete data-only library on cache miss
+      if: steps.source-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        mkdir -p .local/toyota-build
+        gh release download assets-v1 --repo "$GITHUB_REPOSITORY" --pattern TOYOTA.zip --dir .local/toyota-build
+        python3 -m pip install -r tools/thinkdiag/requirements.txt
+        python3 tools/thinkdiag/decode_toyota.py .local/toyota-build/TOYOTA.zip \
+          --output .local/toyota-build/decoded --report .local/toyota-build/report
+        python3 tools/thinkdiag/extract_english.py .local/toyota-build/TOYOTA.zip \
+          --output .local/toyota-build/english --report .local/toyota-build/report
+        python3 tools/thinkdiag/build_app_database.py .local/toyota-build/TOYOTA.zip \
+          --decoded .local/toyota-build/decoded --english .local/toyota-build/english \
+          --manifest .local/toyota-build/report/decoded-manifest.json \
+          --output .local/toyota-app-assets/toyota-source
+    - name: Verify full app library, including cached content
+      shell: bash
+      run: python3 tools/thinkdiag/verify_app_database.py --directory .local/toyota-app-assets/toyota-source

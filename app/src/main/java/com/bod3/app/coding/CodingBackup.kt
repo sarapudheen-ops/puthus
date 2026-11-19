@@ -4,6 +4,7 @@ import com.bod3.app.actuator.ActuatorModule
 import com.bod3.app.obd.connection.KeyValueStore
 import com.bod3.app.obd.uds.SecurityAccessSpec
 import com.bod3.app.obd.uds.SecurityAlgorithm
+import com.bod3.app.obd.kwp.DiagnosticLinkCodec
 import com.bod3.app.profile.JsonWriter
 import com.bod3.app.profile.MiniJson
 import com.bod3.app.recipe.Hex
@@ -37,6 +38,10 @@ data class CodingBackup(
     val softwareVersion: String?,
     val status: BackupStatus = BackupStatus.SAVED,
     val updatedAtMs: Long = createdAtMs,
+    val readService: Int = 0x22,
+    val writeService: Int = 0x2E,
+    val defaultSession: Int = 0x01,
+    val sourceRecords: List<String> = emptyList(),
 )
 
 /** Backups, newest last, capped at [maxBackups]. Never deleted by the app otherwise. */
@@ -59,17 +64,26 @@ class CodingBackupStore(private val store: KeyValueStore, private val maxBackups
     private fun encode(b: CodingBackup): Map<String, Any?> = linkedMapOf(
         "id" to b.id, "createdAt" to b.createdAtMs, "updatedAt" to b.updatedAtMs, "recipeId" to b.recipeId, "recipeName" to b.recipeName,
         "vin" to b.vin,
-        "module" to linkedMapOf("name" to b.module.name, "address" to b.module.address, "requestId" to b.module.requestId, "responseId" to b.module.responseId),
+        "module" to linkedMapOf("name" to b.module.name, "address" to b.module.address, "requestId" to b.module.requestId, "responseId" to b.module.responseId, "link" to b.module.link?.let(DiagnosticLinkCodec::encode)),
         "session" to b.session,
         "security" to b.security?.let { linkedMapOf("level" to it.level, "algorithm" to it.algorithm.name, "constant" to Hex.format(it.constant, "")) },
         "minVoltage" to b.preconditions.minVoltage, "allowEngineRunning" to b.preconditions.allowEngineRunning,
         "did" to b.did, "data" to Hex.format(b.data, ""), "partNumber" to b.partNumber, "softwareVersion" to b.softwareVersion,
-        "status" to b.status.name,
+        "status" to b.status.name, "readService" to b.readService, "writeService" to b.writeService,
+        "defaultSession" to b.defaultSession, "sourceRecords" to b.sourceRecords,
     )
 
     private fun decode(m: Map<*, *>): CodingBackup? {
         val module = m["module"] as? Map<*, *> ?: return null
         val sec = m["security"] as? Map<*, *>
+        val errors = mutableListOf<String>()
+        val link = DiagnosticLinkCodec.decode(module["link"], "module.link", errors)
+        if (errors.isNotEmpty()) return null
+        val readService = (m["readService"] as? Number)?.toInt() ?: 0x22
+        val writeService = (m["writeService"] as? Number)?.toInt() ?: 0x2E
+        if (readService != 0x22 || writeService != 0x2E) {
+            if (link?.dialect != com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000 || readService != 0x21 || writeService != 0x3B) return null
+        }
         return CodingBackup(
             id = m["id"] as? String ?: return null,
             createdAtMs = (m["createdAt"] as? Number)?.toLong() ?: 0L,
@@ -79,7 +93,7 @@ class CodingBackupStore(private val store: KeyValueStore, private val maxBackups
             vin = m["vin"] as? String,
             module = ActuatorModule(
                 module["name"] as? String ?: "", module["address"] as? String,
-                module["requestId"] as? String ?: return null, module["responseId"] as? String ?: return null,
+                module["requestId"] as? String ?: return null, module["responseId"] as? String ?: return null, link,
             ),
             session = (m["session"] as? Number)?.toInt() ?: 0x03,
             security = sec?.let { s ->
@@ -92,6 +106,9 @@ class CodingBackupStore(private val store: KeyValueStore, private val maxBackups
             partNumber = m["partNumber"] as? String,
             softwareVersion = m["softwareVersion"] as? String,
             status = BackupStatus.entries.firstOrNull { it.name == m["status"] } ?: BackupStatus.SAVED,
+            readService = readService, writeService = writeService,
+            defaultSession = (m["defaultSession"] as? Number)?.toInt() ?: 0x01,
+            sourceRecords = (m["sourceRecords"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
         )
     }
 

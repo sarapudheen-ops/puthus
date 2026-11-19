@@ -38,6 +38,10 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets {
+        getByName("main").assets.srcDir(rootProject.file(".local/vehicle-pack-assets"))
+        getByName("test").resources.srcDir(rootProject.file("tools/thinkdiag/schema"))
+    }
     lint {
         // Produce HTML/XML/SARIF reports under app/build/reports for CI artifacts
         htmlReport = true
@@ -47,6 +51,21 @@ android {
         textReport = true
         textOutput = file("stdout")
     }
+}
+
+// Actions performs heavy source conversion. An APK contains only the small, source-pinned
+// hash-tree index. Per-vehicle/system objects live in release storage, not assets or preferences.
+val verifyToyotaVehicleIndex by tasks.registering(Exec::class) {
+    val source = rootProject.file(".local/vehicle-pack-assets/toyota-vehicle-packs")
+    inputs.file(source.resolve("index.json"))
+    inputs.files(rootProject.fileTree("tools/thinkdiag") { include("vehicle_bundle.py", "verify_vehicle_bundle.py") })
+    workingDir(rootProject.projectDir)
+    commandLine("python3", "tools/thinkdiag/verify_vehicle_bundle.py", "--directory", source.absolutePath, "--index-only")
+}
+tasks.named("preBuild").configure { dependsOn(verifyToyotaVehicleIndex) }
+// Validate the real Actions conversion with the same Kotlin codecs used on the phone.
+tasks.withType<Test>().configureEach {
+    systemProperty("toyota.pack.directory", rootProject.file(".local/toyota-vehicle-packs").absolutePath)
 }
 
 dependencies {
@@ -67,6 +86,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.core)
+    // Same SQLite queries as Android, exercised on the JVM against the shared schema.
+    testImplementation("org.xerial:sqlite-jdbc:3.46.1.0")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

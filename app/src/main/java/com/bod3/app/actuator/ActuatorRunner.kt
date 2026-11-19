@@ -6,6 +6,7 @@ import com.bod3.app.audit.AuditRecorder
 import com.bod3.app.audit.AuditStore
 import com.bod3.app.obd.session.ExpertModeRequiredException
 import com.bod3.app.obd.session.Session
+import com.bod3.app.obd.session.WriteScope
 import com.bod3.app.obd.session.WriteGate
 import com.bod3.app.obd.session.WritePolicy
 import com.bod3.app.obd.session.WritePurpose
@@ -27,6 +28,7 @@ enum class StopReason(val label: String) {
     CONNECTION_LOST("Connection to the adapter lost"),
     MODULE_SILENT("The module stopped answering"),
     CANCELLED("Cancelled"),
+    ERROR("Execution failed"),
 }
 
 enum class RunOutcome(val label: String) {
@@ -118,10 +120,30 @@ class ActuatorRunner(
         vehicle: VehicleContext = VehicleContext(),
         overrideApplicability: Boolean = false,
         onPhase: (RunPhase) -> Unit = {},
+    ): RunResult = runExclusive(recipe, confirmation, control, vehicle, overrideApplicability, onPhase)
+
+    private suspend fun runExclusive(
+        recipe: ActuatorRecipe, confirmation: ActuatorConfirmation, control: RunControl, vehicle: VehicleContext,
+        overrideApplicability: Boolean, onPhase: (RunPhase) -> Unit,
     ): RunResult {
         val log = AuditRecorder(clock)
         log.step("Recipe ${recipe.id}: ${recipe.name} on ${recipe.module.display}")
-        val (result, cancelled) = execute(recipe, confirmation, control, vehicle, overrideApplicability, onPhase, log)
+        // withContext's prompt cancellation can throw AFTER the protected cleanup returned.
+        // Capture its outcome before leaving the routing context so cancellation cannot erase the audit.
+        var completed: Pair<RunResult, CancellationException?>? = null
+        var boundaryCancellation: CancellationException? = null
+        try {
+            session.withDiagnosticOperation {
+                completed = execute(recipe, confirmation, control, vehicle, overrideApplicability, onPhase, log) { completed = it }
+            }
+        } catch (e: CancellationException) {
+            boundaryCancellation = e
+        } catch (e: Exception) {
+            log.step("Operation failed: ${e.message ?: e.javaClass.simpleName}", ok = false)
+            if (completed == null) completed = RunResult(RunOutcome.FAILED, "Operation failed before starting: ${e.message}", StopReason.ERROR) to null
+        }
+        val (result, cancellation) = completed ?: (RunResult(RunOutcome.REFUSED, "Cancelled before starting", StopReason.CANCELLED) to boundaryCancellation)
+        val cancelled = cancellation ?: boundaryCancellation
         val id = newId()
         audit?.append(
             AuditRecord(
@@ -149,6 +171,7 @@ class ActuatorRunner(
         overrideApplicability: Boolean,
         onPhase: (RunPhase) -> Unit,
         log: AuditRecorder,
+        onPreparedResult: (Pair<RunResult, CancellationException?>) -> Unit,
     ): Pair<RunResult, CancellationException?> {
         fun refuse(message: String, report: PreconditionReport? = null): Pair<RunResult, CancellationException?> {
             log.step("Refused: $message", ok = false)
@@ -166,13 +189,28 @@ class ActuatorRunner(
         if (!report.passed(overrideApplicability)) return refuse("Preconditions not met: ${report.summary}", report)
         if (control.stopRequested) return refuse("Stopped before start")
 
+        return session.withEcuOperation(recipe.module.target) {
+            runPrepared(recipe, control, onPhase, log, report).also(onPreparedResult)
+        }
+    }
+
+    private suspend fun runPrepared(
+        recipe: ActuatorRecipe, control: RunControl, onPhase: (RunPhase) -> Unit,
+        log: AuditRecorder, report: PreconditionReport,
+    ): Pair<RunResult, CancellationException?> {
         val grant = try {
             WriteGate.issue(
                 WritePurpose.ACTUATOR_TEST, recipe.module.target, expertMode(), clock,
                 maxDurationMs = recipe.durationSeconds * 1_000L + GRANT_MARGIN_MS,
+                scope = WriteScope(when (recipe.kind) {
+                    ActuatorKind.LOCAL_IO_CONTROL, ActuatorKind.LOCAL_ROUTINE -> recipe.start.drop(1).take(1)
+                    ActuatorKind.ROUTINE -> recipe.start.drop(2).take(2)
+                    else -> recipe.start.drop(1).take(2)
+                }, recipe.session, recipe.security?.level, recipe.defaultSession),
             )
         } catch (e: ExpertModeRequiredException) {
-            return refuse(e.message!!)
+            log.step("Refused: ${e.message}", ok = false)
+            return RunResult(RunOutcome.REFUSED, e.message!!, preconditions = report) to null
         }
         val client = UdsWriteClient(session, grant)
 
@@ -188,7 +226,7 @@ class ActuatorRunner(
         var failure: RunResult? = null
         var lastStatus: String? = null
         try {
-            if (recipe.session != WritePolicy.DEFAULT_SESSION) {
+            if (recipe.session != recipe.defaultSession) {
                 onPhase(RunPhase.Preparing("Opening diagnostic session"))
                 val outcome = send("Open session %02X".format(recipe.session), listOf(WritePolicy.SESSION_CONTROL, recipe.session))
                 if (!outcome.isPositive) failure = failed("Could not open the diagnostic session: ${outcome.display}", outcome)
@@ -220,22 +258,38 @@ class ActuatorRunner(
         } catch (e: CancellationException) {
             cancelled = e
             stopReason = StopReason.CANCELLED
+        } catch (e: Exception) {
+            stopReason = StopReason.ERROR
+            failure = RunResult(RunOutcome.FAILED, "Execution failed: ${e.message ?: e.javaClass.simpleName}", stopReason)
+            log.step(failure.message, ok = false)
         }
 
-        // Clean-up always runs, even when the caller's coroutine was cancelled.
+        // UI callbacks, unexpected executor errors and cancellation must not bypass output-off,
+        // default-session attempts or grant revocation. No cleanup write is ever reported as verified
+        // merely because it was attempted, and a dropped route is never reconnected for cleanup.
         val stopConfirmed = withContext(NonCancellable) {
-            onPhase(RunPhase.Stopping(stopReason ?: StopReason.USER))
-            var confirmed = !startSent
-            if (startSent) {
-                var outcome = send("Stop", recipe.stop, STOP_TIMEOUT_MS)
-                if (!outcome.isPositive && outcome !is UdsOutcome.ConnectionLost) outcome = send("Stop (retry)", recipe.stop, STOP_TIMEOUT_MS)
-                confirmed = outcome.isPositive
+            try {
+                try { onPhase(RunPhase.Stopping(stopReason ?: StopReason.USER)) }
+                catch (e: Exception) { log.step("Stopping display failed: ${e.message}", ok = false) }
+                suspend fun cleanup(label: String, request: List<Int>): UdsOutcome? = try {
+                    send(label, request, STOP_TIMEOUT_MS)
+                } catch (e: Exception) {
+                    log.step("$label failed: ${e.message}", Hex.format(request), ok = false)
+                    null
+                }
+                var confirmed = !startSent
+                if (startSent) {
+                    var outcome = cleanup("Stop", recipe.stop)
+                    if (outcome?.isPositive != true && outcome !is UdsOutcome.ConnectionLost) outcome = cleanup("Stop (retry)", recipe.stop)
+                    confirmed = outcome?.isPositive == true
+                }
+                if (recipe.session != recipe.defaultSession) {
+                    cleanup("Return to default session", listOf(WritePolicy.SESSION_CONTROL, recipe.defaultSession))
+                }
+                confirmed
+            } finally {
+                grant.revoke()
             }
-            if (recipe.session != WritePolicy.DEFAULT_SESSION) {
-                send("Return to default session", listOf(WritePolicy.SESSION_CONTROL, WritePolicy.DEFAULT_SESSION))
-            }
-            grant.revoke()
-            confirmed
         }
         cancelled?.let { return RunResult(RunOutcome.FAILED, "Cancelled", StopReason.CANCELLED, stopConfirmed, report) to it }
 

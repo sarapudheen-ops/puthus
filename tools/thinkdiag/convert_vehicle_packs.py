@@ -1,0 +1,386 @@
+#!/usr/bin/env python3
+"""Strict, fail-closed Toyota vehicle-pack conversion, performed in Actions.
+
+Implemented joins: native manual MENU leaf task -> regional SYSLIST key ->
+system/function/ECU file, ECU section framing, and FUNCDATA live-row boundaries.
+Untranslated records remain disabled with stable source IDs and per-item reasons.
+This is deliberately NOT a claim that incomplete conversion is runnable support.
+"""
+from collections import Counter
+import argparse
+import gzip
+import hashlib
+import json
+from pathlib import Path
+import re
+
+from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_directory,
+                              system_lists, typed_table, uint)
+from vehicle_bundle import BundleWriter, SOURCE_SHA256, canonical, read_object
+from reviewed_hierarchy import normalize
+from toyota_entries import EntryIndex
+
+REGIONS = {0xFEE9: "EU", 0xFEEA: "NA", 0xFEEB: "JP"}
+REASONS = {
+    "ecu_entry_untranslated": "Per-ECU SYSTEMENTER address/header, baud, init/session and selector are not fully translated.",
+    "service_reply_untranslated": "Application service/identifier and reply-mask joins are not fully translated.",
+    "formula_untranslated": "Signal byte/bit positions, signedness, scaling, unit and runtime applicability are not fully translated.",
+    "record_schema_untranslated": "This source-row schema has not been translated into an executable definition.",
+    "hierarchy_untranslated": "The exact source path is retained; normalization into model/generation/variant fields is not yet validated for this path.",
+    "flash_unsupported": "Source system uses FLASH; flashing/download services are intentionally outside the app's write whitelist.",
+    "missing_ecu_file": "Source ECU file could not be joined. No generic ECU or address is substituted.",
+    "missing_function": "No regional FUNCDATA row joins this source function key.",
+    "missing_system_entry": "No SYSTEMENTER entry exactly matches this region, function and complete selector byte; another selector or ECU is never substituted.",
+    "missing_system_key": "The ordinary manual MENU leaf has no matching SYSLIST key in its source region.",
+    "nonordinary_menu_task": "This manual leaf uses a special task, not the proven ordinary VehicleSystemScan key path.",
+}
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def source_id(name, offset, suffix=""):
+    return f"{name}@{offset:08x}{suffix}"
+
+
+def load_sources(archive, decoded, manifest):
+    if sha(archive.read_bytes()) != SOURCE_SHA256:
+        raise ValueError("Unexpected Toyota source archive hash")
+    entries = json.loads(manifest.read_text())
+    if not isinstance(entries, list) or len(entries) != 1410:
+        raise ValueError("Incomplete decoded source manifest")
+    result = {}
+    for item in entries:
+        name = item["file"]
+        if (not isinstance(name, str) or name in result or "\\" in name
+                or Path(name).is_absolute() or ".." in Path(name).parts):
+            raise ValueError("Unsafe or duplicate source path")
+        path = decoded / name
+        if path.is_symlink() or decoded.resolve() not in path.resolve().parents:
+            raise ValueError("Source escapes decoded directory")
+        raw = path.read_bytes()
+        if len(raw) != item["bytes"] or sha(raw) != item["sha256"]:
+            raise ValueError(f"Decoded source checksum mismatch: {name}")
+        result[name] = raw
+    return result
+
+
+class Converter:
+    def __init__(self, sources, texts, output):
+        self.sources = sources
+        self.texts = texts
+        self.output = output
+        self.writer = BundleWriter(output)
+        self.ecus = {}
+        self.functions = {}
+        self.systems = {}
+        self.vehicle_systems = {}
+        self.census = Counter()
+        self.ledger_path = output / "unresolved-items.jsonl.gz"
+        self._ledger_stream = self.ledger_path.open("wb")
+        self.ledger = gzip.GzipFile(filename="", mode="wb", fileobj=self._ledger_stream, mtime=0)
+        self.system_report = []
+        self.vehicle_report = []
+        self.hierarchy_issues = []
+        self.normalized = []
+        self.entries = None
+        self.entry_pages = {}
+
+    def record(self, item):
+        self.ledger.write(canonical(item) + b"\n")
+        self.census["unresolvedSourceRecords"] += 1
+
+    def text(self, identity):
+        return self.texts.get(f"{identity:08X}")
+
+    def pages(self, rows):
+        return [self.writer.add({"kind": "disabled-items", "items": rows[i:i + 128]}) for i in range(0, len(rows), 128)]
+
+    def disabled(self, identity, kind, raw, reasons, **fields):
+        item = {"id": identity, "kind": kind, "sourceRecords": [identity], "sourceVerified": True,
+                "enabled": False, "reasons": reasons, "rawHex": raw.hex(), **fields}
+        self.record(item)
+        return item
+
+    def convert_entries(self):
+        self.entries = EntryIndex(self.sources["SYSTEMENTER.BIN"])
+        for item in self.entries.lists.values():
+            for entry in item.entries:
+                report = entry.report()
+                identity = report.pop("id")
+                raw = report.pop("rawHex")
+                disabled = self.disabled(identity, "ecu-entry-candidate", bytes.fromhex(raw),
+                                         ["ecu_entry_untranslated"], **report)
+                self.entry_pages[entry.offset] = self.pages([disabled])
+                self.census["systemEntryRecords"] += 1
+        # Markers/padding stay explicit; they are not silently decoded as zero
+        # features, guessed requests or a second ECU's configuration.
+        for span in self.entries.unclaimed:
+            self.disabled(source_id("SYSTEMENTER.BIN", span["offset"], "#unclaimed"), "unclassified-entry-span",
+                          bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
+        (self.output / "entry-index.json").write_bytes(canonical(self.entries.report()) + b"\n")
+
+    def convert_ecus(self):
+        for name, raw in sorted(self.sources.items()):
+            if not re.fullmatch(ECU_FILE, name):
+                continue
+            rows = []
+            sections = []
+            for section in section_directory(raw):
+                table = typed_table(raw[section.offset:section.end])
+                sections.append({"slot": section.identity, "tag": table.identity, "rows": table.count,
+                                 "sourceRecord": source_id(name, section.offset), "stride": table.stride})
+                if table.count == 0:
+                    continue
+                if table.stride is None:
+                    rows.append(self.disabled(source_id(name, section.offset + 10), "unclassified", table.body,
+                                              ["record_schema_untranslated"], declaredRows=table.count))
+                else:
+                    for i in range(table.count):
+                        at = section.offset + 10 + i * table.stride
+                        rows.append(self.disabled(source_id(name, at, f"#slot{section.identity}:row{i}"), "unclassified",
+                                                  table.body[i * table.stride:(i + 1) * table.stride],
+                                                  ["record_schema_untranslated"], tableTag=table.identity))
+            self.ecus[name.casefold()] = {"sourceFile": name, "sha256": sha(raw), "sections": sections,
+                                          "unclassifiedSourceRecords": len(rows), "pages": self.pages(rows)}
+            self.census["ecuFiles"] += 1
+
+    def convert_functions(self):
+        for region in REGIONS.values():
+            name = f"FUNCDATA_{region}.BIN"
+            raw = self.sources[name]
+            index, _ = function_index(raw)
+            pointers = sorted({p for row in index for p in row[1:6] if p not in (0, 0xFFFFFFFF)} | {len(raw)})
+            stops = {p: pointers[i + 1] for i, p in enumerate(pointers[:-1])}
+            for row in index:
+                identity = source_id(name, 1 + 28 * next(i for i, r in enumerate(index) if r[0] == row[0]))
+                live_rows = []
+                # CDSF ReadDStreamFunc @0xFBB0 passes runtime+0x107a0 to
+                # FILE GetDsDataFromDSPart; FILE GetInfoFromAddrPart @0x11e30
+                # loaded that value from FUNCDATA column 3. This is NOT an address.
+                p = row[3]
+                live_count = 0
+                if p not in (0, 0xFFFFFFFF):
+                    live_count, commands = uint(raw, p, 2), uint(raw, p + 2, 2)
+                    end = p + 4 + live_count * 30
+                    if live_count > 65535 or end > stops[p]:
+                        raise ValueError(f"{name} function {row[0]}: live-row span exceeds its indexed block")
+                    command_end = end
+                    for _ in range(commands):
+                        size = uint(raw, command_end, 1)
+                        command_end += 1 + size
+                        if command_end > stops[p]:
+                            raise ValueError("Live command sequence exceeds source block")
+                    for i in range(live_count):
+                        at = p + 4 + i * 30
+                        live_rows.append(self.disabled(source_id(name, at, f"#function{row[0]}:live{i}"), "pid-candidate",
+                            raw[at:at + 30], ["ecu_entry_untranslated", "service_reply_untranslated", "formula_untranslated"]))
+                self.functions[region, row[0]] = {"sourceRecord": identity, "functionKey": row[0],
+                    "sourceFields": list(row), "declaredLiveRows": live_count, "livePages": self.pages(live_rows)}
+
+    def convert_systems(self):
+        for region in REGIONS.values():
+            name = f"SYSLIST_{region}.BIN"
+            index, blocks = system_lists(self.sources[name])
+            for offset, rows in sorted(blocks.items()):
+                refs = []
+                for i, raw in enumerate(rows):
+                    at = offset + 2 + 37 * i
+                    identity = source_id(name, at)
+                    key = uint(raw, 0, 4)
+                    ecu_file = self.text(uint(raw, 23, 4))
+                    transport = self.text(uint(raw, 28, 4))
+                    ecu = self.ecus.get(f"{region}/{ecu_file}".casefold())
+                    function = self.functions.get((region, key))
+                    region_id = {"EU": 1, "NA": 2, "JP": 3}[region]
+                    entry = self.entries.select(region_id, key, raw[27])
+                    entry_source = None
+                    sources = [identity]
+                    if function is not None: sources.append(function["sourceRecord"])
+                    if entry is not None:
+                        function_row = self.entries.regions[region_id][key]
+                        sources += [source_id("SYSTEMENTER.BIN", function_row["offset"]), entry.source_id]
+                        entry_source = {"sourceRecord": entry.source_id, "selector": entry.descriptor,
+                                        "pages": self.entry_pages[entry.offset]}
+                        self.census["systemsWithExactEntryJoin"] += 1
+                    reasons = ["ecu_entry_untranslated"]
+                    if transport == "FLASH": reasons = ["flash_unsupported"]
+                    if ecu is None: reasons.append("missing_ecu_file")
+                    if function is None: reasons.append("missing_function")
+                    if entry is None: reasons.append("missing_system_entry")
+                    # Operational category denominators are UNKNOWN until their row schemas/joins
+                    # are translated. Zero is only used for the number actually made executable.
+                    counts = {kind: {"converted": 0, "unresolved": None} for kind in
+                              ("pids", "dtcs", "tests", "coding", "specialFunctions", "ecuInfo")}
+                    counts["pids"]["unresolved"] = function["declaredLiveRows"] if function else None
+                    value = {"kind": "vehicle-system", "id": identity,
+                        "name": self.text(uint(raw, 4, 4)) or f"System {key}",
+                        "description": self.text(uint(raw, 8, 4)), "sourceRecords": sources,
+                        "sourceVerified": True, "enabled": False, "reasons": reasons,
+                        "functionKey": key, "entrySelector": raw[27], "transportLabel": transport,
+                        "rawHex": raw.hex(), "ecuSource": ecu, "functionSource": function, "entrySource": entry_source,
+                        "counts": counts, "data": {}}
+                    ref = self.writer.add(value)
+                    brief = {"id": identity, "name": value["name"], "counts": counts,
+                             "enabled": False, "reasons": reasons, "object": ref}
+                    refs.append(brief)
+                    self.systems[identity] = ref
+                    self.system_report.append({"id": identity, "region": region, "system": value["name"],
+                        "functionKey": key, "entrySelector": raw[27], "ecuFile": ecu_file,
+                        "sourceRecords": sources, "entrySource": entry.source_id if entry else None,
+                        "counts": counts, "reasons": reasons})
+                for key, block in index:
+                    if block == offset:
+                        self.vehicle_systems[region, key] = refs
+        self.census["systems"] = len(self.systems)
+
+    def convert_menu(self):
+        raw = self.sources["MENU.BIN"]
+        nodes = menu_nodes(raw)
+        visited = set()
+
+        def visit(offset, path, region, manual):
+            if offset in visited or len(path) > 32:
+                raise ValueError("Cyclic, shared-parent or excessive source menu")
+            visited.add(offset)
+            node = nodes[offset]
+            title = self.text(node["headerWords"][1])
+            if title is None:
+                raise ValueError("Unresolved menu title")
+            task = uint(raw, offset + 34, 2)
+            region = REGIONS.get(task, region)
+            manual = manual or (len(path) == 1 and title == "Manual Select")
+            step = {"id": source_id("MENU.BIN", offset), "name": title, "task": task}
+            path = path + [step]
+            children = []
+            for edge in node["edges"]:
+                child = visit(edge["target"], path, region, manual)
+                if child is not None:
+                    children.append(child)
+            if not manual and not children:
+                return None
+            value = {"kind": "manual-menu", "id": step["id"], "name": title, "children": children}
+            if manual and not children:
+                systems = self.vehicle_systems.get((region, task)) if task < 0x8000 else None
+                reasons = ["hierarchy_untranslated"]
+                if systems is None:
+                    reasons.append("missing_system_key" if task < 0x8000 else "nonordinary_menu_task")
+                value.update({"kind": "manual-vehicle", "region": region, "sourceKey": task,
+                              "make": "Toyota", "selection": path[2:], "systems": systems or [],
+                              "hierarchyResolved": False, "enabled": False, "reasons": reasons})
+                record = {"id": step["id"], "path": [s["name"] for s in path[2:]], "region": region,
+                          "sourceKey": task, "systems": [s["id"] for s in systems or []], "reasons": reasons}
+                catalog = normalize(record)
+                if catalog is not None:
+                    if systems is None:
+                        raise ValueError("Reviewed hierarchy lost its exact regional system join")
+                    reasons.remove("hierarchy_untranslated")
+                    value.update(hierarchyResolved=True)
+                    record.update(hierarchyResolved=True, normalizedVariantId=catalog["nodes"][-1]["id"])
+                    self.normalized.append({"kind": "converted-vehicle", "level": "variant",
+                        "id": catalog["nodes"][-1]["id"], "name": catalog["nodes"][-1]["name"],
+                        "catalog": catalog, "sourceSelection": record["path"], "sourceRecords": [record["id"]],
+                        "hierarchyResolved": True, "reasons": [], "systems": systems})
+                else:
+                    self.hierarchy_issues.append(record)
+                self.vehicle_report.append(record)
+                self.census["manualLeaves"] += 1
+                self.census["manualLeavesWithSystemJoin"] += systems is not None
+            return {"id": value["id"], "name": title, "leaf": value["kind"] == "manual-vehicle", "object": self.writer.add(value)}
+
+        root = visit(0, [], None, False)
+        if len(visited) != len(nodes):
+            raise ValueError("Unreachable source menu records")
+        return root
+
+    def convert_catalog(self):
+        tree = {"id": "recovered-toyota-root", "name": "Toyota", "level": "root", "children": {}}
+        for vehicle in self.normalized:
+            current = tree
+            for node in vehicle["catalog"]["nodes"]:
+                if node["level"] == "variant":
+                    if node["id"] in current["children"]:
+                        raise ValueError("Two source paths normalize to the same variant; review required")
+                    current["children"][node["id"]] = vehicle
+                else:
+                    current = current["children"].setdefault(node["id"], {
+                        "id": node["id"], "name": node["name"], "level": node["level"], "children": {}})
+        def write(node):
+            if node["level"] == "variant":
+                value = node
+            else:
+                value = {**node, "kind": "catalog-level", "children": [
+                    write(child) for child in sorted(node["children"].values(), key=lambda n: (n["name"], n["id"]))]}
+            return {"id": node["id"], "name": node["name"], "level": node["level"], "object": self.writer.add(value)}
+        self.census["normalizedVehicleChoices"] = len(self.normalized)
+        self.census["unresolvedHierarchyChoices"] = len(self.hierarchy_issues)
+        return write(tree)["object"]
+
+    def finish(self):
+        self.convert_entries()
+        self.convert_ecus()
+        self.convert_functions()
+        self.convert_systems()
+        root = self.convert_menu()
+        catalog_root = self.convert_catalog()
+        self.ledger.close(); self._ledger_stream.close()
+        summary = {**dict(self.census), "complete": False, "executableDefinitions": 0,
+                   "physicalValidation": False, "reasons": REASONS}
+        index = self.writer.finish(root["object"], summary, catalog_root)
+        for name, records in (("vehicles", self.vehicle_report), ("systems", self.system_report)):
+            with (self.output / f"{name}.jsonl.gz").open("wb") as file:
+                with gzip.GzipFile(filename="", mode="wb", fileobj=file, mtime=0) as dest:
+                    for row in records: dest.write(canonical(row) + b"\n")
+        report = ["# Toyota conversion report", "", "**PARTIAL — NOT runnable enhanced Toyota coverage.**", "",
+            f"Source archive SHA-256: `{SOURCE_SHA256}`.", "",
+            "| Measure | Count |", "|---|---:|"]
+        report += [f"| {key} | {value} |" for key, value in sorted(self.census.items())]
+        report += ["| Executable definitions | 0 |", "", "## Exact per-item accounting", "",
+            "- `unresolved-items.jsonl.gz`: every framed ECU row, declared live row, SYSTEMENTER entry and unclaimed entry-file span, stable file/offset/slot/row ID, exact source bytes and all disabling reasons.",
+            "- `entry-index.json`: complete reader-backed regional function/selector directory, framed entry fields, binding IDs and every unclaimed byte span. Opaque header/timing values are not approved transport settings.",
+            "- `vehicles.jsonl.gz`: every manual source leaf, full exact path, region/key, all system IDs and hierarchy reasons.",
+            "- `systems.jsonl.gz`: every regional system record and converted/unresolved category counts. `null` means **unknown**, not zero or no source support.",
+            "- The range bundle retains the same per-system pages. Selecting a vehicle does not fetch the full corpus.",
+            "- Unclassified rows are not counted as working PIDs, DTCs, tests or coding. Source label/byte recovery is not an executable mapping.",
+            "- Opaque whole-file formats and non-live functional row schemas are not yet enumerated as individual features. Full original source IDs remain in the separate research library; this report is not yet an exhaustive feature census.",
+            "", "## Disabling reasons", ""]
+        report += [f"- `{key}`: {value}" for key, value in REASONS.items()]
+        report += ["", "## Reviewed manual choices — exact system accounting", "",
+                   "Only these literal source paths have been normalized so far. This is not coverage of all Toyota models or of AN40 diesel. "
+                   "The source month boundaries are retained in generation names; missing engine/fuel/transmission are not invented.", "",
+                   "| Manual vehicle choice | Source system ID / name | PIDs converted / unresolved candidates | DTCs | Tests | Coding | Reasons |",
+                   "|---|---|---:|---|---|---|---|"]
+        for vehicle in self.normalized:
+            title = vehicle["catalog"]["name"].replace("|", "\\|")
+            for system in vehicle["systems"]:
+                def count(kind):
+                    c = system["counts"][kind]
+                    return f'{c["converted"]} / {c["unresolved"] if c["unresolved"] is not None else "unknown"}'
+                report.append(f'| {title} | `{system["id"]}` {system["name"].replace("|", " ")} | {count("pids")} | '
+                              f'{count("dtcs")} | {count("tests")} | {count("coding")} | {", ".join(system["reasons"])} |')
+        report += ["", "No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.",
+                   "Source verification is distinct from completed conversion and from physical vehicle testing.", ""]
+        (self.output / "conversion-report.md").write_text("\n".join(report))
+        container = self.output / index["container"]
+        if read_object(container, index["root"])["kind"] != "manual-menu":
+            raise ValueError("Invalid bundle root")
+        return index
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("archive", type=Path)
+    parser.add_argument("--decoded", type=Path, required=True)
+    parser.add_argument("--english", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    sources = load_sources(args.archive, args.decoded, args.manifest)
+    texts = json.loads((args.english / "TEXT_EN.GAG.json").read_text())
+    index = Converter(sources, texts, args.output).finish()
+    print(json.dumps(index, indent=2))
+
+
+if __name__ == "__main__":
+    main()

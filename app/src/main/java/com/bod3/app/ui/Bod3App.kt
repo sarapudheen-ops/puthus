@@ -30,6 +30,8 @@ import com.bod3.app.ui.screens.CatalogActions
 import com.bod3.app.ui.screens.CatalogEditorScreen
 import com.bod3.app.ui.screens.CatalogDefinitionsScreen
 import com.bod3.app.ui.screens.VehiclesScreen
+import com.bod3.app.ui.screens.ToyotaSourceRoute
+import com.bod3.app.ui.screens.ToyotaVehiclePacksScreen
 import com.bod3.app.ui.screens.DashboardActions
 import com.bod3.app.ui.screens.DashboardScreen
 import com.bod3.app.ui.screens.DevicePickerScreen
@@ -200,6 +202,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onData = viewModel::editCatalogData, onPids = viewModel::openCatalogPids,
                 onOpenEcu = viewModel::openEcu, onImport = viewModel::openDataPacks, writeExport = viewModel::writeCatalogExport,
                 onLinkProfile = viewModel::setProfileVehicle, onDismissMessage = viewModel::dismissCatalogMessage,
+                onToyotaPacks = viewModel::openToyotaPacks, onSystems = viewModel::openSelectedSystems,
             ))
         }
 
@@ -455,6 +458,17 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             )
         }
 
+        Screen.TOYOTA_SOURCE -> ToyotaSourceRoute(state.toyotaSourceEntry, state.toyotaSourceQuery, viewModel::closeToyotaSource)
+
+        Screen.TOYOTA_PACKS -> {
+            BackHandler(onBack = viewModel::closeToyotaPacks)
+            val vehiclePacks by viewModel.vehiclePacks.state.collectAsStateWithLifecycle()
+            ToyotaVehiclePacksScreen(vehiclePacks, viewModel.vehiclePacks, state.offline, state.isConnected,
+                onBack = viewModel::closeToyotaPacks, onLive = viewModel::openSelectedSystemLive,
+                onTests = viewModel::openActuators, onCoding = viewModel::openCoding,
+                onDiagnostics = viewModel::openSelectedSystemDiagnostics)
+        }
+
         Screen.DATA_PACKS -> {
             BackHandler(onBack = viewModel::closeDataPacks)
             DataPacksScreen(
@@ -465,6 +479,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                     onConfirmImport = viewModel::confirmImport,
                     onCancelImport = viewModel::cancelImport,
                     onDismissMessage = viewModel::dismissPacksMessage,
+                    onToyotaPacks = viewModel::openToyotaPacks,
                     writeData = viewModel::writeDataExport,
                     writeMyActuators = viewModel::writeMyActuatorsExport,
                     writeMyCoding = viewModel::writeMyCodingExport,

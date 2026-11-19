@@ -5,6 +5,7 @@ import com.bod3.app.actuator.Applicability
 import com.bod3.app.obd.connection.KeyValueStore
 import com.bod3.app.obd.uds.SecurityAccessSpec
 import com.bod3.app.obd.uds.SecurityAlgorithm
+import com.bod3.app.obd.kwp.DiagnosticLinkCodec
 import com.bod3.app.profile.JsonWriter
 import com.bod3.app.profile.MiniJson
 import com.bod3.app.recipe.Hex
@@ -68,7 +69,7 @@ object CodingRecipeCodec {
 
     fun encodeRecipe(r: CodingRecipe): Map<String, Any?> = linkedMapOf(
         "id" to r.id, "name" to r.name, "description" to r.description,
-        "module" to linkedMapOf("name" to r.module.name, "address" to r.module.address, "requestId" to r.module.requestId, "responseId" to r.module.responseId)
+        "module" to linkedMapOf("name" to r.module.name, "address" to r.module.address, "requestId" to r.module.requestId, "responseId" to r.module.responseId, "link" to r.module.link?.let(DiagnosticLinkCodec::encode))
             .filterValues { it != null },
         "method" to r.method.name.lowercase(),
         "did" to "%04X".format(r.did), "byte" to r.byteIndex, "mask" to r.mask?.let { "%02X".format(it) }, "length" to r.length,
@@ -76,6 +77,7 @@ object CodingRecipeCodec {
         "min" to r.min, "max" to r.max,
         "factor" to r.factor.takeIf { it != 1.0 }, "offset" to r.offset.takeIf { it != 0.0 }, "unit" to r.unit,
         "session" to "%02X".format(r.session),
+        "readService" to "%02X".format(r.readService), "writeService" to "%02X".format(r.writeService),
         "securityAccess" to r.security?.let {
             linkedMapOf("level" to "%02X".format(it.level), "algorithm" to it.algorithm.name, "constant" to Hex.format(it.constant))
         },
@@ -85,6 +87,7 @@ object CodingRecipeCodec {
             "partNumbers" to r.applicability.partNumbers, "softwareVersions" to r.applicability.softwareVersions,
         ),
         "source" to r.source, "notes" to r.notes, "verified" to r.verified,
+        "sourceRecords" to r.sourceRecords.takeIf { it.isNotEmpty() }, "defaultSession" to "%02X".format(r.defaultSession),
     ).filterValues { it != null }
 
     /** Parses a pack, or a single recipe object. Never throws for bad input; problems carry their JSON path. */
@@ -149,7 +152,7 @@ object CodingRecipeCodec {
             val req = f.string(mod, "requestId", mp)?.uppercase()
             val res = f.string(mod, "responseId", mp)?.uppercase()
             if (modName == null || req == null || res == null) null
-            else ActuatorModule(modName, f.string(mod, "address", mp, required = false)?.ifEmpty { null }, req, res)
+            else ActuatorModule(modName, f.string(mod, "address", mp, required = false)?.ifEmpty { null }, req, res, DiagnosticLinkCodec.decode(mod["link"], "$mp.link", f.errors))
         }
         val methodName = f.string(m, "method", p)
         val method = methodName?.let { n ->
@@ -200,6 +203,10 @@ object CodingRecipeCodec {
             security = security, preconditions = preconditions, applicability = applicability,
             source = f.string(m, "source", p, required = false), notes = f.string(m, "notes", p, required = false),
             verified = f.boolean(m, "verified", p) ?: false,
+            readService = f.hexInt(m, "readService", p, false, 0xFF) ?: 0x22,
+            writeService = f.hexInt(m, "writeService", p, false, 0xFF) ?: 0x2E,
+            sourceRecords = f.strings(m, "sourceRecords", p),
+            defaultSession = f.hexInt(m, "defaultSession", p, false, 0xFF) ?: 0x01,
         )
         if (f.errors.size > before || id == null || name == null || module == null || method == null || byteIndex == null) return null
         return recipe

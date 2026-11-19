@@ -1,5 +1,8 @@
 package com.bod3.app.datapack
 
+import com.bod3.app.obd.kwp.DiagnosticLink
+import com.bod3.app.obd.kwp.DiagnosticDialect
+import com.bod3.app.obd.kwp.KwpServices
 import com.bod3.app.obd.pid.Formula
 import com.bod3.app.obd.session.EcuTarget
 import com.bod3.app.obd.session.ReadOnlyPolicy
@@ -10,6 +13,80 @@ internal fun parseHexBytes(text: String): List<Int> {
     val clean = text.filterNot { it.isWhitespace() }
     require(clean.length % 2 == 0 && clean.isHex()) { "\"$text\" is not a sequence of hex bytes" }
     return clean.chunked(2).map { it.toInt(16) }
+}
+
+/** A read-only prerequisite on the SAME physical ECU, evaluated once per live run/link epoch. */
+data class PidSupportCheck(
+    val request: String,
+    val formula: String,
+    val dataOffset: Int = 0,
+    val sourceRecords: List<String> = emptyList(),
+    /** A801 returns [local ID, length, support bytes] records, NOT live sensor samples. */
+    val recordId: Int? = null,
+) {
+    private val parsed: Formula? by lazy { Formula.parseOrNull(formula) }
+    val requestBytes: List<Int> get() = parseHexBytes(request)
+
+    fun problems(link: DiagnosticLink?): List<String> = buildList {
+        val bytes = runCatching { requestBytes }.getOrNull()
+        // Only reads with a completely echoed single identifier can be prerequisites. In
+        // particular, no clear/session/security/tester-present/write can hide in this list.
+        val shape = bytes != null && when (bytes.firstOrNull()) {
+            0x01, 0x09, 0x1A, 0x21 -> bytes.size == 2
+            0x22 -> bytes.size == 3
+            0xA8 -> bytes == listOf(0xA8, 0x01) && recordId != null
+            else -> false
+        }
+        if (recordId != null && (recordId !in 0..255 || bytes != listOf(0xA8, 0x01))) add("recordId: only an A801 support-record ID in 0-255 is allowed")
+        if (!shape || !(if (link?.dialect == DiagnosticDialect.KWP2000)
+                KwpServices.readAllowed(bytes) || (bytes.firstOrNull() in ReadOnlyPolicy.obdServices && ReadOnlyPolicy.isAllowed(bytes))
+            else ReadOnlyPolicy.isAllowed(bytes))) add("request: must be an exact, read-only single-identifier request")
+        if (formula.length > 2048 || parsed == null || parsed!!.bytesNeeded == 0) add("formula: needs a bounded byte-dependent arithmetic expression")
+        if (dataOffset !in 0..4095) add("dataOffset: must be 0-4095")
+        if (sourceRecords.any(String::isBlank)) add("sourceRecords: must not contain empty IDs")
+    }
+
+    companion object {
+        /**
+         * A801 alone permits multiple replies, with the exact E801 echo on EVERY message.
+         * COMM GetKwpRecData retains the first service/identifier and strips both from subsequent
+         * A8 messages; SendCmdAndGetReceive_EX drops the first service, and FDATA skips the remaining
+         * identifier before reading TLVs. Ordinary 21xx samples/prerequisites stay single-message.
+         */
+        internal fun normalizeReply(request: List<Int>, payloads: List<List<Int>>): List<Int>? {
+            if (request != listOf(0xA8, 1)) return payloads.singleOrNull()
+            if (payloads.size !in 1..256 || payloads.any { it.size <= 2 || it.take(2) != listOf(0xE8, 1) || it.any { b -> b !in 0..255 } }) return null
+            if (payloads.sumOf { it.size.toLong() - 2 } > 8192) return null
+            return listOf(0xE8, 1) + payloads.flatMap { it.drop(2) }
+        }
+    }
+
+    fun accepts(payload: List<Int>): Boolean {
+        val data = pidReplyData(runCatching { requestBytes }.getOrNull(), payload, 0) ?: return false
+        val bytes = if (recordId == null) data else {
+            // Validate the WHOLE reply before admitting any record. A truncated or duplicate
+            // trailing record cannot authorize a feature just because an earlier one matched.
+            if (data.size > 8192) return false
+            val seen = mutableSetOf<Int>(); var at = 0; var found: List<Int>? = null
+            while (at < data.size) {
+                if (at + 2 > data.size || !seen.add(data[at])) return false
+                val id = data[at]; val size = data[at + 1]; at += 2
+                if (size !in 0..255 || at + size > data.size) return false
+                if (id == recordId) found = data.subList(at, at + size)
+                at += size
+            }
+            found ?: return false
+        }
+        if (dataOffset !in 0..bytes.size) return false
+        return parsed?.evaluate(bytes.drop(dataOffset))?.let { it != 0.0 } == true
+    }
+}
+
+private fun pidReplyData(request: List<Int>?, payload: List<Int>, offset: Int): List<Int>? {
+    if (request.isNullOrEmpty() || offset !in 0..4095 || payload.size < request.size + offset ||
+        payload.any { it !in 0..255 } || payload.firstOrNull() != request[0] + 0x40 ||
+        payload.subList(1, request.size) != request.drop(1)) return null
+    return payload.drop(request.size + offset)
 }
 
 /**
@@ -31,6 +108,11 @@ data class CustomPid(
     /** Expected CAN response ID, or null for the standard pair / automatic receive. */
     val responseHeader: String? = null,
     val notes: String? = null,
+    val link: DiagnosticLink? = null,
+    val dataOffset: Int = 0,
+    val sourceRecords: List<String> = emptyList(),
+    /** Ordered prerequisites, potentially on different local IDs, but never on another ECU. */
+    val supportChecks: List<PidSupportCheck> = emptyList(),
 ) {
     /** Validation errors (empty when valid). Field names match the JSON keys. */
     fun problems(): List<String> = buildList {
@@ -39,7 +121,7 @@ data class CustomPid(
         val bytes = runCatching { parseHexBytes(request) }.getOrNull()
         when {
             bytes == null || bytes.isEmpty() -> add("request: must be hex bytes, e.g. 010C or 22F40C")
-            ReadOnlyPolicy.isClearRequest(bytes) || !ReadOnlyPolicy.isAllowed(bytes) ->
+            ReadOnlyPolicy.isClearRequest(bytes) || !(if (link?.dialect == DiagnosticDialect.KWP2000) KwpServices.readAllowed(bytes) else ReadOnlyPolicy.isAllowed(bytes)) ->
                 add("request: %02X is not a read service; custom PIDs may only read (01, 09, 22 …)".format(bytes[0]))
         }
         try {
@@ -47,12 +129,22 @@ data class CustomPid(
         } catch (e: IllegalArgumentException) {
             add("formula: ${e.message}")
         }
+        if (supportChecks.size > 32) add("supportChecks: at most 32 prerequisite reads are allowed")
+        if (supportChecks.isNotEmpty() && (header == null || responseHeader == null)) add("supportChecks: an exact physical ECU address pair is required")
+        supportChecks.forEachIndexed { i, check -> addAll(check.problems(link).map { "supportChecks[$i].$it" }) }
         if (!(min < max)) add("min/max: min must be smaller than max")
         if (decimals !in 0..6) add("decimals: must be 0-6")
-        header?.let { if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("header: must be a 3- or 8-digit hex CAN ID") }
-        responseHeader?.let {
-            if (header == null) add("responseHeader: needs a header")
-            if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("responseHeader: must be a 3- or 8-digit hex CAN ID")
+        if (dataOffset !in 0..4095) add("dataOffset: must be 0-4095")
+        addAll(link?.problems().orEmpty())
+        if (link?.kLine != null) {
+            if (header == null || responseHeader == null) add("K-line PID needs an exact address pair")
+            else addAll(link.addressProblems(header, responseHeader))
+        } else {
+            header?.let { if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("header: must be a 3- or 8-digit hex CAN ID") }
+            responseHeader?.let {
+                if (header == null) add("responseHeader: needs a header")
+                if (!(it.isHex() && (it.length == 3 || it.length == 8))) add("responseHeader: must be a 3- or 8-digit hex CAN ID")
+            }
         }
     }
 
@@ -62,17 +154,13 @@ data class CustomPid(
 
     val requestBytes: List<Int> get() = parseHexBytes(request)
 
-    val target: EcuTarget get() = header?.let { EcuTarget.Physical(it.uppercase(), responseHeader?.uppercase()) } ?: EcuTarget.Broadcast
+    val target: EcuTarget get() = header?.let { EcuTarget.Physical(it.uppercase(), responseHeader?.uppercase(), link = link) } ?: EcuTarget.Broadcast
 
     private val parsedFormula: Formula? by lazy { Formula.parseOrNull(formula) }
 
     /** Decodes a positive reply payload (starting with the response service byte), or null. */
-    fun decode(payload: List<Int>): Double? {
-        val request = runCatching { requestBytes }.getOrNull() ?: return null
-        if (payload.size < request.size || payload[0] != request[0] + 0x40) return null
-        if (payload.subList(1, request.size) != request.drop(1)) return null
-        return parsedFormula?.evaluate(payload.drop(request.size))
-    }
+    fun decode(payload: List<Int>): Double? = pidReplyData(runCatching { requestBytes }.getOrNull(), payload, dataOffset)
+        ?.let { parsedFormula?.evaluate(it) }
 
     fun format(value: Double): String = if (decimals == 0) Math.round(value).toString() else "%.${decimals}f".format(value)
 }
@@ -97,10 +185,14 @@ data class EcuDefinition(
     val responseId: String,
     val protocol: EcuProtocol = EcuProtocol.UDS,
     val notes: String? = null,
+    val link: DiagnosticLink? = null,
+    val sourceRecords: List<String> = emptyList(),
+    /** Exact selected-ECU reads; an explicit empty set suppresses legacy generic UDS defaults. */
+    val diagnostics: com.bod3.app.diagnostics.EcuReadDefinitions? = null,
 ) {
     val is29Bit: Boolean get() = requestId.length == 8
 
-    val target: EcuTarget.Physical get() = EcuTarget.Physical(requestId.uppercase(), responseId.uppercase())
+    val target: EcuTarget.Physical get() = EcuTarget.Physical(requestId.uppercase(), responseId.uppercase(), link = link)
 
     /** Stable key within a vehicle (the request ID). */
     val key: String get() = requestId.uppercase()
@@ -113,10 +205,14 @@ data class EcuDefinition(
             if (!(id.isHex() && (id.length == 3 || id.length == 8))) add("$field: must be a 3-digit (11-bit) or 8-digit (29-bit) hex CAN ID")
             else if ((id.toLongOrNull(16) ?: Long.MAX_VALUE) > if (id.length == 3) 0x7FFL else 0x1FFFFFFFL) add("$field: outside the ${if (id.length == 3) 11 else 29}-bit CAN ID range")
         }
-        check("requestId", requestId)
-        check("responseId", responseId)
+        addAll(link?.problems().orEmpty())
+        if (link?.kLine != null) addAll(link.addressProblems(requestId, responseId)) else {
+            check("requestId", requestId)
+            check("responseId", responseId)
+        }
         if (requestId.length != responseId.length) add("responseId: must use the same ID length as requestId")
         if (requestId.equals(responseId, ignoreCase = true)) add("responseId: must differ from requestId")
+        addAll(diagnostics?.problems(protocol, link).orEmpty().map { "diagnostics.$it" })
     }
 }
 
