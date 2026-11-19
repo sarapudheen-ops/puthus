@@ -375,3 +375,23 @@ self-validation against the data, so a brand is a download plus a verification r
 
 Total: 6,498,208 recovered text records, 174,716 app-importable fault codes across the German set.
 Pack download page: <https://github.com/sarapudheen-ops/puthus/releases/tag/dtc-packs>
+
+### BMW and Mercedes-Benz
+
+The two largest German archives, added after the first eight:
+
+| Brand | Archive | Text records | Fault-code records | Pack |
+|---|---:|---:|---:|---|
+| BMW | 1.97 GB | 1,236,783 | 283,530 | **not converted** — see below |
+| BENZ | 818 MB | 676,045 | 112,340 (3 libraries) | `benz-dtcs.json`, 8,239 codes |
+
+Both opened first try. Two real format differences surfaced, and both are now handled:
+
+- **BENZ splits its fault-code text across three libraries** (`TCODE_EN`, `TCODE_EX_EN`,
+  `TCODE_X_EN`). Converting one lost most of the codes, so `merge_tcode.py` now merges all of them
+  per brand. That raised the BENZ pack from 7,270 to **8,239** codes.
+- **BMW's native codes are raw controller hex**, not SAE codes: the records read `0B\0Sensor For
+  Overturning (Level Gauge 1)`, where `0B` is a BMW fault location. The app's key shape is
+  `[PCBU][0-3][0-9A-F]{3}`, so those 283,530 records cannot be imported as they stand. They are
+  recovered and kept, and deliberately **not coerced** into a P/B/C/U code the vendor never assigned.
+  Its 371,402 `DTCFUNCTEXT_EN` descriptions and 126,039 `TCODEH_EN` write-ups are recovered too.
