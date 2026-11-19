@@ -35,7 +35,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       # Push runs cannot take inputs, so fall back to the default list.
-      BRANDS: ${{ inputs.brands || 'VW' }}
+      BRANDS: ${{ inputs.brands || 'VW,AUDI,SKODA,SEAT' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -106,6 +106,37 @@ jobs:
               -f 'output[title]=Recovered text members per brand' \
               -F 'output[summary]=@.local/recon/brand-text-detail.md' || echo "detail skipped"
           fi
+
+      - name: Build app-importable DTC packs
+        run: |
+          set -euo pipefail
+          mkdir -p .local/packs
+          for src in .local/recon/text/*_TCODE_EN.GAG.json; do
+            [ -f "$src" ] || continue
+            brand=$(basename "$src" | sed 's/_.*//')
+            case "$brand" in
+              VW)  makes="Volkswagen" ;;
+              AUDI) makes="Audi" ;;
+              SKODA) makes="Skoda" ;;
+              SEAT) makes="SEAT" ;;
+              *)   makes="$brand" ;;
+            esac
+            python3 tools/thinkdiag/convert_brand_dtcs.py "$src" --brand "$brand" \
+              --makes "$makes" --output ".local/packs/${brand,,}-dtcs.json" \
+              || echo "$brand: conversion produced no pack"
+          done
+          ls -la .local/packs || true
+          python3 tools/thinkdiag/pack_summary.py .local/packs --output .local/packs/summary.md \
+            && cat .local/packs/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "no packs built"
+
+      - name: Upload the DTC packs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: brand-dtc-packs
+          path: .local/packs/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Publish sample recovered records
         run: |
