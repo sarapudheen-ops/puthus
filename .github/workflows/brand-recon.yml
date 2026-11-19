@@ -35,7 +35,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       # Push runs cannot take inputs, so fall back to the default list.
-      BRANDS: ${{ inputs.brands || 'EOBD2,DEMO' }}
+      BRANDS: ${{ inputs.brands || 'TOYOTA,EOBD2,DEMO' }}
     steps:
       - uses: actions/checkout@v7
 
