@@ -74,6 +74,13 @@ jobs:
           set -euo pipefail
           python3 tools/thinkdiag/brand_summary.py .local/recon
 
+      - name: Compare native library hashes across brands
+        run: |
+          set -euo pipefail
+          python3 tools/thinkdiag/brand_libs.py .local/brands --output .local/recon || {
+            echo "library comparison failed"; exit 0; }
+          cat .local/recon/library-hashes.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish the support matrix as a check
         if: always()
         run: |
