@@ -17,7 +17,9 @@ be copied into data.pids. The production pack verifier still forbids execution.
 """
 from dataclasses import dataclass
 from decimal import Decimal
+from collections import Counter
 import ast
+import hashlib
 import math
 import re
 import struct
@@ -232,6 +234,14 @@ class Direct21Live:
         width = (end_bit - start_bit + 1) // 8
         if not 1 <= width <= 4:
             raise UntranslatedLive("live_applicability_untranslated", "Support window is outside the reviewed 32-bit class")
+        # GetDSCmdDataInfoP4 @1aadc..1aaf0 uses nonzero command-row +3 as the
+        # polling data length. With +3==0 it requires the same-ID A801 cache
+        # entry and uses that entry's length (@1aaf4..1abd4); absence prunes it.
+        # Conditional checks already require that record and the whole window.
+        # Do not admit a signal outside a shorter, nonzero declared poll window.
+        declared_length = commands[0][1][3]
+        if declared_length and end_bit >= declared_length * 8:
+            raise UntranslatedLive("live_applicability_untranslated", "Signal exceeds the native command-row polling length")
         snapshot_sources = context.frame(19, b"\xa8\x01", b"\xe8\x01")
         discovery_sources = context.frame(15, b"\x21\x00", b"\x61")
         group_at, group = groups[0]
@@ -301,3 +311,39 @@ class Direct21Live:
                 f"{self.ecu_file}@{monitor_at:08x}#monitor", f"DSTREAM_EN.GAG#{label_id:08X}",
                 f"EXPRESS.GAG#{calc_id:08X}", exclusion_source],
         }
+
+
+def review_direct21(sources, streams, expressions, *, region, function_key, ecu_file):
+    """Account for EVERY row of one explicitly chosen source function/ECU join.
+
+    This is an inspection artifact, not a catalog, datapack or enabled-system
+    producer. Never infer other ECU/region/vehicle applicability from this pair.
+    Invalid/missing input framing rejects the review as a whole; untranslated
+    row semantics retain the exact row ID and first blocking reason, not a
+    silently shortened list of apparently working signals.
+    """
+    context = P4SupportFiles(sources, region, function_key)
+    if not ecu_file.startswith(context.prefix):
+        raise ValueError("Review ECU is not in the exact requested source region")
+    function_file = f"FUNCDATA_{region}.BIN"
+    parser = Direct21Live(function_file, sources[function_file], function_key, ecu_file, sources[ecu_file],
+                          streams, expressions, support_files=context)
+    items, rejected = [], Counter()
+    candidates = 0
+    for i, (at, _) in enumerate(parser.rows):
+        try:
+            item = parser.translate(i)
+            candidates += 1
+        except UntranslatedLive as error:
+            identity = f"{function_file}@{at:08x}#function{function_key}:live{i}"
+            rejected[error.reason] += 1
+            item = {"id": identity, "kind": "untranslated-live-review", "enabled": False,
+                    "reasons": [error.reason], "detail": str(error), "sourceRecords": [identity]}
+        items.append(item)
+    names = [function_file, ecu_file] + [context.prefix + n for n in
+             ("Toyota_bin_00.BIN", "Toyota_bin_11.BIN", "Toyota_bin_12.BIN", "Viewer_bin_12.BIN")]
+    return {"kind": "disabled-live-review", "region": region, "functionKey": function_key, "ecuFile": ecu_file,
+            "sourceRows": len(parser.rows), "disabledReviewCandidates": candidates,
+            "rejectedRows": sum(rejected.values()), "rejectionsByFirstReason": dict(sorted(rejected.items())),
+            "executableDefinitions": 0, "items": items,
+            "inputs": [{"file": n, "bytes": len(sources[n]), "sha256": hashlib.sha256(sources[n]).hexdigest()} for n in names]}

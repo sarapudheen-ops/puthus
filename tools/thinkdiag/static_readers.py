@@ -6,7 +6,9 @@ This is offline research output, NOT an Android dependency or a recipe generator
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
+import json
 from pathlib import Path, PurePosixPath
 import zipfile
 
@@ -20,6 +22,57 @@ READERS = {
     "libTOYOTA_FILE.so": ["GetVehicleInfoData", "GetSystemListData"],
     "libDIAG.so": ["FOPEN", "FOPEN_Ex", "OpenDiagReadFileDll", "OpenSearchIDDLL"],
 }
+
+
+def data_report(data: bytes, name: str, wanted: list[str]) -> str:
+    """Small file-backed DATA objects/ranges for static table review, never machine code.
+
+    A symbol must be a defined, nonempty STT_OBJECT. A range must fit entirely
+    within one allocated, non-executable SHT_PROGBITS section; no zero-filled BSS,
+    code, cross-section slices, relocated/live memory or whole-library exports.
+    Errors stay explicit in the report instead of silently treating missing data
+    as an empty operator table. Bytes are original file contents, not relocated.
+    """
+    if not 1 <= len(wanted) <= 16 or len(set(wanted)) != len(wanted):
+        raise ValueError("Need 1-16 distinct static data selectors")
+    elf = ELFFile(io.BytesIO(data))
+    if elf.get_machine_arch() != "AArch64" or not elf.little_endian:
+        raise ValueError("Static Toyota data review requires little-endian AArch64")
+    table = elf.get_section_by_name(".dynsym")
+    symbols = {s.name: s for s in table.iter_symbols() if s.name} if table is not None else {}
+    result = {"library": name, "librarySha256": hashlib.sha256(data).hexdigest(),
+              "kind": "static-data-review", "executableDefinitions": 0, "objects": []}
+    budget = 0
+    for selector in wanted:
+        record = {"selector": selector}
+        result["objects"].append(record)
+        try:
+            if selector.startswith("@"):
+                start, size = (int(s, 0) for s in selector[1:].split(":"))
+            else:
+                symbol = symbols.get(selector)
+                if symbol is None or symbol.entry.st_shndx == "SHN_UNDEF" or symbol.entry.st_info.type != "STT_OBJECT":
+                    raise ValueError("No defined data object with this exact name")
+                start, size = symbol.entry.st_value, symbol.entry.st_size
+            if start < 0 or not 1 <= size <= 4096 or budget + size > 16384:
+                raise ValueError("Data selector exceeds its bounded review budget")
+            # Count requested ranges too, not just successful reads.
+            budget += size
+            sections = [s for s in elf.iter_sections() if s.header.sh_type == "SHT_PROGBITS"
+                        and s.header.sh_flags & 2 and not s.header.sh_flags & 4
+                        and s.header.sh_addr <= start and start + size <= s.header.sh_addr + s.header.sh_size]
+            if len(sections) != 1:
+                raise ValueError("Not wholly inside one allocated non-code, file-backed data section")
+            section = sections[0]
+            offset = start - section.header.sh_addr
+            raw = section.data()[offset:offset + size]
+            if len(raw) != size:
+                raise ValueError("Truncated file-backed data object")
+            record.update(address=hex(start), bytes=size, section=section.name,
+                          sha256=hashlib.sha256(raw).hexdigest(), hex=raw.hex(" "))
+        except (ValueError, TypeError) as error:
+            record["error"] = str(error)
+    return json.dumps(result, sort_keys=True, indent=2) + "\n"
 
 
 def reader_report(data: bytes, name: str, wanted: list[str], *, include_symbols: bool = True,

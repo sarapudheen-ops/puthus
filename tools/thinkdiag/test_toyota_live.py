@@ -3,7 +3,7 @@ import copy
 import struct
 import unittest
 
-from toyota_live import Direct21Live, P4SupportFiles, UntranslatedLive, translate_arithmetic
+from toyota_live import Direct21Live, P4SupportFiles, UntranslatedLive, review_direct21, translate_arithmetic
 
 
 def fixture(*, position=2, width=2):
@@ -32,7 +32,7 @@ def fixture(*, position=2, width=2):
 
     def ecu(rows, overrides, *, groups=None, commands=None):
         groups = [bytes.fromhex("00 00 00 00 00 01 00 00")] if groups is None else groups
-        commands = [bytes.fromhex("00 00 07 02 00 00 00 00")] if commands is None else commands
+        commands = [bytes.fromhex("00 00 07 03 00 00 00 00")] if commands is None else commands
         sections = [(3, 3, groups), (6, 6, commands), (10, 10, rows), (38, 39, overrides)]
         at = 4 + len(sections) * 5
         directory, payload = b"", b""
@@ -173,13 +173,53 @@ class DirectLiveTest(unittest.TestCase):
         m = bytearray(m); struct.pack_into("<H", m, 0x63, 0x20)
         def modified(rows, overrides):
             return ecu(rows, overrides, groups=[bytes.fromhex("00 00 00 00 20 01 00 00")],
-                       commands=[bytes.fromhex("00 00 20 02 00 00 00 00")])
+                       commands=[bytes.fromhex("00 00 20 03 00 00 00 00")])
         result = parser(f, [m], [l], modified).translate(0)
         self.assertEqual("2120", result["supportChecks"][1]["request"])
         self.assertEqual("A*0+1", result["supportChecks"][1]["formula"])
         # A numeric 5-byte window is outside native CaculateBit's reviewed 32-bit class.
         f, m, l, ecu = fixture(width=5)
         with self.assertRaises(UntranslatedLive): parser(f, [m], [l], ecu, expressions={"00000002": "y=x1+x2+x3+x4+x5;"}).translate(0)
+
+    def test_command_lengths_prune_instead_of_reading_beyond_the_native_poll_window(self):
+        f, m, l, ecu = fixture()
+        for length in (0, 1, 2, 3, 4, 255):
+            def modified(rows, overrides):
+                return ecu(rows, overrides, commands=[bytes((0, 0, 7, length, 0, 0, 0, 0))])
+            with self.subTest(length=length):
+                if length in (1, 2):
+                    with self.assertRaisesRegex(UntranslatedLive, "polling length"):
+                        parser(f, [m], [l], modified).translate(0)
+                else:
+                    result = parser(f, [m], [l], modified).translate(0)
+                    # Zero is a runtime A801-cache length, not an unconditional row.
+                    self.assertEqual((7, 1, "A+B"), tuple(result["supportChecks"][0][k]
+                                     for k in ("recordId", "dataOffset", "formula")))
+                    self.assertFalse(result["enabled"])
+
+    def test_inspection_accounts_for_all_rows_without_producing_an_executable_pack(self):
+        f, m, l, ecu = fixture()
+        sources = {**support_sources(), "FUNCDATA_EU.BIN": f, "EU/Ecu_Data_ffff.BIN": ecu([m], [l])}
+        streams, expressions = {"00000001": "Synthetic\x00unit"}, {"00000002": "y=(256*x1+x2)/4;"}
+        def review():
+            return review_direct21(sources, streams, expressions, region="EU", function_key=1, ecu_file="EU/Ecu_Data_ffff.BIN")
+        result = review()
+        self.assertEqual((1, 1, 0, 0), tuple(result[k] for k in
+                         ("sourceRows", "disabledReviewCandidates", "rejectedRows", "executableDefinitions")))
+        self.assertEqual(6, len(result["inputs"]))
+        self.assertNotIn("data", result)
+        self.assertEqual("disabled-live-review", result["kind"])
+        self.assertFalse(result["items"][0]["enabled"])
+        expressions["00000002"] = "y=untranslated(x);"
+        result = review()
+        self.assertEqual((1, 0, 1), tuple(result[k] for k in ("sourceRows", "disabledReviewCandidates", "rejectedRows")))
+        self.assertEqual({"formula_untranslated": 1}, result["rejectionsByFirstReason"])
+        item = result["items"][0]
+        self.assertEqual("FUNCDATA_EU.BIN@00000025#function1:live0", item["id"])
+        self.assertEqual([item["id"]], item["sourceRecords"])
+        self.assertFalse(item["enabled"])
+        del sources["EU/Viewer_bin_12.BIN"]
+        with self.assertRaises(UntranslatedLive): review()  # missing exclusion evidence is not an empty report
 
     def test_bad_boundaries_tail_command_and_label_do_not_become_partial_features(self):
         f, m, l, ecu = fixture()

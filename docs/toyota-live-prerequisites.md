@@ -41,6 +41,10 @@ selecting monitor rows. For the bounded conditional numeric class:
   `AnalyzeDsCmdDataP3 @0x19390` includes the group itself after a nonempty reply and maps the first
   31 MSB-first mask bits to following local IDs. The continuation bit is not a feature ID.
 - `GetDSCmdDataInfoP4 @0x1a998` prunes membership against the leading slot-6 command rows/cache.
+  At `0x1aadc..0x1aaf0`, a nonzero row `+3` is the polling data length. If it is zero,
+  `0x1aaf4..0x1abd4` requires the same-ID A801 record and uses its length; absence prunes the ID.
+  The bounded translator rejects windows beyond a nonzero declared length. Its conditional support
+  check already requires the same-ID record and the whole window when length comes from the cache.
   A similar local ID or a shared display label is not a substitute for this join.
 - The monitor cutoff, numeric class/bit position, dynamic-LSB override, reserved signal ranges and
   function-specific `Viewer_bin_12` exclusions also apply. `Viewer_bin_*` tables are distinct from
@@ -52,6 +56,27 @@ monitor, EXPRESS text, unit/name, command, support bindings/pool entries, discov
 row and exclusion table. It does not run vendor scripts or approve CALC semantics, addresses or init.
 Unreviewed classes/joins remain individually rejected with a reason. Its output has `enabled:false`
 and cannot be used as an ordinary PID import.
+
+### Representative real-source review, still disabled
+
+[Inspection run 44487545374](https://github.com/sarapudheen-ops/puthus/actions/runs/44487545374)
+(`9ff358d281ea71f8e6a9929c51be50e3b1bdc54a`) passed and supplied 527 checksum-verified reports.
+The 53 individually hashed applicability/text inputs now include the distinct regional Viewer tables.
+`EU/Viewer_bin_12.BIN` has 6,244 bytes, SHA-256
+`a06328eaa4e2d369015d6a3f6834110f5a27d680bd745a1970b11f011612131f`.
+
+Using those inputs with the bounded command-length check, the exact **EU / function 61 / ECU 0081**
+review accounts for all **1,015 rows**: **353 disabled numeric review candidates** and **662 rejected**
+(630 first blocked by applicability/class/joins, 21 by formula/window, 11 by dynamic scaling).
+This supersedes the historical, looser 405-candidate experiment. It is one function/ECU pair, not
+all Toyota functions or a vehicle-coverage count. Coolant row 28 and engine-speed row 38 retain exact
+`A801` record IDs 5/12 and `2100` discovery bits, plus original source IDs. Both remain disabled.
+
+The inspection sweep now writes `direct21-review.json` with an entry for **every** source row,
+its first blocking reason or disabled review metadata, input hashes and zero executable definitions.
+It is not wired into the production pack converter. Bounded non-code CALC data-table reports accompany
+the static readers to review operator IDs/precedence; these are file bytes, not loaded libraries,
+relocated/live state, vendor-code execution or an app EXPRESS interpreter.
 
 ## App schema and lifetime
 

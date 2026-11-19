@@ -19,7 +19,8 @@ import zipfile
 import zlib
 
 from analyze_toyota import TOYOTA_SHA256, checked_infos, native_info
-from static_readers import reader_report
+from static_readers import data_report, reader_report
+from toyota_live import review_direct21
 from toyota_structure import (ECU_FILE, audit_command_pool, frame_pool_references, function_index, menu_nodes, section_directory,
                               system_fields, system_lists, typed_table, uint)
 
@@ -55,6 +56,11 @@ FOCUSED_READERS = {
         "GetMenuID_Ex", "GetCurrentMenuSaveData", "MenuPro_Ex", "GetVehicleInfoManual", "DoDownTask", "GTokenMoveToSToken", "ManualSelectSystem", "DiagnoseSystem", "VehicleSystemScan", "VehicleSystemScanEx", "GetVehicleSystemBaseInfo", "GetCurrentMenuData", "MakeDataToBuffer_Ex"],
     "libTOYOTA_INFO.so": ["InitVehicleInfo"],
     "libTOYOTA_SCAN.so": ["GetSysListNo", "TransferVehicleInfo", "InitTopSystemList"],
+}
+# These bounded non-code tables resolve CALC operator IDs/precedence. File bytes
+# only, never a loaded library or a general vendor-language execution engine.
+FOCUSED_DATA = {
+    "libTOYOTA_CALC.so": ["opchTbl", "@0x20cac:0x5c", "@0x20d08:0x5c", "@0x20980:0x50"],
 }
 SEARCHES = {
     "innova": r"\binnova\b|\ban40\b|\ban140\b|\bag10\b",
@@ -174,6 +180,9 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                 for function in FOCUSED_READERS.get(name, []):
                     report = reader_report(data, name, [function], include_symbols=False, max_output_chars=None)
                     emit_report(f"reader-{name}-{function}", f"{name}: {function}", report)
+                if name in FOCUSED_DATA:
+                    emit_report(f"data-{name}", f"{name}: bounded static data tables",
+                                data_report(data, name, FOCUSED_DATA[name]))
             if name == "BIN.ZIP":
                 import io
                 with zipfile.ZipFile(io.BytesIO(data)) as nested:
@@ -464,6 +473,18 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                   "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
     emit_report("conversion-applicability", "Complete applicability tables and English labels for conversion review (data only)", json_text(applicability))
+    # Exercise the real, exact representative join in Actions as well as synthetic
+    # fixtures. This is deliberately NOT wired into convert_vehicle_packs or an
+    # enabled system. Every row is retained with either disabled review metadata
+    # or its first blocking reason. It is not coverage of all Toyota functions.
+    review_names = ["FUNCDATA_EU.BIN", "EU/Ecu_Data_0081.BIN"] + ["EU/" + n for n in
+                    ("Toyota_bin_00.BIN", "Toyota_bin_11.BIN", "Toyota_bin_12.BIN", "Viewer_bin_12.BIN")]
+    review = review_direct21({n: paths[n].read_bytes() for n in review_names}, libraries["DSTREAM_EN.GAG.json"],
+                             libraries["EXPRESS.GAG.json"], region="EU", function_key=61, ecu_file="EU/Ecu_Data_0081.BIN")
+    review["sourceSha256"] = source_hash
+    (output / "direct21-review.json").write_text(json_text(review))
+    emit_report("direct21-review", "Exact EU function 61 / ECU 0081 numeric review (ALL DISABLED)", json_text(review))
+    findings["direct21Review"] = {k: v for k, v in review.items() if k not in ("items", "inputs")}
     (output / "text-keyword-evidence.json").write_text(json_text(hits))
     (output / "sweep-summary.json").write_text(json_text(findings))
     emit_report("summary", "Toyota full diagnostic-data sweep", json_text(findings))
