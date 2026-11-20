@@ -22,6 +22,14 @@ class NativeOracleTest(unittest.TestCase):
         self.assertIs(reference['physicalValidation'], False)
         self.assertIs(reference['networkAccess'], False)
         self.assertEqual(1308, reference['entryComparison']['comparedRecords'])
+        kwp = reference['kwpTransportComparison']
+        self.assertEqual(284, kwp['sourceEntries'])
+        self.assertEqual(1308, sum(kwp['allEntryCensusByNativeTransport'].values()))
+        self.assertEqual((568, 17892, 8, 2016), tuple(kwp[key] for key in (
+            'configurationVectors', 'sourcePacketVectors', 'syntheticConfigurationVectors', 'wireContractVectors')))
+        self.assertTrue(any('trace-only fake' in boundary for boundary in kwp['fakeBoundaries']))
+        wire_kotlin = (Path(__file__).resolve().parents[2] / 'app/src/test/java/com/bod3/app/obd/kwp/KwpScenarios.kt').read_text()
+        self.assertIn(kwp['wireContractResultsSha256'], wire_kotlin)
         self.assertEqual(180316, sum(r['faultCodeMappings'] for r in reference['functionReaderComparison']['regions'].values()))
         self.assertEqual(70144, reference['faultDecoderComparison']['stateVectors'])
         self.assertEqual(2112, reference['faultDecoderComparison']['recordVectors'])
@@ -34,7 +42,7 @@ class NativeOracleTest(unittest.TestCase):
         self.assertEqual(3584, reference['faultLabelComparison']['fallbackVectors'])
         self.assertEqual(196608, reference['faultLabelComparison']['mergeVectors'])
         self.assertEqual(0, sum(r['missingExactLabels'] for r in reference['faultLabelComparison']['scopedLabels'].values()))
-        for key in ('entryComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'p5DecoderComparison', 'faultLabelComparison', 'calcComparison'):
+        for key in ('entryComparison', 'kwpTransportComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'p5DecoderComparison', 'faultLabelComparison', 'calcComparison'):
             self.assertRegex(reference[key]['librarySha256'], r'^[0-9a-f]{64}$')
             self.assertIs(reference[key]['nativeInstructionsExecuted'], True)
         kotlin = (Path(__file__).resolve().parents[2] / 'app/src/test/java/com/bod3/app/diagnostics/ToyotaFaultScenarios.kt').read_text()

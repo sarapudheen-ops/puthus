@@ -11,7 +11,11 @@ production converter and pack verifier still allow **zero executable recovered d
 (`72c608e2caca30d8f6111c8a8ed10b6667ac8c95`) supplied 546 checksum-verified reports, including
 original non-code objects and static reader disassembly for `libTOYOTA_CALC.so`, library SHA-256
 `364645c275977f139e92ac0a9b7995ab20939f32a86371876e0bdbe04a7e1197`.
-No vendor native code was loaded or executed.
+That historical inspection did not execute vendor native code. The current owner-authorized offline
+oracle additionally executes the supplied CALC instructions in bounded AArch64 emulation: the numeric
+consumer on all 65,792 reviewed inputs and eight `ResultCalcFromScript` edge calls. Constructors,
+host `dlopen`, syscalls, files, JNI, adapter and ECU access are not bridged. libc/printf is a declared
+shim; this is not proof of native libc or a physical vehicle. See [the current native domains and CI evidence](conversion-report.md#native-execution-and-fault-decoder-port--not-counted-as-executable).
 
 The review requires that exact library hash and all four exact object address/size/content hashes:
 
@@ -90,3 +94,14 @@ Selector `0x51` is a different native fast/ISO alternative, not permission to su
 
 The native abstract-layer configuration bytes (including `0x6003` timing commands and `55aa...61`
 wrappers) are adapter packets, not ECU requests, and are not emitted by this numeric review.
+
+A separate closed source port, `toyota_transport.py`, now projects the literal COMM configuration API
+sequence for all **284 native transport-1/5 entries**, not just the first ECU. Native execution matches
+**568 configuration traces, 17,892 source packet vectors and eight synthetic configuration probes**.
+The **2,016**-vector source-short-packet digest also matches Kotlin `KLineFrames.encode`. API returns
+are explicit trace-only fakes; they prove neither an ST/VT mapping nor an initialized ECU. The port
+retains full selector/region/function isolation, original baud (including the native 9,600-baud branch),
+explicit pin-pair selection, binary32 baud conversion and the full shifted timing-word ABI argument on
+the alternate connector. Tests reject source flag changes and packets above the 63-byte short-frame
+limit rather than silently switching variants. No P1–P4 name, receive address or operational grant is
+inferred from this intermediate projection; the per-ECU production blocker above remains unresolved.

@@ -64,7 +64,10 @@ pinned supplied libraries execute only inside bounded AArch64 emulation. All 1,3
 records and 34,671 default/declared-fault template lookups, 70,144 DTC state/mask and 2,112 fault-record
 vectors, all 27,035 exact TCODE pairs, 3,584 source numeric-display vectors, 196,608 exact-key byte-merge
 calls, 49,152 P5 core record-projection vectors (not auxiliary P5 freeze/mask/query workflows), and
-65,792 numeric vectors for two CALC forms are compared. All 179,770 distinct per-function
+65,792 numeric vectors for two CALC forms are compared. The separate fast-KWP consumer port adds
+284 source entries, 568 configuration traces, 17,892 source packets and 2,016 native/Python/Kotlin
+short-packet contract vectors, with every adapter API explicitly faked. It does not establish ST/VT
+timing/pin mapping or SYSP startup and is not an executable vehicle pack. All 179,770 distinct per-function
 mapping keys have exact source labels; repeated printed codes are never suffix-matched. English pairs
 are re-extracted from the pinned archive, with original GAG index/text offset provenance. The reviewed
 counts/library/result hashes live in `tools/thinkdiag/schema/native-oracle-v1.json`.

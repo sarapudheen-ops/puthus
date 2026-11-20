@@ -369,7 +369,10 @@ physical-ECU verification. The new independent Python/Kotlin native-fault decode
 DTCF execution on 70,144 state/mask, 2,112 assembly, 3,584 source numeric-display and 196,608 exact-key
 byte-merge vectors. P5 core record projection additionally matches on 49,152 vectors (not its auxiliary
 freeze/mask/query workflows). FILE comparisons cover every regional fault/clear block and all 1,308 entries; COMM
-covers 8,775 regional frames and 34,671 template lookups. All 27,035 exact TCODE pairs are checked, and
+covers 8,775 regional frames and 34,671 template lookups. A separate fast-KWP configuration/packing
+port covers 284 source entries, 568 native API traces and 17,892 source packet vectors; 2,016 short-packet
+vectors also match Kotlin. Its adapter APIs are trace-only fakes: MIC3313 timing/pin mapping and SYSP
+startup are still unresolved. All 27,035 exact TCODE pairs are checked, and
 the selected-function label joins have no missing keys. CALC comparison covers 65,792 vectors for two
 arithmetic forms. These are bounded offline semantic checks—not transport, full-language or
 executable-vehicle proof.

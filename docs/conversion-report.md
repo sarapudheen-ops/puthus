@@ -163,16 +163,33 @@ The separate P5 layout/compiler preserves P5's record origin without applying P3
 rules, and requires an explicit caller-supplied availability mask. Its 395 source headers match the
 compared shape; mask discovery, auxiliary side tables and query workflows remain separate work.
 
-Local checks at this checkpoint: **165 Python tests**, **122 Kotlin source files compiled**, and
-**110 standalone core scenario groups passed**, including DTCF P3/P4 and P5 core/state/display/merge
-vector domains. Standalone compiler/scenario results are **not** Gradle/JUnit, lint, Android or physical
-results. Native comparisons executed locally on restored hash-checked inputs. The first full-archive
-CI attempt at `d85c290` failed its native-reference gate; it is not a green Android/regeneration result.
-The global label index now canonicalizes full keys independently of GAG/JSON iteration order while
-preserving original GAG offsets and source mapping-row order. Failed gates retain raw evidence and
-publish explicit failure annotations/reports rather than losing their diagnostic data. Current
-original-archive/manifest CLI and Android build/device results are pending the corrected-head Actions
-run until explicitly recorded below. Prior green runs do not validate these edits.
+The separate `toyota_transport.py` projection preserves literal COMM API arguments for the 284
+native transport-1/5 entries. It retains source baud, pin-pair selection and the 9,600-baud timing
+exception. The alternate connector receives the high byte of the original four-byte timing load;
+a tempting three-byte slice produced a real native-comparison failure and now has a regression test.
+Source flags `81`/`33` packets reject payloads above 63 bytes rather than changing addressing bits or
+substituting an extended-length source variant. This is not yet an approved adapter configuration.
+
+Local checks at this checkpoint: **176 Python tests**, **122 Kotlin source files compiled**, and
+**111 standalone core scenario groups passed**, including DTCF P3/P4 and P5 core/state/display/merge
+and the short-KWP-packet digest. Standalone results are **not** Gradle/JUnit, lint, Android or physical
+results. Native comparisons executed locally on restored hash-checked inputs.
+
+The first full-archive CI attempt at `d85c290` failed its native-reference gate. After canonicalizing
+global label keys independently of GAG/JSON iteration order (without changing original offsets or
+per-function mapping order), the corrected `b0e3e96` full-archive inspection
+[44672825656](https://github.com/sarapudheen-ops/puthus/actions/runs/44672825656) **passed**. Push Android
+[44672825723](https://github.com/sarapudheen-ops/puthus/actions/runs/44672825723) and PR Android
+[44672832977](https://github.com/sarapudheen-ops/puthus/actions/runs/44672832977) also **passed**, including
+`assembleDebug lintDebug testDebugUnitTest` and APK-index verification. The push run installed the
+actual APK on API 24: **two tests passed in 2.008 seconds**, proving index-only packaging, exact manual
+selected-path range delivery/offline cache and no automatic vehicle selection—not ECU functionality.
+The PR run deliberately skips the release-publishing emulator job. These runs include the P5 port but
+precede the new fast-KWP comparison/contract test; that expanded current-head gate still needs Actions
+results. The exact original `d85c290` log exception could not be retrieved from the signed log host,
+so iteration order is not asserted to be its independently confirmed cause. Failed gates now retain
+raw evidence and publish explicit failure annotations/reports. **The API-24 nonempty executable Toyota
+system acceptance criterion remains unmet**, despite delivery/UI smoke tests passing.
 
 **Still incomplete:** complete transport/init/session/timing mapping, source fault-query conditions/
 selection and multi-query workflows, general EXPRESS/control flow/signed/string helpers, ECU-info,

@@ -193,6 +193,42 @@
     }
   },
   "kind": "offline-native-differential",
+  "kwpTransportComparison": {
+    "allEntryCensusByNativeTransport": {
+      "1": 267,
+      "10": 3,
+      "2": 10,
+      "3": 498,
+      "4": 479,
+      "5": 17,
+      "6": 1,
+      "7": 3,
+      "8": 30
+    },
+    "configurationResultsSha256": "2d6acec1f47d77601a27de5cd793a98d2279a54aa4a6205f540e2360d310f2a8",
+    "configurationVectors": 568,
+    "fakeBoundaries": [
+      "OpenAbstractCommDll does not load host code",
+      "Every adapter API is an explicit trace-only fake returning 1; not initialization/timing proof",
+      "libc memory functions"
+    ],
+    "librarySha256": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "MIC3313 ST/VT equivalent timing/pin/line configuration",
+      "SYSP fast/slow entry, sessions, replies, keepalive/exit and retry behavior",
+      "Native transports other than 1/5 and packets above 63 source payload bytes",
+      "Production executable-definition emission and physical validation"
+    ],
+    "sourceEntries": 284,
+    "sourceEntryResultsSha256": "175481ce290b29605655ded55ff66a33ab4bf7c01be2428b03cef729ef86e792",
+    "sourcePacketResultsSha256": "a6f651694aba913a0e65b93c267fcb4f98ad73eb258258c51fa87cdb13b4603a",
+    "sourcePacketVectors": 17892,
+    "syntheticConfigurationResultsSha256": "b67a5bce229d949c050bcc0a6388e64489a2eb6748d2eb6567d0366aa68cef61",
+    "syntheticConfigurationVectors": 8,
+    "wireContractResultsSha256": "35cab2b30e208c0608d5967d510c9e439aed92aff0aeb3937ee943c38b774a3f",
+    "wireContractVectors": 2016
+  },
   "networkAccess": false,
   "p5DecoderComparison": {
     "atomicHardening": "The port rejects an incomplete record tail instead of retaining a native partial result",

@@ -20,6 +20,7 @@ from analyze_toyota import checked_infos
 from convert_vehicle_packs import load_sources
 from extract_english import read_text_libraries
 from native_replay import NativeSandbox, ReplayError
+from toyota_native_transport import compare_fast_kwp
 from toyota_dtc_labels import (DiagnosticCodeMerge, FaultLabels, fallback_code, fallback_description)
 from source_verification import verify_archive
 from toyota_entries import EntryIndex
@@ -590,6 +591,7 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
     result = {'kind': 'offline-native-differential', 'sourceSha256': SOURCE_SHA256,
         'physicalValidation': False, 'adapterAccess': False, 'networkAccess': False,
         'entryComparison': compare_entries(libraries, sources['SYSTEMENTER.BIN']),
+        'kwpTransportComparison': compare_fast_kwp(libraries, sources['SYSTEMENTER.BIN']),
         'frameComparison': compare_frames(libraries, sources, 'EU', 61,
             (1, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 102, 103, 104, 127, 160)),
         'functionRoundTrips': counts,
@@ -635,6 +637,11 @@ def summary(result):
         f"- COMM: {sum(r['standaloneFrames'] for r in result['regionalTemplateComparison']['regions'].values()):,} regional frame records and "
         f"{sum(r['templateLookups'] for r in result['regionalTemplateComparison']['regions'].values()):,} default/declared-fault template lookups; "
         f"{len(result['frameComparison']['templates'])} starting EU/function-61 joins. Not transport proof.\n"
+        f"- COMM fast KWP: {result['kwpTransportComparison']['sourceEntries']:,} source entries, "
+        f"{result['kwpTransportComparison']['configurationVectors']:,} configuration traces, "
+        f"{result['kwpTransportComparison']['sourcePacketVectors']:,} source packet vectors and "
+        f"{result['kwpTransportComparison']['wireContractVectors']:,} native/Python/Kotlin short-packet contract vectors. "
+        'Every adapter API is a trace-only fake; ST/VT timing/pin mapping and SYSP startup remain unresolved.\n'
         f"- DTCF: {result['faultLabelComparison']['exactLabelVectors']:,} exact TCODE pairs, "
         f"{result['faultLabelComparison']['fallbackVectors']:,} source numeric-display vectors, "
         f"{result['faultLabelComparison']['mergeVectors']:,} exact-key byte-merge calls. "

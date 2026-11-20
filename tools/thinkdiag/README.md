@@ -64,6 +64,19 @@ assembly, numeric-display and byte-merge result hashes. General CALC/control flo
 query conditions and complete source feature-to-runtime conversion remain unfinished; executable
 recovered vehicle definitions remain zero.
 
+`toyota_transport.py` separately ports the exact COMM transport-1/5 configuration call sequence and
+source flags `81`/`33` short addressed packet branch. `toyota_native_transport.py` executes the actual
+COMM consumers: **284 source entries, 568 configuration traces, 17,892 source packets, eight synthetic
+configuration-branch probes and 2,016 native/Python/Kotlin short-packet contract vectors**. The source
+baud is preserved (including the native 9,600-baud exception and binary32 argument conversion), pin
+pairs require an explicit index, and full-selector/region/function misses do not select an alternative.
+The alternate connector's shifted **four-byte** timing-word argument is retained; reducing it to a
+three-byte slice is a tested regression. Payloads above 63 bytes reject instead of wrapping addressing
+bits or silently substituting a different source packet flag. **Every adapter API is a trace-only fake.**
+The three timing arguments keep their source API positions, not guessed P1–P4 names. ST/VT-equivalent
+pin/line/timing configuration, SYSP fast/slow startup, replies, sessions, keepalive/exit, other native
+transports and production emission remain incomplete. The projection never approves an ECU link.
+
 `toyota_dtc_labels.py` joins **179,770 distinct per-function keys** from the 180,316 mapping rows to
 exact source pairs, with **zero missing keys** across EU/NA/JP. Repeated printed codes are not merged,
 legacy codes are retained, and no other ECU's text is substituted. The English reader now retains GAG
