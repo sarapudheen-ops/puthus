@@ -141,7 +141,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Install actual small APK and verify range delivery plus offline cache on minSdk
+      - name: Install actual APK and test delivery, cache and synthetic source-session consent UI on minSdk
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 24
@@ -155,9 +155,9 @@ jobs:
             bash .github/scripts/sync-emulator-ca.sh
             adb install -r -t .local/device/app/app-debug.apk
             adb install -r -t .local/device/tests/app-debug-androidTest.apk
-            adb shell am instrument -w -r -e class com.bod3.app.vehiclepack.VehiclePackInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
+            adb shell am instrument -w -r -e class com.bod3.app.vehiclepack.VehiclePackInstrumentedTest,com.bod3.app.diagnostics.SourceSessionUiInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
             adb logcat -d > .local/device/reports/logcat.txt
-            grep -Eq '^OK \([1-9][0-9]* tests?\)' .local/device/reports/instrumentation.txt
+            grep -Eq '^OK \(5 tests\)' .local/device/reports/instrumentation.txt
             ! grep -q 'FAILURES!!!' .local/device/reports/instrumentation.txt
       - name: Publish Android smoke evidence for API inspection
         if: always() && hashFiles('.local/device/reports/instrumentation.txt') != ''
@@ -170,12 +170,12 @@ jobs:
           text = source[:48000].decode('utf-8', errors='replace')
           trust = Path('.local/device/reports/tls-trust.md')
           tls = trust.read_text() if trust.exists() else 'Emulator trust setup did not complete; inspect the failing setup step.\n'
-          Path('.local/device/reports/summary.md').write_text('Android 24 actual-APK, pinned range delivery and private offline-cache smoke tests. No ECU requests.\n\n' + tls + '\n```text\n' + text + '\n```\n')
+          Path('.local/device/reports/summary.md').write_text('Android 24 actual APK: two pinned-range/private-offline-cache tests and three synthetic source-session-consent Compose UI tests. UI callbacks only; no Session, Bluetooth, ECU requests, manual vehicle selection or executable-Toyota acceptance. JVM scenarios independently cover capability/lease guards.\n\n' + tls + '\n```text\n' + text + '\n```\n')
           PY
           gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
             -f name='Toyota Android 24 on-demand pack evidence' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion='${{ job.status }}' \
-            -f 'output[title]=Small APK / exact HTTP ranges / offline selected path' \
+            -f 'output[title]=Delivery/cache plus synthetic session-consent UI; not executable Toyota acceptance' \
             -F 'output[summary]=@.local/device/reports/summary.md'
       - name: Upload Android on-demand pack smoke results
         if: always()
