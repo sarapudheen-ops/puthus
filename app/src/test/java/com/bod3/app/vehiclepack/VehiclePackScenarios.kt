@@ -296,7 +296,7 @@ object VehiclePackScenarios {
         val f = Fixture(enabled = true); val c = f.client(cache)
         val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
         val s = c.system(v, v.systems.single())
-        check(s.enabled && s.readOnly && s.coverage == "1 ECU · 1 PIDs · 1 DTCs · 1 ECU info read") { s.coverage }
+        check(s.enabled && s.readOnly && s.coverage == "1 ECU · 1 PIDs · 1 DTCs · 1 ECU info read") { s.coverage ?: "null coverage" }
         // An enabled system whose pinned object drops the read-only declaration is rejected.
         val bad = Fixture(enabled = true, corruptExecutable = "writable").client(cache)
         rejects {
@@ -497,7 +497,7 @@ object VehiclePackScenarios {
         // Exactly the one reviewed read-only ECMECT slice: 1 ECU · 30 PIDs · 1,414 DTCs · 1 calibration-ID read.
         val enabled = enabledSystems.singleOrNull() ?: error("The pinned ECMECT slice must be the only enabled system")
         check(enabled.id == "SYSLIST_EU.BIN@0009d8f2" && enabled.readOnly)
-        check(enabled.coverage == "1 ECU · 30 PIDs · 1,414 DTCs · 1 ECU info read") { enabled.coverage }
+        check(enabled.coverage == "1 ECU · 30 PIDs · 1,414 DTCs · 1 ECU info read") { enabled.coverage ?: "null coverage" }
         val ecu = enabled.data.ecus.single()
         check(enabled.data.pids.size == 30 && enabled.counts.getValue("pids").converted == 30)
         check(enabled.counts.getValue("dtcs").converted == 1414 && enabled.counts.getValue("ecuInfo").converted == 1)
