@@ -47,6 +47,25 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Publish checksummed ECU program-dispatch input for exact reader work
+        # The agent workspace cannot follow the release-asset storage redirect. Keep
+        # this small, owner-verified source input in research evidence, never Git/APK.
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, zlib
+          from pathlib import Path
+          source = Path('.local/thinkdiag/decoded/ECUPROGRAM.BIN').read_bytes()
+          manifest = json.loads(Path('.local/thinkdiag/report/decoded-manifest.json').read_text())
+          item = next(r for r in manifest if r['file'] == 'ECUPROGRAM.BIN')
+          assert len(source) == item['bytes'] and hashlib.sha256(source).hexdigest() == item['sha256']
+          record = {**item, 'compression': 'zlib', 'base64': base64.b64encode(zlib.compress(source, 9)).decode('ascii')}
+          Path('.local/thinkdiag/report/ecu-program-input.json').write_text(json.dumps(record, sort_keys=True))
+          PY
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota exact ECU program input' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Owner-source ECUPROGRAM input; not executable coverage' \
+            -F 'output[summary]=@.local/thinkdiag/report/ecu-program-input.json'
       - name: Compare supplied FILE COMM SYSP DTCF CALC instructions with bounded ports (offline only)
         id: native_oracle
         run: |

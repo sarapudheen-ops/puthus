@@ -468,7 +468,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # evidence path when release-asset downloads are inaccessible. Never native library bytes.
     applicability = []
     for name, source in sorted(paths.items()):
-        if name in ("MENU.BIN", "SPECFUNC.BIN", "OBD2_SYS_DATA.BIN", "FUNCH_CFG.BIN") or re.fullmatch(r"(?:SYSLIST|FUNCDATA)_(?:EU|JP|NA)\.BIN", name):
+        if name in ("MENU.BIN", "SPECFUNC.BIN", "OBD2_SYS_DATA.BIN", "FUNCH_CFG.BIN", "ECUPROGRAM.BIN") or re.fullmatch(r"(?:SYSLIST|FUNCDATA)_(?:EU|JP|NA)\.BIN", name):
             raw = source.read_bytes()
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                   "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
