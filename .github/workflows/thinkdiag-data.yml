@@ -8,6 +8,8 @@ on:
       - 'tools/thinkdiag/**'
       - '.github/workflows/thinkdiag-data.yml'
       - 'app/src/main/assets/datapacks/toyota-lexus-dtcs.json'
+      - 'tools/thinkdiag/verify_entries.py'
+      - 'tools/thinkdiag/toyota_entries.py'
 
 permissions:
   contents: read
@@ -45,6 +47,17 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Derive ECU request headers for every system entry
+        run: |
+          python3 tools/thinkdiag/verify_entries.py --decoded .local/thinkdiag/decoded \
+            --output .local/thinkdiag/report/entry-frames.md \
+            --json .local/thinkdiag/report/entry-frames.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota ECU framing' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Headers derived from the traced frame builder' \
+            -F 'output[summary]=@.local/thinkdiag/report/entry-frames.md'
+
       - name: Sweep every diagnostic-table family and native reader
         run: |
           python3 tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \
