@@ -15,7 +15,7 @@ from vehicle_bundle import SOURCE_SHA256, canonical
 
 
 class NativeOracleTest(unittest.TestCase):
-    def test_reviewed_reference_pins_all_five_actual_executed_libraries_and_domains(self):
+    def test_reviewed_reference_pins_all_executed_libraries_and_domains(self):
         reference = json.loads(REFERENCE.read_text())
         self.assertEqual(SOURCE_SHA256, reference['sourceSha256'])
         self.assertIs(reference['adapterAccess'], False)
@@ -54,6 +54,8 @@ class NativeOracleTest(unittest.TestCase):
         for key in ('entryComparison', 'kwpTransportComparison', 'kwpLifecycleComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'p5DecoderComparison', 'faultLabelComparison', 'calcComparison'):
             self.assertRegex(reference[key]['librarySha256'], r'^[0-9a-f]{64}$')
             self.assertIs(reference[key]['nativeInstructionsExecuted'], True)
+        self.assertEqual((678, 14, 60, 27648), (reference['ecuProgramComparison']['vectors'], reference['ecuProgramComparison']['ecmect']['dispatch'],
+            reference['calibration14Comparison']['vectors'], reference['supportPredicateComparison']['vectors']))
         kotlin = (Path(__file__).resolve().parents[2] / 'app/src/test/java/com/bod3/app/diagnostics/ToyotaFaultScenarios.kt').read_text()
         for key in ('stateResultsSha256', 'recordResultsSha256'):
             self.assertIn(reference['faultDecoderComparison'][key], kotlin)
@@ -97,8 +99,8 @@ class NativeOracleTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'details'): verify_reference(actual, ref)
 
     def test_native_extraction_is_archive_pinned_complete_unique_and_individually_hashed(self):
-        names = ('libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_DTCF.so', 'libTOYOTA_CALC.so', 'libTOYOTA_SYSP.so')
-        fields = ('entryComparison', 'frameComparison', 'faultDecoderComparison', 'calcComparison', 'kwpLifecycleComparison')
+        names = ('libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_DTCF.so', 'libTOYOTA_CALC.so', 'libTOYOTA_SYSP.so', 'libTOYOTA_FDATA.so', 'libTOYOTA_ECUF.so')
+        fields = ('entryComparison', 'frameComparison', 'faultDecoderComparison', 'calcComparison', 'kwpLifecycleComparison', 'detailLoadingComparison', 'calibration14Comparison')
         with tempfile.TemporaryDirectory() as root:
             root = Path(root); archive = root / 'synthetic.zip'; ref = root / 'reference.json'
             reference = {field: {'librarySha256': hashlib.sha256(name.encode()).hexdigest()} for name, field in zip(names, fields)}

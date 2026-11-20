@@ -148,12 +148,22 @@ class BringUpEngine(
                 ProbeRole.DTC -> requireNotNull(runtime.ecu.diagnostics?.faults).read.requestBytes
             }
             val requestHex = Hex.format(request, "")
-            val response = withTimeoutOrNull(READ_TIMEOUT_MS + 500) { session.request(runtime.ecu.target, request, READ_TIMEOUT_MS) }
-                ?: return BringUpProbe(role, requestHex, null, false, "Read timed out; no late/partial reply was accepted")
+            val checks = when (role) {
+                ProbeRole.IDENTIFICATION -> runtime.identification.supportChecks
+                ProbeRole.LIVE -> runtime.live.supportChecks
+                ProbeRole.DTC -> runtime.ecu.diagnostics!!.faults!!.read.supportChecks
+            }
+            // A fresh discovery snapshot for this exact probe. No previous run, other ECU,
+            // unsupported ID or first nonzero live sample can establish applicability.
+            val response = withTimeoutOrNull((checks.size + 1L) * (READ_TIMEOUT_MS + 500)) {
+                com.bod3.app.obd.session.ReadPrerequisites(session).withSupported(runtime.ecu.target, checks, READ_TIMEOUT_MS) {
+                    session.request(runtime.ecu.target, request, READ_TIMEOUT_MS)
+                }
+            } ?: return BringUpProbe(role, requestHex, null, false, "Read timed out or current ECU prerequisites failed; no substitute/late/partial reply was accepted")
             val payload = positive(response) ?: return BringUpProbe(role, requestHex, null, false,
                 "No single complete positive reply from the exact ECU (silent, negative, wrong framing/checksum/echo, or mixed messages)")
             val valid = when (role) {
-                ProbeRole.IDENTIFICATION -> runtime.identification.data(payload)?.isNotEmpty() == true
+                ProbeRole.IDENTIFICATION -> runtime.identification.data(payload)?.let(runtime.identificationDefinition::accepts) == true
                 ProbeRole.LIVE -> payload.size <= 4096 && runtime.live.decode(payload)?.isFinite() == true
                 ProbeRole.DTC -> runtime.ecu.diagnostics!!.faults!!.let { f -> f.read.data(payload)?.let { f.layout.decode(it, "bring-up") is DtcReadResult.Read } == true }
             }

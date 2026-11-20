@@ -31,12 +31,16 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
  */
 object DataPackCodec {
     const val FORMAT = "bod3-datapack"
-    const val FORMAT_VERSION = 4
+    const val FORMAT_VERSION = 5
+
+    private fun extendedReads(pack: DataPack): Boolean = pack.pids.any { it.link?.needsExtendedKeepAliveSchema == true } ||
+        pack.vehicles.any { v -> v.ecus.any { it.link?.needsExtendedKeepAliveSchema == true || it.diagnostics?.needsExtendedReadSchema == true } }
 
     fun encode(pack: DataPack): String = JsonWriter.write(
         linkedMapOf(
             "format" to FORMAT,
             "formatVersion" to when {
+                extendedReads(pack) -> 5
                 pack.pids.any { it.supportChecks.isNotEmpty() || it.link?.testerPresent == listOf(0x3E) } ||
                     pack.vehicles.any { v -> v.ecus.any { it.link?.testerPresent == listOf(0x3E) } } -> 4
                 pack.vehicles.any { v -> v.ecus.any { it.diagnostics != null } } -> 3
@@ -71,10 +75,7 @@ object DataPackCodec {
         "min" to p.min, "max" to p.max, "decimals" to p.decimals, "header" to p.header,
         "responseHeader" to p.responseHeader, "notes" to p.notes, "link" to p.link?.let(DiagnosticLinkCodec::encode),
         "dataOffset" to p.dataOffset.takeIf { it != 0 }, "sourceRecords" to p.sourceRecords.takeIf { it.isNotEmpty() },
-        "supportChecks" to p.supportChecks.takeIf { it.isNotEmpty() }?.map { check -> linkedMapOf(
-            "request" to check.request, "formula" to check.formula, "recordId" to check.recordId,
-            "dataOffset" to check.dataOffset.takeIf { it != 0 }, "sourceRecords" to check.sourceRecords.takeIf { it.isNotEmpty() },
-        ).filterValues { it != null } },
+        "supportChecks" to p.supportChecks.takeIf { it.isNotEmpty() }?.map(PidSupportCheckCodec::encode),
     ).filterValues { it != null }
 
     fun encodeVehicle(v: VehicleDefinition): Map<String, Any?> = linkedMapOf(
@@ -125,6 +126,8 @@ object DataPackCodec {
             description = reader.string(root, "description", "", required = false),
             pids = pids, vehicles = vehicles, dtcs = dtcs, moduleNames = moduleNames, dtcGroups = dtcGroups,
         )
+        if (formatVersion < 5 && extendedReads(pack))
+            errors += "diagnostics/keepalive: requires formatVersion 5 so older apps cannot discard support reads, enum/width decoding or the selected keepalive"
         errors += pack.problems()
         return DataPackResult(if (errors.isEmpty()) pack else null, errors.distinct())
     }
@@ -215,14 +218,7 @@ object DataPackCodec {
             m.keys.filterNot { it in setOf("id", "name", "request", "formula", "unit", "min", "max", "decimals", "header", "responseHeader", "notes", "link", "dataOffset", "sourceRecords", "supportChecks") }
                 .forEach { errors += "$p.$it: unknown PID field (nothing is silently discarded)" }
             val support = list(m, "supportChecks", p).mapIndexedNotNull { i, raw ->
-                val cp = "$p.supportChecks[$i]"; val c = obj(raw, cp) ?: return@mapIndexedNotNull null
-                c.keys.filterNot { it in setOf("request", "formula", "dataOffset", "sourceRecords", "recordId") }
-                    .forEach { errors += "$cp.$it: unknown prerequisite field" }
-                val cr = string(c, "request", cp); val cf = string(c, "formula", cp)
-                val co = int(c, "dataOffset", cp, false) ?: 0
-                val record = int(c, "recordId", cp, false)
-                val sources = com.bod3.app.recipe.JsonFields(errors).strings(c, "sourceRecords", cp)
-                if (cr == null || cf == null) null else PidSupportCheck(cr.uppercase(), cf, co, sources, record)
+                PidSupportCheckCodec.decode(raw, "$p.supportChecks[$i]", errors)
             }
             return CustomPid(id, name, request.uppercase(), formula, unit, min, max, decimals, header, responseHeader, notes, link, offset, records, support)
         }

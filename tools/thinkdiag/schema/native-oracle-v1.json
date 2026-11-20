@@ -56,6 +56,103 @@
       }
     ]
   },
+  "calibration14Comparison": {
+    "dispatch": 14,
+    "fakeBoundaries": [
+      "SendCmdBitAndGetReceive returns explicit synthetic post-service replies; no COMM/adapter/device access",
+      "one ordinary native runtime (not alternate mode 34); no lifecycle or applicability inference"
+    ],
+    "hardenedIncompleteVectors": 7,
+    "hardening": "Incomplete fixed-width records and invalid ASCII are rejected, not native rounded-up out-of-bounds copies",
+    "librarySha256": "7aac28dfd7762a22a109c270aa70abbe51cb7456c8e2ca0572f95bf7a656ce49",
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "other ECUF dispatch kinds",
+      "physical calibration-ID validity",
+      "unique ECU serial or write proof"
+    ],
+    "resultsSha256": "43fed4d017e78bfb969a35abddb808549f53868f22802248132be164cc586f0c",
+    "senderCapacityAfterService": 255,
+    "template": 136,
+    "vectors": 60
+  },
+  "detailLoadingComparison": {
+    "fakeBoundaries": [
+      "GetSupportBit returns every combination of explicit synthetic support outcomes; no ECU access"
+    ],
+    "functionKey": 61,
+    "librarySha256": "4fb2d50be9ac69ab971f2a183e8672d3fbaaf447c68c2d4580ae417d08ea75e2",
+    "mainCategory": 1,
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "support-query replies or live mask evaluation",
+      "other main categories",
+      "transport",
+      "physical validation"
+    ],
+    "resultsSha256": "90f4814bfbf9a93cfb96d79ca16e96ca20dfec25da62add273fdb15c336b0599",
+    "vectors": 128
+  },
+  "dtcSetupComparison": {
+    "fakeBoundaries": [
+      "one explicitly populated communication frame slot; byte-array replies, no I/O"
+    ],
+    "hardening": "Port rejects short predicate buffers and mask windows instead of out-of-bounds native loads",
+    "librarySha256": "686dc71e111d2a82205df75ddfa9d2a873ae4d7eea5de7aef81abcde295c39b7",
+    "nativeInstructionsExecuted": true,
+    "resultsSha256": "134efc041e6449f5e497ce04650f901394e4922a8323cb9f1d2c72c0e86d1ea8",
+    "vectors": 10240
+  },
+  "dtcWorkflowComparison": {
+    "fakeBoundaries": [
+      "explicit current function-detail memberships",
+      "exact source frame lookup projected into a native slot; independent COMM comparison covers that lookup",
+      "synthetic setup replies, final fault sender returns success without I/O/decoding",
+      "result-list/UI allocation bypassed by native block+10e=1; no applicability inferred from that setting"
+    ],
+    "functionKey": 61,
+    "librarySha256": "686dc71e111d2a82205df75ddfa9d2a873ae4d7eea5de7aef81abcde295c39b7",
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "physical/adapter behavior",
+      "retry/re-entry",
+      "current ECU support results",
+      "operation permissions"
+    ],
+    "resultsSha256": "3c4fd4239cf574bd55a3d50a18f065f8622e534bc76db4d3ca0a348c4cc8733c",
+    "systemRecord": "SYSLIST_EU.BIN@0009d8f2",
+    "vectors": 32
+  },
+  "ecuProgramComparison": {
+    "byRegion": {
+      "1": 226,
+      "2": 226,
+      "3": 226
+    },
+    "ecmect": {
+      "dispatch": 14,
+      "functionKey": 61,
+      "program": 2,
+      "region": "EU",
+      "sourceRecord": "ECUPROGRAM.BIN@00000055",
+      "sourceRecords": [
+        "ECUPROGRAM.BIN@00000055",
+        "libTOYOTA_FILE.so@00019044#GetSupEcuFromEcuProgList",
+        "libTOYOTA_ECUF.so@00010ad4#GetEcuCalitrationID"
+      ]
+    },
+    "fakeBoundaries": [
+      "fopenEx/fseekEx/freadEx/fcloseEx over the exact supplied decoded ECUPROGRAM array",
+      "one explicit non-skipped native system slot and selector; no menu/discovery inference",
+      "OpenDeviceIdDll bypass and no online override; no native decryption or host file access"
+    ],
+    "librarySha256": "dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0",
+    "missingAndSkippedVectors": 6,
+    "nativeInstructionsExecuted": true,
+    "resultsSha256": "585fbf67ea723a6b4345e823a447ffda0956b868c15f1ccdd60579bf14e30edb",
+    "sourceFileSha256": "ad7418a5a027eaa16825b17021e007bd7e0cf4408bae6bb631affa4b8d017878",
+    "vectors": 678
+  },
   "entryComparison": {
     "bySelector": {
       "11": 267,
@@ -334,5 +431,22 @@
       }
     }
   },
-  "sourceSha256": "26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a"
+  "sourceSha256": "26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a",
+  "supportPredicateComparison": {
+    "fakeBoundaries": [
+      "GetCommFrameInfo returns one explicitly populated slot; independent COMM oracle covers lookup",
+      "GetSendCmdSearchIndex selects an explicit successful immutable cached post-service reply; no sender/device access"
+    ],
+    "hardening": "Port rejects short mask windows instead of native out-of-bounds byte loads",
+    "librarySha256": "4fb2d50be9ac69ab971f2a183e8672d3fbaaf447c68c2d4580ae417d08ea75e2",
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "native support-cache invalidation",
+      "physical ECU support",
+      "adapter or transport behavior"
+    ],
+    "resultsSha256": "5289af252e4454245472816647e4feed6616a5b6f97520ba697492f3798f3b60",
+    "unconditionalVectors": 3,
+    "vectors": 27648
+  }
 }

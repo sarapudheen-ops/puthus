@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Owner-authorized offline native/source differential checks, never an ECU bridge.
 
-The supplied FILE/COMM/SYSP/DTCF/CALC instructions run in bounded AArch64 emulation. File
+The supplied FILE/COMM/SYSP/DTCF/CALC/FDATA/ECUF instructions run in bounded AArch64 emulation. File
 APIs below see only immutable, supplied decoded byte arrays. Adapter, discovery,
 UI and open-library boundaries are explicit fakes, recorded as such. There is
 no physical validation and no claim that mocked boundaries themselves worked.
@@ -29,6 +29,9 @@ from toyota_lifecycle import SYSP_SHA256, selected_fast_kwp_lifecycle
 from toyota_transport import COMM_SHA256, ConsumerCall
 from toyota_faults import NativeFaultLayout, NativeP5FaultLayout, state_ids
 from toyota_functions import FunctionBlocks
+from toyota_native_workflow import (compare_setup_predicates, compare_ecmect_query_selection,
+                                    compare_ecmect_detail_loading, compare_support_predicates)
+from toyota_native_identity import compare_ecu_programs, compare_calibration_14
 from vehicle_bundle import SOURCE_SHA256, canonical
 
 REFERENCE = Path(__file__).parent / 'schema' / 'native-oracle-v1.json'
@@ -744,6 +747,12 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
         'functionReaderComparison': compare_function_readers(libraries, sources),
         'regionalTemplateComparison': compare_regional_templates(libraries, sources),
         'faultDecoderComparison': compare_fault_decoder(libraries),
+        'dtcSetupComparison': compare_setup_predicates(libraries),
+        'dtcWorkflowComparison': compare_ecmect_query_selection(libraries, sources),
+        'detailLoadingComparison': compare_ecmect_detail_loading(libraries, sources),
+        'supportPredicateComparison': compare_support_predicates(libraries),
+        'ecuProgramComparison': compare_ecu_programs(libraries, sources, MemoryFiles),
+        'calibration14Comparison': compare_calibration_14(libraries),
         'p5DecoderComparison': compare_p5_decoder(libraries, sources),
         'faultLabelComparison': compare_fault_labels(libraries, sources,
             text_libraries['TCODE_EN.GAG'][0], text_libraries['TEXT_EN.GAG'][0])}
@@ -753,7 +762,8 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
 
 def load_libraries(path):
     verify_archive(path)
-    names = {'libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_CALC.so', 'libTOYOTA_DTCF.so', 'libTOYOTA_SYSP.so'}
+    names = {'libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_CALC.so', 'libTOYOTA_DTCF.so',
+             'libTOYOTA_SYSP.so', 'libTOYOTA_FDATA.so', 'libTOYOTA_ECUF.so'}
     libraries = {}
     with zipfile.ZipFile(path) as archive:
         for info in checked_infos(archive):
@@ -766,7 +776,8 @@ def load_libraries(path):
     reference = json.loads(REFERENCE.read_text())
     for name, comparison in (('libTOYOTA_FILE.so', 'entryComparison'), ('libTOYOTA_COMM.so', 'frameComparison'),
             ('libTOYOTA_DTCF.so', 'faultDecoderComparison'), ('libTOYOTA_CALC.so', 'calcComparison'),
-            ('libTOYOTA_SYSP.so', 'kwpLifecycleComparison')):
+            ('libTOYOTA_SYSP.so', 'kwpLifecycleComparison'), ('libTOYOTA_FDATA.so', 'detailLoadingComparison'),
+            ('libTOYOTA_ECUF.so', 'calibration14Comparison')):
         if hashlib.sha256(libraries[name]).hexdigest() != reference[comparison]['librarySha256']:
             raise ValueError('Native comparison library differs from its reviewed identity: ' + name)
     return libraries
@@ -802,7 +813,18 @@ def summary(result):
         f"{result['faultDecoderComparison']['recordVectors']:,} record-assembly vectors.\n"
         f"- DTCF P5: {result['p5DecoderComparison']['recordVectors']:,} core record-projection vectors; "
         f"{result['p5DecoderComparison']['sourceBlocks']:,} source blocks have the compared source shape. "
-        'Auxiliary freeze/mask tables and query workflows are not covered.\n'
+        'Auxiliary freeze/mask tables and P5 query workflows are not covered.\n'
+        f"- DTCF setup predicates: {result['dtcSetupComparison']['vectors']:,} vectors; "
+        f"ECMECT query selection: {result['dtcWorkflowComparison']['vectors']:,} membership combinations, "
+        'including source 105F, setup-template 132 / 0101, 07 and conditional non-decoded 0A. '
+        'Support results and final sender are explicit fakes, not transport/permission proof.\n'
+        f"- FDATA ECMECT main-category-1 detail/add-info loading: {result['detailLoadingComparison']['vectors']:,} "
+        'synthetic support combinations. Detail 57 keeps the 07 query eligible; 132 is not a detail key.\n'
+        f"- FDATA support masks/minimum lengths: {result['supportPredicateComparison']['vectors']:,} vectors; "
+        'ANY mask match, service-inclusive minimum, and unconditional-row semantics. Cached reply/lookup boundaries are fakes.\n'
+        f"- FILE ECUPROGRAM: {result['ecuProgramComparison']['vectors']:,} exact regional/full-key lookups; "
+        f"ECUF kind 14: {result['calibration14Comparison']['vectors']:,} synthetic calibration-ID replies. "
+        'Function 61 dispatches 14 via ECUPROGRAM+55 to template 136/0904, not selector 11 or fuel-type 21C1.\n'
         f"- CALC: {sum(v['vectors'] for v in result['calcComparison']['vectors']):,} numeric vectors, "
         'two arithmetic forms, eight full-script edge calls. Other expressions are not covered.\n\n'
         'Only supplied AArch64 instructions and explicit memory/libc shims execute. Constructors, host dlopen, '
@@ -810,7 +832,7 @@ def summary(result):
         'no-online-overrides and formatting/memory shims are declared fakes, not native-libc/decryption/transport proof. '
         'The Android decoder rejects malformed partial records atomically even where native code would retain a partial result. '
         'All result/library hashes must equal `tools/thinkdiag/schema/native-oracle-v1.json`. '
-        'No vendor code or expressions enter the APK. **Zero executable recovered vehicle definitions; no physical validation.**\n')
+        'No vendor code or expressions enter the APK. **This oracle establishes neither executable-system nor Android acceptance; no physical validation.**\n')
 
 
 def write_checked_report(result, output):

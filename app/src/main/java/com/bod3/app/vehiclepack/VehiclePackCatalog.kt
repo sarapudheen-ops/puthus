@@ -161,15 +161,28 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         } else {
             require(vehicle.hierarchyResolved && why.isEmpty() && data.ecus.size == 1) { "No exact vehicle/ECU mapping" }
             val ecu = data.ecus.single()
-            val diagnostics = requireNotNull(ecu.diagnostics) { "Converted ECU must explicitly define (or disable) identification/fault reads" }
-            require(diagnostics.identification.all { it.read.sourceRecords.isNotEmpty() } &&
-                diagnostics.faults?.let { it.read.sourceRecords.isNotEmpty() && (it.clear == null || it.clear.sourceRecords.isNotEmpty()) } != false) { "Converted diagnostic reads lack source records" }
-            require(counts.getValue("ecuInfo").converted == diagnostics.identification.size)
+            require(ecu.link != null && data.pids.isNotEmpty()) { "Enabled systems need an explicit link and nonempty executable live data" }
+            require(data.dtcs.isEmpty() && data.dtcGroups.isEmpty() && data.moduleNames.isEmpty() && data.security.isEmpty() &&
+                data.connection.values.isEmpty() && data.exclude == com.bod3.app.catalog.CatalogExclusions()) { "An executable system is closed to one ECU, not a global catalog/configuration fallback" }
+            val diagnostics = requireNotNull(ecu.diagnostics) { "Enabled ECU needs explicit nonempty identification and fault reads" }
+            val faults = requireNotNull(diagnostics.faults) { "Enabled ECU has no executable fault read" }
+            require(diagnostics.identification.isNotEmpty() && diagnostics.identification.all { it.read.minBytes > 0 && it.read.sourceRecords.isNotEmpty() &&
+                it.read.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } } &&
+                faults.read.sourceRecords.isNotEmpty() && faults.read.supportChecks.all { it.sourceRecords.isNotEmpty() } &&
+                faults.layout.sourceRecords.isNotEmpty() && (faults.clear == null || faults.clear.sourceRecords.isNotEmpty())) { "Converted diagnostic reads/layouts lack nonempty data or independent source records" }
+            val labels = when (val layout = faults.layout) {
+                is com.bod3.app.diagnostics.ToyotaFaultLayout -> layout.labels
+                is com.bod3.app.diagnostics.ToyotaP5FaultLayout -> layout.labels
+                else -> error("Enabled Toyota faults require the exact source-specific layout, not an inferred UDS/OBD layout")
+            }
+            require(labels.isNotEmpty() && labels.all { it.sourceRecords.isNotEmpty() }) { "Enabled ECU has no nonempty source-key fault definitions" }
+            require(counts.getValue("ecuInfo").converted == diagnostics.identification.size &&
+                counts.getValue("dtcs").converted == labels.size && counts.getValue("specialFunctions").converted == 0) { "Feature counts disagree with actual diagnostic definitions" }
             require(ecu.sourceRecords.isNotEmpty() && data.pids.all { it.sourceRecords.isNotEmpty() && it.target == ecu.target &&
                 it.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } } &&
                 data.actuators.all { it.sourceRecords.isNotEmpty() && it.module.target == ecu.target } &&
                 data.coding.all { it.sourceRecords.isNotEmpty() && it.module.target == ecu.target }) { "Definitions are missing provenance or cross ECU boundaries" }
-            require(counts.getValue("pids").converted == data.pids.size && counts.getValue("dtcs").converted == data.dtcCount &&
+            require(counts.getValue("pids").converted == data.pids.size &&
                 counts.getValue("tests").converted == data.actuators.size && counts.getValue("coding").converted == data.coding.size)
             // Arbitrary catalog imports still call unverified(). Only this pinned path may enable them.
         }

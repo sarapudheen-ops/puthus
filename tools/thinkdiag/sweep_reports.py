@@ -78,7 +78,7 @@ def unpack_parts(parts):
     return reports
 
 
-def parts_from_checks(checks):
+def parts_from_checks(checks, prefix="Toyota sweep evidence "):
     """Deduplicate accepted-POST/failed-response retries, then require one complete bundle.
 
     Strict unpack_parts intentionally rejects duplicate raw part inputs. Recovery
@@ -89,7 +89,7 @@ def parts_from_checks(checks):
     """
     groups = {}
     for check in checks:
-        if not check.get("name", "").startswith("Toyota sweep evidence "):
+        if not check.get("name", "").startswith(prefix):
             continue
         if check.get("conclusion") != "success":
             continue
@@ -171,6 +171,7 @@ if __name__ == "__main__":
     recover = commands.add_parser("recover-checks", help="Read gh api --paginate --slurp commit check-runs JSON")
     recover.add_argument("checks", type=Path)
     recover.add_argument("--output", type=Path, required=True)
+    recover.add_argument("--prefix", default="Toyota sweep evidence ")
     args = parser.parse_args()
     if args.command == "publish":
         try:
@@ -183,7 +184,7 @@ if __name__ == "__main__":
         if args.command == "recover-checks":
             pages = json.loads(args.checks.read_text())
             pages = pages if isinstance(pages, list) else [pages]
-            parts = parts_from_checks([check for page in pages for check in page["check_runs"]])
+            parts = parts_from_checks([check for page in pages for check in page["check_runs"]], args.prefix)
         else:
             parts = [json.loads(p.read_text()) for p in args.parts]
         reports = unpack_parts(parts)

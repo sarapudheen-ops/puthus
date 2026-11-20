@@ -2,6 +2,11 @@ name: Inspect Toyota release data
 
 on:
   workflow_dispatch:
+    inputs:
+      recover-source-inputs:
+        description: Recover checksummed decoded research arrays when release storage redirects are blocked (no APK build)
+        type: boolean
+        default: false
   push:
     branches: ['arena/**']
     paths:
@@ -14,8 +19,34 @@ permissions:
   checks: write
 
 jobs:
+  recover-source-inputs:
+    name: Recover complete checksummed source inputs (research only)
+    if: github.event_name == 'workflow_dispatch' && inputs.recover-source-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Download and verify the authoritative archive outside Git
+        run: |
+          mkdir -p .local/source-inputs
+          gh release download assets-v1 --pattern TOYOTA.zip --dir .local/source-inputs
+          python3 -m pip install -r tools/thinkdiag/requirements.txt
+          python3 tools/thinkdiag/source_verification.py .local/source-inputs/TOYOTA.zip
+          python3 tools/thinkdiag/decode_toyota.py .local/source-inputs/TOYOTA.zip \
+            --output .local/source-inputs/decoded --report .local/source-inputs/report
+      - name: Publish bounded checked source-input evidence (never an executable-coverage claim)
+        run: |
+          python3 tools/thinkdiag/source_input_evidence.py publish .local/source-inputs/TOYOTA.zip \
+            --decoded .local/source-inputs/decoded --manifest .local/source-inputs/report/decoded-manifest.json
   inspect:
     name: Inspect owner-verified Toyota specification
+    if: github.event_name != 'workflow_dispatch' || !inputs.recover-source-inputs
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

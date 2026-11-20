@@ -143,6 +143,16 @@ class Session(
     private class BringUpReadOnly(val session: Session) : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<BringUpReadOnly>
     }
+    private class ReadOnlyAccess(val session: Session) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<ReadOnlyAccess>
+    }
+
+    /** An exact-ECU read lease cannot consume a grant or escalate into an active operation. */
+    suspend fun <T> withReadOnlyEcuOperation(target: EcuTarget.Physical, block: suspend () -> T): T = withDiagnosticOperation {
+        val lease = currentCoroutineContext()[Lease]
+        require(lease?.target == null || lease.target == target) { "A read operation cannot change its ECU" }
+        withContext(Lease(this, target) + ReadOnlyAccess(this)) { block() }
+    }
 
     /** One exclusive, non-escalatable read-only operation, including adapter configuration/init. */
     suspend fun <T> withReadOnlyBringUp(block: suspend () -> T): T = withDiagnosticOperation {
@@ -200,6 +210,7 @@ class Session(
     private suspend fun ensureOperationGuard(target: EcuTarget.Physical) {
         val lease = currentCoroutineContext()[Lease] ?: error("Missing diagnostic operation lease")
         if (lease.guardedTarget == target) return
+        require(currentCoroutineContext()[ReadOnlyAccess]?.session !== this) { "A read-only lease cannot escalate into an active operation" }
         ecuOperationGuard(this, target)
         lease.guardedTarget = target
     }
@@ -215,10 +226,14 @@ class Session(
     private var baseProtocol = initialProtocol
     private var lastExchangeAtMs: Long? = null
 
-    private fun isRead(target: EcuTarget, request: List<Int>): Boolean =
-        if ((target as? EcuTarget.Physical)?.link?.dialect == DiagnosticDialect.KWP2000)
-            KwpServices.readAllowed(request) || (request.firstOrNull() in ReadOnlyPolicy.obdServices && ReadOnlyPolicy.isAllowed(request))
+    private fun isRead(target: EcuTarget, request: List<Int>): Boolean {
+        val link = (target as? EcuTarget.Physical)?.link
+        return if (link?.dialect == DiagnosticDialect.KWP2000)
+            KwpServices.readAllowed(request) ||
+                (request == link.testerPresent && KwpServices.isSourceKeepAlive(request)) ||
+                (request.firstOrNull() in ReadOnlyPolicy.obdServices && ReadOnlyPolicy.isAllowed(request))
         else ReadOnlyPolicy.isAllowed(request)
+    }
 
     var protocol: ObdProtocol = initialProtocol
         private set
@@ -262,8 +277,8 @@ class Session(
         require(request.isNotEmpty() && request.all { it in 0..0xFF }) { "Request must contain bytes in 0..255" }
         require(timeoutMs > 0) { "Request timeout must be positive" }
         return routedOperation(target) {
-            if (currentCoroutineContext()[BringUpReadOnly]?.session === this) {
-                require(confirmation == null && grant == null && isRead(target, request)) { "Bring-up cannot consume a write/clear grant" }
+            if (currentCoroutineContext()[BringUpReadOnly]?.session === this || currentCoroutineContext()[ReadOnlyAccess]?.session === this) {
+                require(confirmation == null && grant == null && isRead(target, request)) { "A read-only lease cannot consume a write/clear grant" }
             }
             if (!isRead(target, request) && target is EcuTarget.Physical) ensureOperationGuard(target)
             when {
@@ -279,11 +294,13 @@ class Session(
     /** Used by owned session keep-alives: never switches ECU, initializes a bus or resends a write. */
     suspend fun keepAliveCurrent(target: EcuTarget.Physical, request: List<Int> = target.link?.testerPresent ?: listOf(0x3E, 0x00)): Boolean {
         require(request == (target.link?.testerPresent ?: listOf(0x3E, 0x00))) { "Keepalive differs from this ECU's definition" }
-        require(request == listOf(0x3E) || request == listOf(0x3E, 0x00))
+        require(if (target.link?.dialect == DiagnosticDialect.KWP2000) KwpServices.isSourceKeepAlive(request)
+            else request == listOf(0x3E, 0x00)) { "Unsupported keepalive for the selected dialect" }
         return routedOperation(target) { lock.withLock {
             val k = target.link?.kLine
             if (appliedTarget != target || (k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true)) return@withLock false
-            exchange(target, request, k?.p2StarMs?.toLong() ?: DEFAULT_REQUEST_TIMEOUT_MS, false).messages.isNotEmpty()
+            val response = exchange(target, request, k?.p2StarMs?.toLong() ?: DEFAULT_REQUEST_TIMEOUT_MS, false)
+            response.complete && response.negativeResponses.isEmpty() && response.messages.size == 1
         } }
     }
 

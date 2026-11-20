@@ -47,7 +47,8 @@ data class DiagnosticLink(
     val testerPresent: List<Int> = listOf(0x3E, 0x00),
 ) {
     fun problems(): List<String> = buildList {
-        if (testerPresent != listOf(0x3E, 0x00) && !(dialect == DiagnosticDialect.KWP2000 && testerPresent == listOf(0x3E))) add("testerPresent: only 3E (KWP) or 3E00 is allowed")
+        if (testerPresent != listOf(0x3E, 0x00) && !(dialect == DiagnosticDialect.KWP2000 && KwpServices.isSourceKeepAlive(testerPresent)))
+            add("testerPresent: needs an exact supported, non-writing per-ECU keepalive")
         if (protocol.isCan) {
             if (kLine != null) add("CAN link cannot contain K-line initialization")
             if (baudKbps != null && (!protocol.hasCustomBaud || baudKbps !in 10.0..1000.0)) add("CAN baud is invalid for this protocol")
@@ -61,6 +62,8 @@ data class DiagnosticLink(
             }
         }
     }
+    val needsExtendedKeepAliveSchema: Boolean get() = testerPresent !in listOf(listOf(0x3E), listOf(0x3E, 0x00))
+
     fun addressProblems(request: String, response: String): List<String> = buildList {
         if (kLine != null) {
             val tx = Hex.parse(request); val rx = Hex.parse(response)

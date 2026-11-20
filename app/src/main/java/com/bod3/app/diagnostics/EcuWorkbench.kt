@@ -24,6 +24,8 @@ data class DtcRecords(val extended: DtcRecordResult, val snapshot: DtcRecordResu
  * Missing converted features never cause a generic UDS/emissions request to be substituted.
  */
 class EcuWorkbench(private val session: Session, private val client: UdsClient = UdsClient(session)) {
+    private val prerequisites = com.bod3.app.obd.session.ReadPrerequisites(session)
+
     suspend fun readIdentification(ecu: EcuDefinition, onReading: (DidReading) -> Unit = {}): List<DidReading> {
         ecu.diagnostics?.let { definitions ->
             validate(ecu)
@@ -31,7 +33,12 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
             for (definition in definitions.identification) {
                 val r = definition.read
                 val id = r.requestBytes.drop(1).fold(0) { a, b -> a * 256 + b }
-                val reading = DidReading(id, read(ecu, r), r.id, r.name, r.request, definition.encoding == IdentificationEncoding.HEX)
+                val result = read(ecu, r).let { value ->
+                    if (value is DidResult.Value && !definition.accepts(value.data))
+                        DidResult.Failed("Incomplete or invalid identification record; no partial text accepted") else value
+                }
+                val reading = DidReading(id, result, r.id, r.name, r.request, definition.encoding != IdentificationEncoding.ASCII,
+                    (result as? DidResult.Value)?.let { definition.display(it.data) })
                 readings += reading; onReading(reading)
                 if (readings.size == 1 && reading.result is DidResult.NoResponse) break
             }
@@ -71,6 +78,14 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
     }
 
     private suspend fun read(ecu: EcuDefinition, definition: DiagnosticRead): DidResult {
+        if (definition.supportChecks.isEmpty()) return readSupported(ecu, definition)
+        return try {
+            prerequisites.withSupported(ecu.target, definition.supportChecks, timeout(ecu)) { readSupported(ecu, definition) }
+                ?: DidResult.Failed("Current ECU prerequisites were not satisfied; no substitute read was sent")
+        } catch (e: AdapterException) { DidResult.Failed(e.message ?: "adapter error") }
+    }
+
+    private suspend fun readSupported(ecu: EcuDefinition, definition: DiagnosticRead): DidResult {
         val request = definition.requestBytes
         val response = try { session.request(ecu.target, request, timeout(ecu)) }
         catch (e: AdapterException) { return DidResult.Failed(e.message ?: "adapter error") }
