@@ -74,6 +74,13 @@ jobs:
         run: |
           python3 tools/thinkdiag/decode_toyota.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/decoded --report .local/thinkdiag/report
+      - name: Recover complete decoded research inputs for an explicitly marked push
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[recover-toyota-inputs]')
+        # Same owner-verified recovery as manual dispatch; the connected GitHub App
+        # permits push-triggered Actions but may not permit workflow dispatch.
+        run: |
+          python3 tools/thinkdiag/source_input_evidence.py publish .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json
       - name: Recover indexed English text
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
