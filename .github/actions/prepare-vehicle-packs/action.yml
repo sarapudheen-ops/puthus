@@ -28,13 +28,16 @@ runs:
           --output .local/toyota-conversion/decoded --report .local/toyota-conversion/report
         python3 tools/thinkdiag/extract_english.py .local/toyota-conversion/TOYOTA.zip \
           --output .local/toyota-conversion/english --report .local/toyota-conversion/report
-        python3 tools/thinkdiag/convert_vehicle_packs.py .local/toyota-conversion/TOYOTA.zip \
-          --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
-          --manifest .local/toyota-conversion/report/decoded-manifest.json \
-          --output .local/toyota-vehicle-packs
+        # Compile the pinned mandatory-ECMECT read artifacts FIRST; the converter then
+        # enables exactly that one read-only system and leaves everything else disabled.
         python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/toyota-conversion/TOYOTA.zip \
           --decoded .local/toyota-conversion/decoded \
           --manifest .local/toyota-conversion/report/decoded-manifest.json \
+          --output .local/toyota-vehicle-packs
+        python3 tools/thinkdiag/convert_vehicle_packs.py .local/toyota-conversion/TOYOTA.zip \
+          --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
+          --manifest .local/toyota-conversion/report/decoded-manifest.json \
+          --read-artifacts .local/toyota-vehicle-packs \
           --output .local/toyota-vehicle-packs
         python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/toyota-conversion/TOYOTA.zip \
           --decoded .local/toyota-conversion/decoded \
@@ -48,7 +51,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs
+        python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs --require-executable
         python3 tools/thinkdiag/toyota_native_oracle.py verify .local/toyota-vehicle-packs/native-oracle.json
         python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/toyota-vehicle-packs
         python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/toyota-vehicle-packs

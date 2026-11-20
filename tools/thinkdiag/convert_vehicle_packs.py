@@ -480,8 +480,10 @@ class Converter:
                     c = system["counts"][kind]
                     return f'{c["converted"]} / {c["unresolved"] if c["unresolved"] is not None else "unknown"}'
                 report.append(f'| {title} | `{system["id"]}` {system["name"].replace("|", " ")} | {count("pids")} | '
-                              f'{count("dtcs")} | {count("tests")} | {count("coding")} | {", ".join(system["reasons"])} |')
-        report += ["", "No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.",
+                              f'{count("dtcs")} | {count("tests")} | {count("coding")} | '
+                              f'{", ".join(system["reasons"]) or ("enabled read-only; physical validation PENDING" if system["enabled"] else "")} |')
+        report += ["", "Exactly one reviewed system is enabled, read-only: clearing, coding, actuators, security access and flashing are excluded.",
+                   "No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.",
                    "Source verification is distinct from completed conversion and from physical vehicle testing.", ""]
         (self.output / "conversion-report.md").write_text("\n".join(report))
         container = self.output / index["container"]

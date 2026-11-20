@@ -63,8 +63,9 @@ jobs:
 
       - name: Verify APK contains the exact small pin, not the corpus or vendor code
         run: |
+          set -euo pipefail
           python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs \
-            --apk app/build/outputs/apk/debug/app-debug.apk
+            --require-executable --apk app/build/outputs/apk/debug/app-debug.apk
 
       - name: Publish immutable data container for on-demand downloads
         if: github.event_name == 'push'
