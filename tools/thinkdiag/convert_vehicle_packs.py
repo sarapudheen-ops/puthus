@@ -11,6 +11,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import sys
 from pathlib import Path
 import re
 
@@ -34,6 +35,9 @@ REASONS = {
     "missing_system_entry": "No SYSTEMENTER entry exactly matches this region, function and complete selector byte; another selector or ECU is never substituted.",
     "missing_system_key": "The ordinary manual MENU leaf has no matching SYSLIST key in its source region.",
     "nonordinary_menu_task": "This manual leaf uses a special task, not the proven ordinary VehicleSystemScan key path.",
+    "live_applicability_untranslated": "The source row's runtime applicability conditions are not fully translated.",
+    "calc_semantics_unreviewed": "The exact EXPRESS/CALC expression is not in the runtime-compiled subset.",
+    "dynamic_scaling_untranslated": "The source row's dynamic scaling behavior is not fully translated.",
 }
 
 
@@ -67,11 +71,16 @@ def load_sources(archive, decoded, manifest):
 
 
 class Converter:
-    def __init__(self, sources, texts, output):
+    def __init__(self, sources, texts, output, english=None, read_artifacts=None):
         self.sources = sources
         self.texts = texts
+        self.english = english
         self.output = output
         self.writer = BundleWriter(output)
+        # None: fully disabled conversion. Otherwise (review_artifact_counts, directory)
+        # from toyota_runtime_compile.verify_source_read_files for the ONE reviewed
+        # mandatory ECMECT system. All other systems stay disabled.
+        self.read_artifacts = read_artifacts
         self.ecus = {}
         self.functions = {}
         self.systems = {}
@@ -190,14 +199,24 @@ class Converter:
             self.census["ecuFiles"] += 1
 
     def convert_functions(self):
+        omissions = {}
+        compiled = set()
+        if self.ecmect_review is not None:
+            # The enabled function's live rows are partitioned exactly: 30 compiled
+            # into the slice, the other 985 keep their first implementation blocker.
+            omissions = {row["id"]: row for row in self.omissions["items"]}
+            compiled = {row["id"] for row in self.ecmect_review["liveReads"]}
         for region in REGIONS.values():
             name = f"FUNCDATA_{region}.BIN"
             raw = self.sources[name]
             index, _ = function_index(raw)
             pointers = sorted({p for row in index for p in row[1:6] if p not in (0, 0xFFFFFFFF)} | {len(raw)})
             stops = {p: pointers[i + 1] for i, p in enumerate(pointers[:-1])}
-            for row in index:
-                identity = source_id(name, 1 + 28 * next(i for i, r in enumerate(index) if r[0] == row[0]))
+            for row_index, row in enumerate(index):
+                # Match toyota_runtime_compile.FunctionBlocks.index_offsets so the
+                # function source record joins the pinned compiler artifact exactly
+                # (last key position wins, as in the dict comprehension there).
+                identity = source_id(name, 1 + 28 * row_index)
                 live_rows = []
                 # CDSF ReadDStreamFunc @0xFBB0 passes runtime+0x107a0 to
                 # FILE GetDsDataFromDSPart; FILE GetInfoFromAddrPart @0x11e30
@@ -217,8 +236,18 @@ class Converter:
                             raise ValueError("Live command sequence exceeds source block")
                     for i in range(live_count):
                         at = p + 4 + i * 30
-                        live_rows.append(self.disabled(source_id(name, at, f"#function{row[0]}:live{i}"), "pid-candidate",
-                            raw[at:at + 30], ["ecu_entry_untranslated", "service_reply_untranslated", "formula_untranslated"]))
+                        row_id = source_id(name, at, f"#function{row[0]}:live{i}")
+                        omitted = omissions.get(row_id)
+                        if self.ecmect_review is not None and (region, row[0]) == ("EU", 61):
+                            if omitted is None:
+                                if row_id not in compiled:
+                                    raise ValueError("ECMECT live row is neither compiled nor accounted as omitted")
+                                continue  # Compiled into the enabled read-only slice, not unresolved.
+                            live_rows.append(self.disabled(row_id, "pid-candidate", raw[at:at + 30],
+                                omitted["reasons"], detail=omitted["detail"]))
+                        else:
+                            live_rows.append(self.disabled(row_id, "pid-candidate",
+                                raw[at:at + 30], ["ecu_entry_untranslated", "service_reply_untranslated", "formula_untranslated"]))
                 metadata = {"kind": "function-source", "sourceRecord": identity, "functionKey": row[0],
                             "sourceFields": list(row), "declaredLiveRows": live_count, "livePages": self.pages(live_rows)}
                 self.functions[region, row[0]] = {"sourceRecord": identity, "functionKey": row[0],
@@ -267,15 +296,26 @@ class Converter:
                         "rawHex": raw.hex(), "ecuSource": ecu, "functionSource": function, "entrySource": entry_source,
                         "bringUpPages": self.bring_up_candidates(region_id, key, raw[27], transport == "FLASH"),
                         "counts": counts, "data": {}}
+                    if self.ecmect_review is not None and identity == self.ecmect_review["systemId"]:
+                        # Enablement is allowed only via the pinned, independently
+                        # verified compiler artifact; enable() itself asserts the exact
+                        # source join (function 61, full selector 0x11, raw bytes, hashes).
+                        from toyota_ecmect_pack import candidate_for, enable
+                        enable(value, self.ecmect_review)
+                        # Replace the untranslated evidence page with the ONE runnable
+                        # read-only candidate carrying the exact translated runtime.
+                        candidate = candidate_for(value, self.ecmect_review)
+                        value["bringUpPages"] = [self.writer.add({"kind": "bring-up-candidates", "candidates": [candidate]})]
                     ref = self.writer.add(value)
-                    brief = {"id": identity, "name": value["name"], "counts": counts,
-                             "enabled": False, "reasons": reasons, "object": ref}
+                    brief = {"id": identity, "name": value["name"], "counts": value["counts"],
+                             "enabled": value["enabled"], "reasons": value["reasons"], "object": ref,
+                             "readOnly": bool(value.get("readOnly"))}
                     refs.append(brief)
                     self.systems[identity] = ref
                     self.system_report.append({"id": identity, "region": region, "system": value["name"],
                         "functionKey": key, "entrySelector": raw[27], "ecuFile": ecu_file,
                         "sourceRecords": sources, "entrySource": entry.source_id if entry else None,
-                        "counts": counts, "enabled": value["enabled"], "reasons": reasons})
+                        "counts": value["counts"], "enabled": value["enabled"], "reasons": value["reasons"]})
                 for key, block in index:
                     if block == offset:
                         self.vehicle_systems[region, key] = refs
@@ -370,6 +410,22 @@ class Converter:
         return write(tree)["object"]
 
     def convert_inventory(self):
+        if self.ecmect_review is not None:
+            from toyota_ecmect_pack import stage_review, verify_enabled
+            from toyota_runtime_compile import MANDATORY_SYSTEM
+            # Re-verify the enabled object against the exact artifact allowlist and
+            # stage the omissions ledger plus pinned compiler artifacts next to the
+            # pack (the omissions page stays in the container; artifacts are not
+            # APK content).
+            enabled_ref = self.systems.get(MANDATORY_SYSTEM)
+            if enabled_ref is None:
+                raise ValueError("Mandatory ECMECT system record is missing")
+            self.writer.stream.flush()  # read_object reopens the container path.
+            verify_enabled(read_object(self.writer.path, enabled_ref), self.ecmect_review)
+            self.omissions_ref = self.writer.add(self.omissions)
+            (self.output / "mandatory-ecmect-live-omissions.json").write_bytes(canonical(self.omissions) + b"\n")
+            stage_review(self.ecmect_review, self.output)
+            self.census["ecmectOmittedLiveRows"] = self.omissions["omittedLiveRows"]
         # The source has SYSLIST blocks not reached by ordinary manual MENU paths.
         # Keep ALL source systems/ECUs/functions in a separate audit root. They are
         # never attached to another vehicle, selected as fallback, or hidden from
@@ -385,6 +441,13 @@ class Converter:
             "unclaimedEntryPages": self.unclaimed_entry_pages})
 
     def finish(self):
+        self.ecmect_review = None
+        self.omissions = None
+        if self.read_artifacts is not None:
+            _, artifact_dir = self.read_artifacts
+            from toyota_ecmect_pack import live_omissions, load_review
+            self.ecmect_review = load_review(artifact_dir)
+            self.omissions = live_omissions(self.sources, self.english, self.ecmect_review)
         self.convert_entries()
         self.convert_ecus()
         self.convert_functions()
@@ -412,7 +475,7 @@ class Converter:
                 with gzip.GzipFile(filename="", mode="wb", fileobj=file, mtime=0) as dest:
                     for row in records: dest.write(canonical(row) + b"\n")
         report = ["# Toyota conversion report", "", ("**COMPLETE source conversion; physical validation is separate.**" if complete else
-            f"**PARTIAL — {executable:,} executable definitions across {enabled:,} source systems.**"), "",
+            f"**PARTIAL — {enabled:,} executable system{'s' if enabled != 1 else ''} · {executable:,} executable definitions.**"), "",
             f"Source archive SHA-256: `{SOURCE_SHA256}`.", "",
             "| Measure | Count |", "|---|---:|"]
         report += [f"| {key} | {value} |" for key, value in sorted(self.census.items())]
@@ -443,8 +506,10 @@ class Converter:
                     c = system["counts"][kind]
                     return f'{c["converted"]} / {c["unresolved"] if c["unresolved"] is not None else "unknown"}'
                 report.append(f'| {title} | `{system["id"]}` {system["name"].replace("|", " ")} | {count("pids")} | '
-                              f'{count("dtcs")} | {count("tests")} | {count("coding")} | {", ".join(system["reasons"])} |')
-        report += ["", "No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.",
+                              f'{count("dtcs")} | {count("tests")} | {count("coding")} | '
+                              f'{", ".join(system["reasons"]) or ("enabled read-only; physical validation PENDING" if system["enabled"] else "")} |')
+        report += ["", "Exactly one reviewed system is enabled, read-only: clearing, coding, actuators, security access and flashing are excluded.",
+                   "No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.",
                    "Source verification is distinct from completed conversion and from physical vehicle testing.", ""]
         (self.output / "conversion-report.md").write_text("\n".join(report))
         container = self.output / index["container"]
@@ -454,16 +519,28 @@ class Converter:
 
 
 def main():
+    import traceback
+    sys.excepthook = lambda *exc: (traceback.print_exception(*exc), sys.stdout.flush(), sys.stderr.flush())
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
     parser.add_argument("--decoded", type=Path, required=True)
     parser.add_argument("--english", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--read-artifacts", type=Path,
+                        help="Directory with mandatory-ecmect-source-reads.json and "
+                             "mandatory-ecmect-diagnostics.json compiled by toyota_runtime_compile.py. "
+                             "When given, the single reviewed ECMECT system is enabled read-only; "
+                             "everything else stays disabled.")
     args = parser.parse_args()
     sources = load_sources(args.archive, args.decoded, args.manifest)
     texts = json.loads((args.english / "TEXT_EN.GAG.json").read_text())
-    index = Converter(sources, texts, args.output).finish()
+    read_artifacts = None
+    if args.read_artifacts is not None:
+        from toyota_runtime_compile import verify_source_read_files
+        counts = verify_source_read_files(args.read_artifacts)
+        read_artifacts = (counts, args.read_artifacts)
+    index = Converter(sources, texts, args.output, english=args.english, read_artifacts=read_artifacts).finish()
     print(json.dumps(index, indent=2))
 
 

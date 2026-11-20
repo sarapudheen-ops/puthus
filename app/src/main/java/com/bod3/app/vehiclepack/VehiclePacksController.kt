@@ -22,6 +22,8 @@ data class VehiclePacksState(
     val vehicle: PackVehicle? = null, val system: PackSystem? = null,
     val reasons: Map<String, String> = emptyMap(), val complete: Boolean = false,
     val executableDefinitions: Int = 0, val unresolvedPage: Int? = null,
+    /** Real converted coverage of the enabled system, e.g. "1 ECU · 30 PIDs · 1,414 DTCs"; null when disabled. */
+    val coverage: String? = null,
     val unresolvedItems: List<UnresolvedPackItem> = emptyList(),
     val bringUpCandidates: List<BringUpCandidate> = emptyList(),
 )
@@ -91,7 +93,7 @@ class VehiclePacksController(
             require(preview.hierarchyResolved) { "This source path has not been normalized; it cannot select diagnostic configuration" }
             beforeSystemChange()
             selectManually(preview) // Host requires disconnected + no ongoing actuator/coding operation.
-            _state.update { it.copy(view = PackView.SYSTEMS, vehicle = preview, system = null, preview = null,
+            _state.update { it.copy(view = PackView.SYSTEMS, vehicle = preview, system = null, preview = null, coverage = null,
                 error = null, unresolvedItems = emptyList(), unresolvedPage = null) }
             systemChanged()
         } catch (e: Exception) { _state.update { it.copy(error = e.message) } }
@@ -99,11 +101,11 @@ class VehiclePacksController(
     fun openSelected(pathIds: List<String>) {
         _state.update { it.copy(view = PackView.SYSTEMS, error = null) }
         if (_state.value.vehicle?.variantId == selectedId() && _state.value.vehicle != null) return
-        _state.update { it.copy(vehicle = null, system = null, unresolvedItems = emptyList(), unresolvedPage = null) }
+        _state.update { it.copy(vehicle = null, system = null, coverage = null, unresolvedItems = emptyList(), unresolvedPage = null) }
         fetch { client, check ->
             val vehicle = withContext(Dispatchers.IO) { client.selectedVehicle(pathIds, check) }
             require(vehicle.variantId == selectedId()) { "Manual vehicle selection changed while the pack was loading" }
-            _state.update { it.copy(vehicle = vehicle, system = null, unresolvedItems = emptyList(), unresolvedPage = null) }
+            _state.update { it.copy(vehicle = vehicle, system = null, coverage = null, unresolvedItems = emptyList(), unresolvedPage = null) }
             systemChanged()
         }
     }
@@ -111,13 +113,13 @@ class VehiclePacksController(
         if (_state.value.busy) return
         val vehicle = _state.value.vehicle?.takeIf { it.variantId == selectedId() } ?: return
         try { beforeSystemChange() } catch (e: Exception) { _state.update { it.copy(error = e.message) }; return }
-        _state.update { it.copy(system = null, bringUpCandidates = emptyList(), unresolvedItems = emptyList(), unresolvedPage = null) }
+        _state.update { it.copy(system = null, coverage = null, bringUpCandidates = emptyList(), unresolvedItems = emptyList(), unresolvedPage = null) }
         systemChanged()
         fetch { client, check ->
             val system = withContext(Dispatchers.IO) { client.system(vehicle, choice, check) }
             val candidates = withContext(Dispatchers.IO) { client.bringUpCandidates(system, check) }
             require(vehicle.variantId == selectedId()) { "Vehicle selection changed while its system was loading" }
-            _state.update { it.copy(system = system, bringUpCandidates = candidates, view = PackView.FEATURES) }
+            _state.update { it.copy(system = system, bringUpCandidates = candidates, view = PackView.FEATURES, coverage = system.coverage) }
             systemChanged()
         }
     }

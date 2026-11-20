@@ -1,9 +1,11 @@
 # Toyota vehicle packs: on-demand delivery and conversion status
 
-**Work in progress, not completed enhanced Toyota support.** The full-source converter currently
-produces **zero executable recovered definitions**. See [the conversion report](conversion-report.md)
-for exact counts, source IDs, unknown denominators and disabling reasons. Source verification by the
-user is accepted; translating the source's relationships into executable definitions is separate work.
+**PARTIAL — 1 executable system, not completed enhanced Toyota support.** The converter enables
+exactly one reviewed, read-only slice — `SYSLIST_EU.BIN@0009d8f2` ECMECT for the reviewed Kijang
+Innova TGN path: **1 ECU · 30 PIDs · 1,414 DTCs · 1 calibration-ID read**. Every other system remains
+disabled. See [the conversion report](conversion-report.md) for exact counts, source IDs, unknown
+denominators and disabling reasons. Source verification by the user is accepted; physical vehicle
+validation is **PENDING** and is never claimed by conversion.
 
 ## What goes in the APK
 
@@ -51,9 +53,11 @@ choices are stored separately. Resolved features route into the existing live gr
 actuator/coding controllers. Explicit per-ECU identification/fault definitions can now route KWP (K-line
 or CAN) and UDS into the ECU workbench, including a separately confirmed, exact-group clear. Converted
 ECUs must provide an explicit definition set—even when empty—so this path cannot substitute generic
-UDS reads. See [the read-definition schema and safeguards](ecu-read-definitions.md). The real recovered
-DTC/ECU-info actions remain disabled while their mappings are unconverted; freeze-frame and special-function
-mappings are also unresolved. Enabling a screen is not semantic conversion.
+UDS reads. See [the read-definition schema and safeguards](ecu-read-definitions.md). Recovered
+DTC/ECU-info actions remain disabled while their mappings are unconverted, except the single pinned
+ECMECT slice whose identification/fault reads are enabled read-only; freeze-frame and special-function
+mappings are also unresolved. Enabling a screen is not semantic conversion, and the enabled slice still
+requires a successful physical bring-up before live features unlock.
 
 ## Offline native comparison gate
 
@@ -201,16 +205,25 @@ those engine safeguards or provides physical-test evidence. The app never execut
 EXPRESS. Owner-authorized native replay inputs are confined to ignored research evidence for offline
 semantic comparison, not Android assets, runtime downloads or normal imported packs.
 
-## Exact compiled read artifacts (not vehicle-system data)
+## Exact compiled read artifacts and the one enabled read-only system
 
-The mandatory ECMECT source-read sidecars are separate from the range-container executable
-counts. They contain 30 live reads, 1,414 exact fault labels, four ordered source queries and
-one 0904 calibration-ID definition, with `productionExecutableDefinitions: 0`. The compiler
-regenerates twice and verifies a reviewed output pin. `test-artifacts` checks canonical round-trip
-and 48 corrupt/truncated/out-of-scope cases on the actual generated files, also for caches.
-The source review records all input hashes, including the detail table and canonical decoded
-English dictionaries. No raw EXPRESS or vendor library executes on Android. A passing artifact
-test cannot enable a system, grant writes, or turn calibration IDs into unique ECU serial proof.
+The mandatory ECMECT source-read sidecars contain 30 live reads, 1,414 exact fault labels, four
+ordered source queries and one 0904 calibration-ID definition. The compiler regenerates twice and
+verifies a reviewed output pin. `test-artifacts` checks canonical round-trip and 48
+corrupt/truncated/out-of-scope cases on the actual generated files, also for caches. The source
+review records all input hashes, including the detail table and canonical decoded English
+dictionaries.
+
+The converter now consumes these pinned artifacts (`--read-artifacts`) and enables **exactly** the
+one reviewed system: `SYSLIST_EU.BIN@0009d8f2` (function 61, full selector 0x11,
+`EU/Ecu_Data_0081.BIN`), KWP2000 over ISO 14230-4 FAST at 10416 baud, TX `8013F0` / RX `80F013`,
+init frame `8113F08105`, on the app's existing MIC3313 KWP transport policy — native Toyota
+firmware equivalence is **not** required or claimed. The enabled system is read-only: fault
+clearing, coding, actuators, security access and flashing are excluded. The 985 reviewed live
+rows that are not compiled keep exact IDs and first blockers in `mandatory-ecmect-live-omissions.json`.
+Bundle verification re-checks the enabled object byte-for-byte against the artifact allowlist
+and rejects any other enabled system. No raw EXPRESS or vendor library executes on Android.
+Enabling this slice grants no writes, no unique-ECU-serial proof, and no physical validation.
 
 
 ### Source lifecycle regression artifact

@@ -55,7 +55,7 @@ data class FeatureCount(val converted: Int, val unresolved: Int?) {
     val label: String get() = "$converted converted / ${unresolved?.toString() ?: "unknown"} unresolved"
 }
 data class PackSystemChoice(val id: String, val name: String, val enabled: Boolean, val reasons: List<String>,
-                            val counts: Map<String, FeatureCount>, val range: PackRange)
+                            val counts: Map<String, FeatureCount>, val range: PackRange, val readOnly: Boolean = false)
 class PackVehicle internal constructor(
     val id: String, val path: CatalogPack, val sourceSelection: List<String>,
     val hierarchyResolved: Boolean, val reasons: List<String>, val systems: List<PackSystemChoice>,
@@ -69,7 +69,16 @@ class PackSystem internal constructor(
     val id: String, val name: String, val enabled: Boolean, val reasons: List<String>,
     val counts: Map<String, FeatureCount>, val sourceRecords: List<String>, val data: CatalogData,
     val unresolvedPages: List<PackRange>, val bringUpPages: List<PackRange> = emptyList(),
-)
+    val readOnly: Boolean = false,
+) {
+    /** Real converted coverage of the one enabled system, e.g. "1 ECU · 30 PIDs · 1,414 DTCs". */
+    val coverage: String? get() = if (!enabled) null else buildList {
+        add("${data.ecus.size} ECU")
+        add("${data.pids.size} PIDs")
+        counts["dtcs"]?.let { add(String.format(java.util.Locale.US, "%,d DTCs", it.converted)) }
+        counts["ecuInfo"]?.takeIf { it.converted > 0 }?.let { add("${it.converted} ECU info read") }
+    }.joinToString(" · ")
+}
 
 /** Range-by-range loading. Navigation never chooses a vehicle or sends diagnostic requests. */
 class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackObjectStore) {
@@ -135,9 +144,11 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         val systems = (systemRows as? List<*>)?.map { raw ->
             val s = raw as? Map<*, *> ?: error("Invalid vehicle system")
             val enabled = s["enabled"] as? Boolean ?: error("Missing system status")
+            val readOnly = s["readOnly"] == true
+            require(enabled == readOnly) { "Enabled and read-only pack declarations differ" }
             val disabled = reasons(s)
             require(!enabled || (resolved && disabled.isEmpty())) { "Unresolved system cannot be enabled" }
-            PackSystemChoice(s.text("id"), s.text("name"), enabled, disabled, counts(s["counts"]), range(s["object"]))
+            PackSystemChoice(s.text("id"), s.text("name"), enabled, disabled, counts(s["counts"]), range(s["object"]), readOnly)
         } ?: error("Missing vehicle systems")
         require(systems.distinctBy { it.id }.size == systems.size && systems.size <= 1024)
         return PackVehicle(choice.id, path, m.strings("sourceSelection"), resolved, why, systems)
@@ -151,6 +162,8 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         val why = reasons(m)
         val counts = counts(m["counts"])
         require(why == choice.reasons && counts == choice.counts)
+        val readOnly = m["readOnly"] == true
+        require(readOnly == choice.readOnly && (!choice.enabled || readOnly)) { "Enabled pack system must be explicitly read-only" }
         val sources = m.strings("sourceRecords"); require(sources.isNotEmpty())
         val errors = mutableListOf<String>()
         val data = CatalogCodec.readData(m["data"], "vehicle-system.data", errors)
@@ -204,7 +217,7 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         val pages = listOfNotNull(entry?.get("pages") as? List<*>, ecu?.get("pages") as? List<*>, function?.get("livePages") as? List<*>).flatten().map(::range)
         val bringUpPages = (m["bringUpPages"] as? List<*>)?.map(::range).orEmpty()
         require(bringUpPages.size <= 2) { "Excessive bring-up candidate pages" }
-        return PackSystem(choice.id, choice.name, choice.enabled, why, counts, sources, trusted, pages, bringUpPages)
+        return PackSystem(choice.id, choice.name, choice.enabled, why, counts, sources, trusted, pages, bringUpPages, readOnly)
     }
 
     /** All alternatives from this exact source function, including explicitly blocked selectors. */

@@ -1,6 +1,6 @@
 # Toyota conversion report
 
-**PARTIAL — NOT runnable enhanced Toyota coverage.**
+**PARTIAL — 1 executable system · 1,445 executable definitions. Physical vehicle validation is PENDING.**
 
 Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a`.
 
@@ -14,8 +14,10 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 | systems | 287030 |
 | systemsWithExactEntryJoin | 286149 |
 | unresolvedHierarchyChoices (non-vehicle tasks) | 9 |
-| unresolvedSourceRecords | 1055750 |
-| Executable definitions | 0 |
+| unresolvedSourceRecords | 1055720 |
+| ecmectOmittedLiveRows | 985 |
+| Executable definitions | 1445 |
+| Enabled source systems | 1 |
 
 ## Exact per-item accounting
 
@@ -60,7 +62,7 @@ when it completes, not inferred from historical CI.
 
 | Manual vehicle choice | Source system ID / name | PIDs converted / unresolved candidates | DTCs | Tests | Coding | Reasons |
 |---|---|---:|---|---|---|---|
-| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d8f2` ECMECT (Engine and ECT) | 0 / 1015 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
+| Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d8f2` ECMECT (Engine and ECT) | 30 / 985 | 1414 / unknown | 0 / unknown | 0 / unknown | enabled read-only; physical validation PENDING |
 | Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d917` ABS (Anti-lock Braking System)/VSC (Vehicle Stability Control)/TRC (Traction Control System) | 0 / 490 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
 | Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d93c` SRS (Supplemental Inflatable Restraint System) | 0 / 20 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
 | Toyota / Kijang Innova / TGN · 2009.07-2017.07 / MINI VAN · w/ VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@0009d961` HAL (HL AutoLeveling) | 0 / 121 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
@@ -83,6 +85,11 @@ when it completes, not inferred from historical CI.
 | Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00023ae4` IMMO (Immobiliser) | 0 / 68 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
 | Toyota / Kijang Innova / TGN · -2009.07 / MINI VAN · w/o VSC (Vehicle Stability Control) | `SYSLIST_EU.BIN@00023b09` IMMO (Immobiliser) | 0 / 32 | 0 / unknown | 0 / unknown | 0 / unknown | ecu_entry_untranslated |
 
+Exactly one reviewed system is enabled, read-only: `SYSLIST_EU.BIN@0009d8f2` ECMECT (function 61, full
+selector 0x11, `EU/Ecu_Data_0081.BIN`; TX `8013F0` / RX `80F013`, 10416 baud, init frame `8113F08105`)
+with 30 exact live PIDs, 1,414 exact DTC labels, 4 ordered fault queries and 1 exact 0904
+calibration-ID read. Clearing, coding, actuators, security access and flashing are excluded; all other
+systems remain disabled. The 985 remaining reviewed live rows are itemized in `mandatory-ecmect-live-omissions.json`.
 No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.
 Source verification is distinct from completed conversion and from physical vehicle testing.
 

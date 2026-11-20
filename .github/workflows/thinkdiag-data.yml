@@ -127,16 +127,25 @@ jobs:
             --output .local/thinkdiag/sweep --report .local/thinkdiag/report
       - name: Convert source-bound, on-demand vehicle packs in Actions
         run: |
-          python3 tools/thinkdiag/convert_vehicle_packs.py .local/thinkdiag/TOYOTA.zip \
-            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
-            --manifest .local/thinkdiag/report/decoded-manifest.json \
-            --output .local/thinkdiag/vehicle-packs
+          set -uo pipefail
+          LOG=.local/thinkdiag/report/convert-step.log
+          exec > >(tee "$LOG") 2>&1
+          set -x
+          echo "[ecmect] compile pinned read artifacts"
           python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/vehicle-packs
+          echo "[ecmect] convert vehicle packs (reads artifacts)"
+          python3 tools/thinkdiag/convert_vehicle_packs.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --read-artifacts .local/thinkdiag/vehicle-packs \
+            --output .local/thinkdiag/vehicle-packs
+          echo "[ecmect] lifecycle contracts"
           python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/vehicle-packs
+          echo "[ecmect] verify artifacts"
           python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/thinkdiag/vehicle-packs
           python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/thinkdiag/vehicle-packs
           python3 tools/thinkdiag/toyota_runtime_compile.py test-artifacts .local/thinkdiag/vehicle-packs > .local/thinkdiag/vehicle-packs/compiled-source-read-validation.json
@@ -146,12 +155,21 @@ jobs:
             -f status=completed -f conclusion=success \
             -f 'output[title]=Typed source artifacts and computed checks; not production definitions' \
             -F 'output[summary]=@.local/thinkdiag/vehicle-packs/compiled-source-read-validation.json'
-          python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/thinkdiag/vehicle-packs --require-executable
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota vehicle conversion accounting' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion=success \
             -f 'output[title]=Partial conversion: unresolved items remain disabled' \
             -F 'output[summary]=@.local/thinkdiag/vehicle-packs/conversion-report.md'
+      - name: Publish conversion step log (captures the exact failing command)
+        if: always() && hashFiles('.local/thinkdiag/report/convert-step.log') != ''
+        run: |
+          tail -60 .local/thinkdiag/report/convert-step.log > .local/thinkdiag/report/convert-step-tail.txt || true
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota vehicle conversion step log' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=neutral \
+            -f 'output[title]=Conversion step output (last lines)' \
+            -F 'output[summary]=@.local/thinkdiag/report/convert-step-tail.txt' || true
       - name: Upload on-demand packs and exact per-item conversion ledgers
         uses: actions/upload-artifact@v7
         with:

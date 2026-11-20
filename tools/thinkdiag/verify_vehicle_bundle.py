@@ -136,7 +136,7 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
         require(digest.hexdigest() == index["containerSha256"], "Container checksum mismatch")
         seen = {}; systems = {}; converted = Counter(dict.fromkeys(KINDS, 0)); incomplete = False
         manual_leaves = set(); joined_leaves = set(); normalized_leaves = set(); unresolved_choices = 0
-        descriptors = {}; definitions = {}
+        descriptors = {}; definitions = {}; enabled_objects = {}; runnable_candidates = []
 
         @lru_cache(maxsize=2048)
         def source_document(offset, size, json_size, digest):
@@ -173,6 +173,8 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
                 actual = validate_system(value)
                 require(isinstance(value.get("id"), str) and value["id"] not in systems, "Duplicate source system identity")
                 systems[value["id"]] = value["enabled"]
+                if value["enabled"]:
+                    enabled_objects[value["id"]] = value
                 definitions[object_key] = system_brief(value)
                 converted.update(actual)
                 incomplete = incomplete or not value["enabled"] or any(count["unresolved"] != 0 for count in value["counts"].values())
@@ -219,10 +221,16 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
                 require(isinstance(candidates, list) and 1 <= len(candidates) <= 128, "Invalid bring-up candidate page")
                 for candidate in candidates:
                     support = candidate.get("supportRecords", [])
-                    require(candidate.get("runtime") is None and bool(candidate.get("blockers")) and
-                            bool(candidate.get("sourceRecords")) and bool(support) and len(set(support)) == len(support) and
+                    require(bool(candidate.get("sourceRecords")) and bool(support) and len(set(support)) == len(support) and
                             candidate.get("supportCount") == len(support),
-                            "Untranslated bring-up candidates cannot become executable or overstate source support")
+                            "Bring-up candidates cannot overstate source support")
+                    if candidate.get("runtime") is None:
+                        require(bool(candidate.get("blockers")),
+                                "Untranslated bring-up candidates cannot become executable")
+                    else:
+                        # Only the pinned ECMECT slice may carry a runnable candidate;
+                        # exact equality with candidate_for() is enforced after traversal.
+                        runnable_candidates.append(candidate)
             seen[object_key] = ref
             objects += 1
             require(objects <= 1_000_000, "Too many vehicle-pack objects")
@@ -243,6 +251,32 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
         complete = (executable > 0 and bool(systems) and not incomplete and not ledger and
                     unresolved_choices == 0 and len(joined_leaves) == len(manual_leaves) == len(normalized_leaves) and bool(manual_leaves))
         require(summary["complete"] is complete, "Summary complete differs from computed source/feature coverage")
+        # A pack carrying the staged mandatory-ECMECT compiler artifacts is the production
+        # single-slice pack: the enabled set must be exactly that one pinned, read-only
+        # system, re-verified against the artifact allowlist. Packs without the staged
+        # artifacts (synthetic test fixtures) keep the generic per-system validation.
+        artifact = directory / "mandatory-ecmect-source-reads.json"
+        if artifact.is_file():
+            from toyota_ecmect_pack import ARTIFACTS, candidate_for, load_review, verify_enabled
+            require(all((directory / name).is_file() for name in ARTIFACTS) and
+                    (directory / "mandatory-ecmect-live-omissions.json").is_file(),
+                    "Enabled ECMECT pack is missing staged compiler artifacts or the omissions ledger")
+            review = load_review(directory)
+            require(sorted(enabled_objects) == [review["systemId"]],
+                    "Enabled systems differ from the single pinned read-only ECMECT slice")
+            verify_enabled(enabled_objects[review["systemId"]], review)
+            require(runnable_candidates == [candidate_for(enabled_objects[review["systemId"]], review)],
+                    "Runnable bring-up candidate differs from the pinned ECMECT slice")
+            omissions = json.loads((directory / "mandatory-ecmect-live-omissions.json").read_bytes())
+            require(isinstance(omissions, dict) and omissions.get("kind") == "ecmect-live-omissions" and
+                    omissions.get("systemId") == review["systemId"] and
+                    omissions.get("omittedLiveRows") == review["uncompiledLiveRows"] ==
+                        summary.get("ecmectOmittedLiveRows") and
+                    isinstance(omissions.get("items"), list) and
+                    len(omissions["items"]) == omissions["omittedLiveRows"],
+                    "Omissions ledger differs from the pinned review/summary")
+        else:
+            require(not runnable_candidates, "Runnable bring-up candidate without the pinned ECMECT artifacts")
     if apk:
         with zipfile.ZipFile(apk) as archive:
             names = archive.namelist()
