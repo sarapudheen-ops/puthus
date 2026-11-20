@@ -36,7 +36,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       # Push runs cannot take inputs, so fall back to the default list.
-      BRANDS: ${{ inputs.brands || 'VW,AUDI,SKODA,SEAT,OPEL,SMART,SPRINTER,PORSCHE,BENZ' }}
+      BRANDS: ${{ inputs.brands || 'TOYOTA' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -148,6 +148,21 @@ jobs:
               -f status=completed -f conclusion=success \
               -f 'output[title]=Do the recovered tables join?' \
               -F 'output[summary]=@.local/recon/join-probe.md' || echo "join publish skipped"
+          fi
+
+      - name: Trace the Toyota COMM request path
+        if: contains(env.BRANDS, 'TOYOTA')
+        run: |
+          set -euo pipefail
+          python3 tools/thinkdiag/trace_comm.py .local/brands/TOYOTA.zip \
+            --output .local/recon/comm-trace.md || echo "comm trace failed"
+          if [ -f .local/recon/comm-trace.md ]; then
+            head -c 55000 .local/recon/comm-trace.md >> "$GITHUB_STEP_SUMMARY"
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name='COMM request path' -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=success \
+              -f 'output[title]=How COMM builds an ECU request' \
+              -F 'output[summary]=@.local/recon/comm-trace.md' || echo "trace publish skipped"
           fi
 
       - name: Audit completeness per brand
