@@ -55,6 +55,28 @@ UDS reads. See [the read-definition schema and safeguards](ecu-read-definitions.
 DTC/ECU-info actions remain disabled while their mappings are unconverted; freeze-frame and special-function
 mappings are also unresolved. Enabling a screen is not semantic conversion.
 
+## Offline native comparison gate
+
+Both source inspection and cache-miss pack preparation now run `toyota_native_oracle.py` against the
+original owner-verified archive and the **complete hash-checked decoded manifest**. Four individually
+pinned supplied libraries execute only inside bounded AArch64 emulation. All 1,308 entry records,
+1,186 regional fault blocks / 1,184 clear blocks / 180,316 code mappings, all 8,775 regional frame
+records and 34,671 default/declared-fault template lookups, 70,144 DTC state/mask and 2,112 fault-record
+vectors, all 27,035 exact TCODE pairs, 3,584 source numeric-display vectors, 196,608 exact-key byte-merge
+calls and 65,792 numeric vectors for two CALC forms are compared. All 179,770 distinct per-function
+mapping keys have exact source labels; repeated printed codes are never suffix-matched. English pairs
+are re-extracted from the pinned archive, with original GAG index/text offset provenance. The reviewed
+counts/library/result hashes live in `tools/thinkdiag/schema/native-oracle-v1.json`.
+Cached reports must match that reference before the index is staged. The report is an Actions artifact,
+not an APK object or a runtime trust grant.
+
+The Kotlin fault decoder has the same state/assembly result digests and explicit exact-key labels,
+with strict atomic rejection of malformed replies and no global-description fallback. Physical KWP
+`04` clearing and `12`/`13` reads retain their exact dialect and confirmation scope. These runtime/port
+changes do **not** finish transport/init, general expressions, source query conditions/workflows,
+ECU-info, coding, actuators or special-function conversion. The executable vehicle count remains zero.
+No native-libc/file-decryption/adapter/physical proof is inferred from declared memory/file-array shims.
+
 ## Authenticated bounded objects, not a full download
 
 `toyota-<container SHA-256>.bin` is a data-only range bundle. Every hierarchy/system object is independent
@@ -129,6 +151,11 @@ python3 tools/thinkdiag/extract_english.py .local/toyota-conversion/TOYOTA.zip \
 python3 tools/thinkdiag/convert_vehicle_packs.py .local/toyota-conversion/TOYOTA.zip \
   --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
   --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_native_oracle.py run .local/toyota-conversion/TOYOTA.zip \
+  --decoded .local/toyota-conversion/decoded \
+  --manifest .local/toyota-conversion/report/decoded-manifest.json \
+  --output .local/toyota-vehicle-packs/native-oracle.json
+python3 tools/thinkdiag/toyota_native_oracle.py verify .local/toyota-vehicle-packs/native-oracle.json
 python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs
 mkdir -p .local/vehicle-pack-assets/toyota-vehicle-packs
 cp .local/toyota-vehicle-packs/index.json .local/vehicle-pack-assets/toyota-vehicle-packs/index.json

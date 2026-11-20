@@ -90,7 +90,8 @@ fun EcuDetailScreen(
                         if (result is DtcReadResult.Read) {
                             result.records.forEach { record ->
                                 HorizontalDivider()
-                                DtcRow(record.code, descriptions, detail = record.statusText, onEditDescription = { editing = it })
+                                DtcRow(record.code, descriptions, detail = record.statusText, sourceDescription = record.sourceDescription,
+                                    exactSource = record.statusMeaning == com.bod3.app.obd.uds.DtcStatusMeaning.TOYOTA, onEditDescription = { editing = it })
                                 if (EcuWorkbench.canReadRecords(ecu)) {
                                     when (val records = detail.records[record.code]) {
                                         null -> TextButton(onClick = { onReadRecords(record.code) }, enabled = connected && !busy) {

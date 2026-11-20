@@ -30,7 +30,7 @@ data class DiagnosticRead(
         if (id.isBlank() || name.isBlank()) add("id/name: must not be empty")
         val r = requestBytes; val p = prefixBytes
         val allowed = if (protocol == EcuProtocol.KWP) KwpServices.readAllowed(r) else ReadOnlyPolicy.isAllowed(r)
-        if (r.isEmpty() || !allowed || r.first() !in setOf(0x1A, 0x21, 0x22, 0x18, 0x19)) add("request: not an identification/fault read for this dialect")
+        if (r.isEmpty() || !allowed || r.first() !in setOf(0x1A, 0x21, 0x22, 0x12, 0x13, 0x18, 0x19)) add("request: not an identification/fault read for this dialect")
         if (p.isEmpty() || r.isEmpty() || p.first() != r.first() + 0x40) add("responsePrefix: needs the exact positive service")
         val echo = when (r.firstOrNull()) { 0x1A, 0x21 -> 1; 0x22 -> 2; 0x19 -> if (protocol == EcuProtocol.UDS) 1 else 0; else -> 0 }
         if (r.size <= echo || p.size <= echo || p.drop(1).take(echo) != r.drop(1).take(echo)) add("responsePrefix: identifier/subfunction echo does not match request")
@@ -64,15 +64,16 @@ data class FaultLayout(
     /** Big-endian record count at the start of the selected data window, or 0 for no count. */
     val countBytes: Int = 0,
     val skipZeroCode: Boolean = false,
-) {
-    fun problems(): List<String> = buildList {
+) : FaultRecordLayout {
+    override fun problems(): List<String> = buildList {
         if (recordBytes !in 2..32 || codeBytes !in 2..3 || codeOffset < 0 || codeOffset.toLong() + codeBytes > recordBytes) add("code: invalid record width/position")
         if (statusOffset != null && (statusOffset !in 0 until recordBytes || statusOffset in codeOffset until (codeOffset + codeBytes))) add("statusOffset: outside record or overlaps code")
         if (countBytes !in 0..2) add("countBytes: must be 0, 1 or 2")
         if (statusMeaning == DtcStatusMeaning.UDS && statusOffset == null) add("statusMeaning: UDS bit meanings need a status byte")
+        if (statusMeaning == DtcStatusMeaning.TOYOTA) add("statusMeaning: Toyota states need the explicit Toyota assembly/query layout")
     }
 
-    fun decode(data: List<Int>, source: String): DtcReadResult {
+    override fun decode(data: List<Int>, source: String): DtcReadResult {
         if (problems().isNotEmpty() || data.size < countBytes || data.any { it !in 0..255 }) return DtcReadResult.Failed("Invalid fault-record layout or short count")
         val body = data.drop(countBytes)
         if (body.size % recordBytes != 0) return DtcReadResult.Failed("Truncated fault record; no partial results accepted")
@@ -94,14 +95,18 @@ data class DiagnosticClear(val request: String, val responsePrefix: String, val 
     val prefixBytes: List<Int> get() = Hex.parse(responsePrefix).orEmpty()
     fun problems(protocol: EcuProtocol): List<String> = buildList {
         val r = requestBytes; val p = prefixBytes
-        if (protocol == EcuProtocol.OBD || r.size != (if (protocol == EcuProtocol.KWP) 3 else 4) || r.firstOrNull() != 0x14) add("request: needs an exact dialect-specific 14 group")
-        // Permit 54 or a documented group echo, not an unrelated positive response.
-        if (p != listOf(0x54) && p != listOf(0x54) + r.drop(1)) add("responsePrefix: must be 54 or 54 with the exact group echo")
+        val service04 = protocol == EcuProtocol.KWP && r == listOf(0x04)
+        if (!service04 && (protocol == EcuProtocol.OBD || r.size != (if (protocol == EcuProtocol.KWP) 3 else 4) || r.firstOrNull() != 0x14))
+            add("request: needs an exact dialect-specific 14 group or the documented KWP 04 variant")
+        // Permit 44 only for physical KWP 04; never reinterpret that command as 14 or broadcast it.
+        if (service04) {
+            if (p != listOf(0x44)) add("responsePrefix: KWP 04 needs exactly 44")
+        } else if (p != listOf(0x54) && p != listOf(0x54) + r.drop(1)) add("responsePrefix: must be 54 or 54 with the exact group echo")
         if (sourceRecords.any { it.isBlank() } || sourceRecords.distinct().size != sourceRecords.size) add("sourceRecords: blank or duplicate ID")
     }
 }
 
-data class FaultRead(val read: DiagnosticRead, val layout: FaultLayout, val clear: DiagnosticClear? = null)
+data class FaultRead(val read: DiagnosticRead, val layout: FaultRecordLayout, val clear: DiagnosticClear? = null)
 
 /** An empty explicit definition set deliberately suppresses legacy generic identification/DTC requests. */
 data class EcuReadDefinitions(val identification: List<IdentificationRead> = emptyList(), val faults: FaultRead? = null) {
@@ -116,13 +121,14 @@ data class EcuReadDefinitions(val identification: List<IdentificationRead> = emp
         }
         faults?.let { item ->
             addAll(item.read.problems(protocol).map { "faults.read.$it" })
-            if (item.read.requestBytes.firstOrNull() !in setOf(0x18, 0x19)) add("faults.read: needs a documented 18/19 variant")
+            val faultServices = if (protocol == EcuProtocol.KWP) setOf(0x12, 0x13, 0x18, 0x19) else setOf(0x18, 0x19)
+            if (item.read.requestBytes.firstOrNull() !in faultServices) add("faults.read: needs a documented dialect-specific fault-read variant")
             addAll(item.layout.problems().map { "faults.layout.$it" })
             addAll(item.clear?.problems(protocol).orEmpty().map { "faults.clear.$it" })
         }
     }
     val sourceRecords: List<String> get() = identification.flatMap { it.read.sourceRecords } +
-        faults?.let { it.read.sourceRecords + it.clear?.sourceRecords.orEmpty() }.orEmpty()
+        faults?.let { it.read.sourceRecords + it.layout.sourceRecords + it.clear?.sourceRecords.orEmpty() }.orEmpty()
 }
 
 /** Strict additive JSON schema. Imports never get write grants or trusted flags from these fields. */
@@ -130,12 +136,17 @@ object EcuReadDefinitionsCodec {
     fun encode(d: EcuReadDefinitions): Map<String, Any?> = linkedMapOf(
         "identification" to d.identification.map { linkedMapOf("read" to readMap(it.read), "encoding" to it.encoding.name) },
         "faults" to d.faults?.let { f -> linkedMapOf(
-            "read" to readMap(f.read), "layout" to linkedMapOf("recordBytes" to f.layout.recordBytes, "codeOffset" to f.layout.codeOffset,
-                "codeBytes" to f.layout.codeBytes, "statusOffset" to f.layout.statusOffset, "statusMeaning" to f.layout.statusMeaning.name,
-                "countBytes" to f.layout.countBytes, "skipZeroCode" to f.layout.skipZeroCode).filterValues { it != null },
+            "read" to readMap(f.read), "layout" to layoutMap(f.layout),
             "clear" to f.clear?.let { linkedMapOf("request" to it.request, "responsePrefix" to it.responsePrefix, "sourceRecords" to it.sourceRecords) },
         ).filterValues { it != null } },
     ).filterValues { it != null }
+
+    private fun layoutMap(layout: FaultRecordLayout): Map<String, Any?> = when (layout) {
+        is ToyotaFaultLayout -> layout.map()
+        is FaultLayout -> linkedMapOf("recordBytes" to layout.recordBytes, "codeOffset" to layout.codeOffset,
+            "codeBytes" to layout.codeBytes, "statusOffset" to layout.statusOffset, "statusMeaning" to layout.statusMeaning.name,
+            "countBytes" to layout.countBytes, "skipZeroCode" to layout.skipZeroCode).filterValues { it != null }
+    }
 
     private fun readMap(r: DiagnosticRead) = linkedMapOf("id" to r.id, "name" to r.name, "request" to r.request,
         "responsePrefix" to r.responsePrefix, "dataOffset" to r.dataOffset, "minBytes" to r.minBytes, "maxBytes" to r.maxBytes, "sourceRecords" to r.sourceRecords)
@@ -170,13 +181,16 @@ object EcuReadDefinitionsCodec {
             val r = read(v["read"], "$p.read")
             val layout = f.obj(v, "layout", p)?.let { l ->
                 val lp = "$p.layout"
-                unknown(l, setOf("recordBytes", "codeOffset", "codeBytes", "statusOffset", "statusMeaning", "countBytes", "skipZeroCode"), lp)
-                val width = f.int(l, "recordBytes", lp); val offset = f.int(l, "codeOffset", lp); val size = f.int(l, "codeBytes", lp)
-                val status = f.int(l, "statusOffset", lp, false)
-                val meaning = f.string(l, "statusMeaning", lp)?.let { text -> DtcStatusMeaning.entries.firstOrNull { it.name == text } }
-                if (meaning == null) errors += "$lp.statusMeaning: must be RAW or UDS"
-                val count = f.int(l, "countBytes", lp, false) ?: 0; val skip = f.boolean(l, "skipZeroCode", lp) ?: false
-                if (width == null || offset == null || size == null || meaning == null) null else FaultLayout(width, offset, size, status, meaning, count, skip)
+                if (l["kind"] == "TOYOTA_P3P4") ToyotaFaultLayout.decode(l, lp, errors)
+                else {
+                    unknown(l, setOf("recordBytes", "codeOffset", "codeBytes", "statusOffset", "statusMeaning", "countBytes", "skipZeroCode"), lp)
+                    val width = f.int(l, "recordBytes", lp); val offset = f.int(l, "codeOffset", lp); val size = f.int(l, "codeBytes", lp)
+                    val status = f.int(l, "statusOffset", lp, false)
+                    val meaning = f.string(l, "statusMeaning", lp)?.let { text -> DtcStatusMeaning.entries.firstOrNull { it.name == text && it != DtcStatusMeaning.TOYOTA } }
+                    if (meaning == null) errors += "$lp.statusMeaning: must be RAW or UDS"
+                    val count = f.int(l, "countBytes", lp, false) ?: 0; val skip = f.boolean(l, "skipZeroCode", lp) ?: false
+                    if (width == null || offset == null || size == null || meaning == null) null else FaultLayout(width, offset, size, status, meaning, count, skip)
+                }
             }
             val clear = f.obj(v, "clear", p, false)?.let { c ->
                 val cp = "$p.clear"; unknown(c, setOf("request", "responsePrefix", "sourceRecords"), cp)

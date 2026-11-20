@@ -72,6 +72,20 @@ class GgpTest(unittest.TestCase):
                 self.assertEqual(2, library.count)
                 self.assertEqual(expected, dict(library.records()))
 
+    def test_indexed_records_retain_actual_gag_index_and_encoded_text_spans(self):
+        expected = {b'\x12\x34\x56\x78': b'P0420\0Exact text\0', b'\x00\x00\x00\x01': b'12\0Other'}
+        raw = gag_fixture(expected)
+        library = GagFile(raw, FORMAT_XOR)
+        rows = list(library.indexed_records())
+        self.assertEqual(list(expected.items()), [(r.identity, r.data) for r in rows])
+        for i, row in enumerate(rows):
+            self.assertEqual(library.start + 5 + i * 8, row.index_offset)
+            self.assertEqual(len(row.data) + 2, row.encoded_bytes)
+            self.assertGreaterEqual(row.text_offset, library.index_end)
+            self.assertEqual(row.data, library.text(raw[row.text_offset + 2:row.text_offset + row.encoded_bytes]))
+        self.assertEqual(rows[0].text_offset + rows[0].encoded_bytes, rows[1].text_offset)
+        self.assertEqual(len(raw), rows[-1].text_offset + rows[-1].encoded_bytes)
+
     def test_wrong_revision_invalid_substitution_and_truncation_fail(self):
         for raw in (b"", gag_fixture()[:30], gag_fixture()[:269], b"BAD" + gag_fixture()[3:]):
             with self.subTest(size=len(raw)), self.assertRaises(ValueError):

@@ -18,6 +18,15 @@ class GgpMember:
     data: bytes
 
 
+@dataclass(frozen=True)
+class GagRecord:
+    identity: bytes
+    index_offset: int
+    text_offset: int
+    encoded_bytes: int
+    data: bytes
+
+
 def unpack_ggp(data: bytes, key: bytes) -> list[GgpMember]:
     if len(data) < 13 or data[:3] != b"GGP":
         raise ValueError("Not a GGP container")
@@ -102,6 +111,15 @@ class GagFile:
         return data.translate(self.table)
 
     def records(self):
+        for row in self.indexed_records():
+            yield row.identity, row.data
+
+    def indexed_records(self):
+        """Offsets are relative to this GAG member, never to the decoded JSON.
+
+        Keep both the encrypted index row and encoded text span, since their
+        physical order need not match the key or iteration order.
+        """
         seen = set()
         for i in range(self.count):
             pos = self.start + 5 + i * (self.id_size + 4)
@@ -116,4 +134,4 @@ class GagFile:
             length = int.from_bytes(self.metadata(self.data[offset:offset + 2]), "big")
             if length < 2 or offset + length > len(self.data):
                 raise ValueError("LAH text length is out of bounds")
-            yield identity, self.text(self.data[offset + 2:offset + length])
+            yield GagRecord(identity, pos, offset, length, self.text(self.data[offset + 2:offset + length]))

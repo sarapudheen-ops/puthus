@@ -1,0 +1,105 @@
+"""Native oracle evidence gates and declared boundaries, using synthetic bytes only."""
+import copy
+import hashlib
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest import mock
+import zipfile
+
+from native_replay import NativeSandbox, ReplayError
+from test_native_replay import elf_fixture
+from toyota_native_oracle import (MemoryFiles, REFERENCE, load_libraries, verify_reference)
+from vehicle_bundle import SOURCE_SHA256, canonical
+
+
+class NativeOracleTest(unittest.TestCase):
+    def test_reviewed_reference_pins_all_four_actual_executed_libraries_and_domains(self):
+        reference = json.loads(REFERENCE.read_text())
+        self.assertEqual(SOURCE_SHA256, reference['sourceSha256'])
+        self.assertIs(reference['adapterAccess'], False)
+        self.assertIs(reference['physicalValidation'], False)
+        self.assertIs(reference['networkAccess'], False)
+        self.assertEqual(1308, reference['entryComparison']['comparedRecords'])
+        self.assertEqual(180316, sum(r['faultCodeMappings'] for r in reference['functionReaderComparison']['regions'].values()))
+        self.assertEqual(70144, reference['faultDecoderComparison']['stateVectors'])
+        self.assertEqual(2112, reference['faultDecoderComparison']['recordVectors'])
+        self.assertEqual(65792, sum(v['vectors'] for v in reference['calcComparison']['vectors']))
+        self.assertEqual(8775, sum(r['standaloneFrames'] for r in reference['regionalTemplateComparison']['regions'].values()))
+        self.assertEqual(34671, sum(r['templateLookups'] for r in reference['regionalTemplateComparison']['regions'].values()))
+        self.assertEqual(27035, reference['faultLabelComparison']['exactLabelVectors'])
+        self.assertEqual(3584, reference['faultLabelComparison']['fallbackVectors'])
+        self.assertEqual(196608, reference['faultLabelComparison']['mergeVectors'])
+        self.assertEqual(0, sum(r['missingExactLabels'] for r in reference['faultLabelComparison']['scopedLabels'].values()))
+        for key in ('entryComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'faultLabelComparison', 'calcComparison'):
+            self.assertRegex(reference[key]['librarySha256'], r'^[0-9a-f]{64}$')
+            self.assertIs(reference[key]['nativeInstructionsExecuted'], True)
+        kotlin = (Path(__file__).resolve().parents[2] / 'app/src/test/java/com/bod3/app/diagnostics/ToyotaFaultScenarios.kt').read_text()
+        for key in ('stateResultsSha256', 'recordResultsSha256'):
+            self.assertIn(reference['faultDecoderComparison'][key], kotlin)
+        for key in ('fallbackResultsSha256', 'mergeResultsSha256'):
+            self.assertIn(reference['faultLabelComparison'][key], kotlin)
+
+    def test_missing_partial_retyped_and_changed_reports_fail_closed(self):
+        expected = {'complete': True, 'adapter': False, 'count': 3, 'hash': 'abc', 'cases': [{'n': 2}]}
+        verify_reference({**expected, 'extra_detail': []}, expected)
+        for key, value in (('complete', 1), ('adapter', 0), ('adapter', True), ('count', 3.0),
+                ('count', 2), ('hash', 'def'), ('cases', []), ('cases', [{'n': 2.0}]), ('cases', [{'n': True}])):
+            actual = copy.deepcopy(expected); actual[key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError): verify_reference(actual, expected)
+        for key in expected:
+            actual = dict(expected); del actual[key]
+            with self.assertRaises(ValueError): verify_reference(actual, expected)
+        with self.assertRaises(ValueError): verify_reference({})
+
+    def test_frame_detail_hash_and_count_cannot_disagree_with_claimed_evidence(self):
+        frames = [{'synthetic': 'frame'}]
+        ref = {'frameComparison': {'frameResultsSha256': hashlib.sha256(canonical(frames)).hexdigest(), 'comparedTemplates': 1}}
+        actual = copy.deepcopy(ref); actual['frameComparison']['templates'] = frames
+        verify_reference(actual, ref)
+        actual['frameComparison']['templates'] = []
+        with self.assertRaisesRegex(ValueError, 'details'): verify_reference(actual, ref)
+        del actual['frameComparison']['templates']
+        with self.assertRaisesRegex(ValueError, 'details'): verify_reference(actual, ref)
+
+    def test_native_extraction_is_archive_pinned_complete_unique_and_individually_hashed(self):
+        names = ('libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_DTCF.so', 'libTOYOTA_CALC.so')
+        fields = ('entryComparison', 'frameComparison', 'faultDecoderComparison', 'calcComparison')
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root); archive = root / 'synthetic.zip'; ref = root / 'reference.json'
+            reference = {field: {'librarySha256': hashlib.sha256(name.encode()).hexdigest()} for name, field in zip(names, fields)}
+            ref.write_text(json.dumps(reference))
+            def create(items):
+                with zipfile.ZipFile(archive, 'w') as target:
+                    for name, data in items: target.writestr(name, data)
+            create([(name, name.encode()) for name in names])
+            with mock.patch('toyota_native_oracle.verify_archive', side_effect=ValueError('source pin')):
+                with self.assertRaisesRegex(ValueError, 'source pin'): load_libraries(archive)
+            with mock.patch('toyota_native_oracle.verify_archive'), mock.patch('toyota_native_oracle.REFERENCE', ref):
+                self.assertEqual({name: name.encode() for name in names}, load_libraries(archive))
+                create([(name, name.encode()) for name in names[1:]])
+                with self.assertRaisesRegex(ValueError, 'Missing'): load_libraries(archive)
+                create([(name, name.encode()) for name in names] + [('other/' + names[0], b'duplicate')])
+                with self.assertRaisesRegex(ValueError, 'Ambiguous'): load_libraries(archive)
+                create([(name, name.encode() + b'changed') for name in names])
+                with self.assertRaisesRegex(ValueError, 'identity'): load_libraries(archive)
+
+    def test_memory_file_boundary_never_sees_a_host_path_or_pads_a_short_read(self):
+        native = NativeSandbox({'synthetic.so': elf_fixture()})
+        files = MemoryFiles(native); handle = files.register(b'fixture bytes')
+        out = native.allocate(64)
+        self.assertEqual(3, files.read(out, 2, 3, handle))
+        self.assertEqual(b'fixtur', native.read(out, 6))
+        self.assertEqual(0, files.seek(handle, 0xffffffff, 1))
+        self.assertEqual(2, files.read(out, 1, 2, handle))
+        self.assertEqual(b're', native.read(out, 2))
+        for offset, whence in ((-20, 0), (1, 2)):
+            with self.assertRaises(ReplayError): files.seek(handle, offset, whence)
+        self.assertEqual(0, files.seek(handle, 0, 2))
+        with self.assertRaises(ReplayError): files.read(out, 1, 1, handle)
+        self.assertEqual(2, files.reads)
+        with self.assertRaises(KeyError): files.read(out, 1, 1, 0)
+
+
+if __name__ == '__main__': unittest.main()

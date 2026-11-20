@@ -21,6 +21,10 @@ object KwpServices {
         0x22 -> request.size >= 3 && request.size % 2 == 1
         // Toyota's support snapshot (FDATA SendCmdAndGetPid), not arbitrary A8 variants.
         0xA8 -> request == listOf(0xA8, 0x01)
+        // Toyota native templates use these KWP reads, not UDS 18/19 substitutions.
+        // 12 FF 01 00/FF is the source's four-byte status/group variant; 13 has one mask byte.
+        0x12 -> request.size == 4 && request[1] == 0xFF && request[2] == 0x01 && request[3] in setOf(0x00, 0xFF)
+        0x13 -> request.size == 2
         0x18 -> request.size == 4 // status mask, two-byte DTC group
         0x19 -> request.size in 1..4 // documented KWP read-DTC variant, NOT UDS report sub-functions
         0x3E -> request == listOf(0x3E) || request == listOf(0x3E, 0x00)

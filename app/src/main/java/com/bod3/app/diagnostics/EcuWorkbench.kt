@@ -127,7 +127,10 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
             val definition = clearDefinition(ecu) ?: error("This ECU has no documented clear definition")
             require(ecu.problems().isEmpty()) { "Invalid ECU/clear definition" }
             val group = definition.requestBytes.drop(1).fold(0) { a, b -> a * 256 + b }
-            return if (ecu.protocol == EcuProtocol.KWP) ClearConfirmation.kwpClear(ecu.target, group) else ClearConfirmation.udsClear(ecu.target, group)
+            return if (ecu.protocol == EcuProtocol.KWP) {
+                if (definition.requestBytes == listOf(0x04)) ClearConfirmation.kwpClear04(ecu.target)
+                else ClearConfirmation.kwpClear(ecu.target, group)
+            } else ClearConfirmation.udsClear(ecu.target, group)
         }
     }
 }

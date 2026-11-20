@@ -37,6 +37,12 @@ class ClearConfirmation private constructor(
         fun obdClear(clock: () -> Long = System::currentTimeMillis) =
             ClearConfirmation(listOf(0x04), EcuTarget.Broadcast, clock(), clock)
 
+        /** Toyota's documented KWP 04 variant, NOT the broadcast emissions clear above. */
+        fun kwpClear04(target: EcuTarget.Physical, clock: () -> Long = System::currentTimeMillis): ClearConfirmation {
+            require(target.link?.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000)
+            return ClearConfirmation(listOf(0x04), target, clock(), clock)
+        }
+
         /** KWP 14 uses a two-byte group, unlike UDS. Bound to this physical ECU and exact group. */
         fun kwpClear(target: EcuTarget.Physical, group: Int = 0xFFFF, clock: () -> Long = System::currentTimeMillis): ClearConfirmation {
             require(target.link?.dialect == com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000)

@@ -337,10 +337,11 @@ write, a value that changed since the backup, confirmation reuse/expiry, and the
 
 ## Toyota/Lexus recovered reference data
 
-The `assets-v1/TOYOTA.zip` release database has been decoded **as data only**, without executing vendor
-libraries. Recovery produced 1,410 YZJM binary payloads and eight English text libraries (198,091 indexed
-records; 193,589 valid UTF-8). Recovered datasets remain outside Git and are available in the
-**Inspect Toyota release data** workflow's `toyota-recovered-data` artifact.
+The owner-verified `assets-v1/TOYOTA.zip` specification has been decoded into 1,410 YZJM binary payloads
+and eight English text libraries (198,091 indexed records; 193,589 valid UTF-8). Owner-authorized **offline**
+AArch64 emulation now executes supplied FILE/COMM/DTCF/CALC functions to check the independent ports.
+No adapter/ECU is connected, host native loading is not used, and no vendor code/scripts enter the APK.
+Recovered datasets remain outside Git in Actions artifacts.
 
 The app bundles **11,989 unambiguous passive DTC meanings** from that data, with source attribution.
 They apply only to a known Toyota/Lexus make: the loaded profile takes priority, then its explicitly saved
@@ -364,7 +365,13 @@ their original hierarchy IDs; missing engine/fuel/transmission fields are not in
 establish AN40/diesel applicability. No addresses, formulas or write mappings are guessed. Full-archive
 owner verification and sandbox inspection/decoding/execution permission are recorded in
 [`toyota-verified.json`](tools/thinkdiag/verification/toyota-verified.json); that is not a write grant or
-physical-ECU verification.
+physical-ECU verification. The new independent Python/Kotlin native-fault decoder agrees with supplied
+DTCF execution on 70,144 state/mask, 2,112 assembly, 3,584 source numeric-display and 196,608 exact-key
+byte-merge vectors. FILE comparisons cover every regional fault/clear block and all 1,308 entries; COMM
+covers 8,775 regional frames and 34,671 template lookups. All 27,035 exact TCODE pairs are checked, and
+the selected-function label joins have no missing keys. CALC comparison covers 65,792 vectors for two
+arithmetic forms. These are bounded offline semantic checks—not transport, full-language or
+executable-vehicle proof.
 
 See [on-demand delivery, build steps and safeguards](docs/toyota-vehicle-packs.md),
 [exact conversion accounting and limitations](docs/conversion-report.md),

@@ -128,6 +128,58 @@ object EcuDefinitionScenarios {
         check((bench.readDtcs(ecu) as DtcReadResult.Read).records.isEmpty())
     }
 
+    /** Source command bytes; synthetic addresses/replies, not a tested Toyota setup. */
+    suspend fun native12And13ReadsAnd04ClearNeverBecome18Or14OrBroadcast() {
+        val protocol = ObdProtocol.ISO_15765_4_CAN_11_500
+        val cLink = DiagnosticLink(protocol, DiagnosticDialect.KWP2000)
+        val reads = listOf("13B0" to "53", "1380" to "53", "1383" to "5383",
+            "12FF0100" to "52", "12FF01FF" to "52")
+        for ((request, prefix) in reads) {
+            var clears = 0
+            var guardCalls = 0
+            var permit = false
+            val adapter = SimulatedCanAdapter(listOf(SimModule('6', "7E0", "7E8", dialect = DiagnosticDialect.KWP2000, respond = { r ->
+                when (r) {
+                    Hex.parse(request) -> listOf(Hex.parse(prefix)!! + listOf(1, 1, 0x23, 0x20))
+                    listOf(0x04) -> { clears++; listOf(listOf(0x44)) }
+                    else -> error("Unexpected fallback: $r")
+                }
+            })))
+            val session = Session(adapter, protocol, ecuOperationGuard = { _, target ->
+                check(target.requestHeader == "7E0"); guardCalls++; require(permit) { "Missing same-ECU proof" }
+            })
+            val selected = ecu.copy(requestId = "7E0", responseId = "7E8", link = cLink, diagnostics = EcuReadDefinitions(
+                faults = FaultRead(DiagnosticRead("native-variant", "Native variant", request, prefix, minBytes = 1),
+                    FaultLayout(3, 0, 2, 2, countBytes = 1), DiagnosticClear("04", "44", listOf("synthetic:clear04")))))
+            check(selected.problems().isEmpty()) { selected.problems() }
+            val encoded = CatalogCodec.encode(CatalogPack("synthetic-12-13", "Synthetic", library = CatalogData(ecus = listOf(selected))))
+            check(CatalogCodec.decodeOrThrow(encoded).library.ecus.single() == selected)
+            val bench = EcuWorkbench(session)
+            check((bench.readDtcs(selected) as DtcReadResult.Read).records.single().code == "P0123")
+            check(guardCalls == 0)
+            val broadcast = ClearConfirmation.obdClear()
+            rejectsOperation { bench.clear(selected, broadcast) }
+            check(!broadcast.isUsed && clears == 0 && guardCalls == 0)
+            val confirmed = EcuWorkbench.confirmation(selected)
+            check(confirmed.request == listOf(0x04) && confirmed.target == selected.target)
+            rejectsOperation { bench.clear(selected, confirmed) }
+            check(!confirmed.isUsed && clears == 0 && guardCalls == 1)
+            permit = true
+            check(bench.clear(selected, confirmed) == UdsClearResult.Cleared && confirmed.isUsed && clears == 1)
+            rejectsOperation { bench.clear(selected, confirmed) }
+            check(clears == 1 && adapter.requests.map { it.payload } == listOf(Hex.parse(request), listOf(0x04)))
+            check(adapter.requests.all { it.header == "7E0" } && adapter.violations.isEmpty())
+            check(selected.copy(protocol = EcuProtocol.UDS, link = cLink.copy(dialect = DiagnosticDialect.UDS)).problems().isNotEmpty())
+        }
+        for (request in listOf("12FF0101", "12000100", "13", "13B001", "04", "14FFFF")) {
+            check(!com.bod3.app.obd.kwp.KwpServices.readAllowed(Hex.parse(request)!!))
+        }
+        for ((request, prefix) in listOf("0400" to "44", "04" to "54", "14FFFF" to "44")) {
+            check(DiagnosticClear(request, prefix).problems(EcuProtocol.KWP).isNotEmpty())
+        }
+        rejects { ClearConfirmation.kwpClear04(ecu.target.copy(link = null)) }
+    }
+
     suspend fun explicitEmptyDefinitionsNeverFallBack() {
         val adapter = SimulatedKwpAdapter()
         val bench = EcuWorkbench(Session(adapter, link.protocol))

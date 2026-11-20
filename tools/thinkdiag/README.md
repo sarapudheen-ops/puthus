@@ -1,6 +1,6 @@
 # Toyota database recovery tools
 
-Data-only research/conversion for this repository's [`assets-v1/TOYOTA.zip`](https://github.com/sarapudheen-ops/puthus/releases/tag/assets-v1) release asset. These tools do not run the vendor app, `dlopen`/execute its native libraries, alter activation, evaluate EXPRESS or enable/send vehicle commands. Opaque source byte sequences recovered for research are **not** runnable diagnostic recipes. The bundled result is described in [`docs/toyota-data.md`](../../docs/toyota-data.md); the [renewed full diagnostic-source sweep](../../docs/toyota-diagnostic-sweep.md) documents the much broader source data and unresolved semantics.
+Source conversion and owner-authorized offline semantic comparison for this repository's [`assets-v1/TOYOTA.zip`](https://github.com/sarapudheen-ops/puthus/releases/tag/assets-v1) specification. `native_replay.py` now executes selected supplied AArch64 instructions in bounded emulated memory, with explicit file-array/memory/formatting fakes. There is no host `dlopen`, JNI, syscall, adapter or ECU bridge. No vendor code or EXPRESS is shipped/executed by Android. Opaque source bytes alone are **not** runnable diagnostic recipes. See [on-demand packs and current limits](../../docs/toyota-vehicle-packs.md), the [conversion report](../../docs/conversion-report.md) and the [passive DTC derivative](../../docs/toyota-data.md).
 
 ## Reproduce
 
@@ -33,7 +33,50 @@ cmp .local/thinkdiag/converted/toyota-lexus-dtcs.json app/src/main/assets/datapa
 
 The archive-specific drivers refuse a different SHA-256. Native virtual addresses and format constants are specific to Toyota V10.62, **not** a general ThinkDiag decoder. Generic readers validate bounded inputs, supported revisions, safe paths, directory checksums, record bounds, permutations and duplicate IDs; tests include corrupt/truncated files and traversal attempts. An unknown format fails closed. No passwords, activation material or runtime device credentials are requested.
 
-The GitHub Actions workflow `.github/workflows/thinkdiag-data.yml` runs the same pipeline and publishes recovered-data/report artifacts, plus the complete indexed `toyota-app-library`. Use it when the local environment cannot follow GitHub's release-asset redirect. A zero-byte failed download is not an archive. Recovered files, raw vendor files and full ID/conflict audits stay outside Git in `.local/`; do not copy research directories wholesale into assets. The deliberately generated, checksum/census-verified **data-only SQLite derivative** is now bundled by Android CI, alongside the unchanged passive DTC reference. Native libraries and scripts are never executed. See the [app-library build guide](../../docs/toyota-app-library.md) for preparation commands, storage and semantic boundaries.
+The GitHub Actions workflow `.github/workflows/thinkdiag-data.yml` publishes recovered-data, native-comparison and conversion reports. Use it when local release-asset redirects are unavailable. A zero-byte failed download is not an archive. Large recovered/raw inputs and full audits stay outside Git in `.local/`. Android CI prepares on-demand range objects and **only the small pinned index**, alongside the unchanged passive DTC reference; the old full SQLite derivative is research-only. The offline native oracle is a required cache-miss preparation gate, and every cached report is checked against reviewed result hashes before staging the index.
+
+## Bounded native differential checks
+
+After decoding with the same pinned archive/manifest:
+
+```sh
+"$PY" tools/thinkdiag/toyota_native_oracle.py run .local/thinkdiag/TOYOTA.zip \
+  --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+  --output .local/thinkdiag/report/native-oracle.json
+"$PY" tools/thinkdiag/toyota_native_oracle.py verify .local/thinkdiag/report/native-oracle.json
+```
+
+`native_replay.py` accepts only bounded little-endian AArch64 ET_DYN images and supported relocations.
+Unknown external calls, memory faults and instruction/time-budget exhaustion abort. Constructors are
+skipped; host native code, files, JNI, syscalls, sockets and adapters are not exposed. Decoded-byte-array
+file APIs, no online overrides and limited libc/string/printf behavior are explicit experiment fakes.
+There is no physical validation. The report pins exact library identities, counts and result digests;
+missing/partial/retyped reports fail. `schema/native-oracle-v1.json` is the reviewed reference, not
+vendor code or a device-test claim.
+
+Current coverage: FILE all 1,308 entries and all regional 1,186 fault / 1,184 clear blocks (180,316 code
+mappings); COMM all 8,775 regional frame records and 34,671 default/declared-fault template lookups;
+DTCF 70,144 state/mask + 2,112 assembly vectors, all 27,035 exact TCODE pairs, 3,584 numeric-display
+vectors and 196,608 exact-key byte-merge calls; CALC 65,792 unsigned-byte/unsigned-word numeric vectors
+for **two** expression forms and eight full-script edges. IdSearch/English-text/libc formatting remain
+declared shims, not native search/decryption/libc proof. Kotlin independently produces the DTCF state,
+assembly, numeric-display and byte-merge result hashes. General CALC/control flow, transport/init,
+query conditions and complete source feature-to-runtime conversion remain unfinished; executable
+recovered vehicle definitions remain zero.
+
+`toyota_dtc_labels.py` joins **179,770 distinct per-function keys** from the 180,316 mapping rows to
+exact source pairs, with **zero missing keys** across EU/NA/JP. Repeated printed codes are not merged,
+legacy codes are retained, and no other ECU's text is substituted. The English reader now retains GAG
+index/text offsets and encoded lengths; source runs re-extract the labels from the pinned archive
+rather than trusting mutable JSON. The layout compiler preserves the source-defined missing-key
+numeric display only when explicitly supplied with its source text/provenance. Raw 32-bit keys remain
+attached to every decoded record. PSA/P5/flash callers and P3/P4 kind-5 non-decoding workflow queries
+are not mislabeled as ordinary P3/P4 reads.
+
+`toyota_functions.py` preserves/round-trips every fault/clear field with exact offsets; `toyota_frames.py`
+resolves request/mask/reply roles and source-order default bindings, including EU's `0112` versus JP/NA's
+`0012` table tags. Conditional bindings are not unconditional fallbacks. No synthetic fixture address
+is asserted to be a source Toyota address.
 
 ## Format evidence
 
@@ -73,7 +116,7 @@ Native evidence includes FILE `GetVehicleInfoData`, `GetSystemListData`, `GetAll
 
 ### Semantic boundaries
 
-The recovered source clearly extends beyond DTC text: vehicle/system-to-ECU links, frame/byte dictionaries, live-data/expression tables and dedicated coding/actuator/customization paths are present. This does **not** establish the complete vehicle → ECU → addressing/session → request/response → extraction/formula/unit chain needed for an app definition. Counts are often duplicated across regions and are not unique PIDs or confirmed vehicle coverage. Live-data labels and EXPRESS records alone do not prove usable formulas or request mappings. Never evaluate recovered EXPRESS or promote decoded tables into writes, coding or actuator recipes without validated vehicle/ECU-specific definitions and the existing gated app flows.
+The recovered source clearly extends beyond DTC text: vehicle/system-to-ECU links, frame/byte dictionaries, live-data/expression tables and dedicated coding/actuator/customization paths are present. This does **not** establish the complete vehicle → ECU → addressing/session → request/response → extraction/formula/unit chain needed for an app definition. Counts are often duplicated across regions and are not unique PIDs or confirmed vehicle coverage. Live-data labels and EXPRESS records alone do not prove usable formulas or request mappings. Owner-authorized offline expression/native evaluation is allowed for conversion and differential tests. Neither it nor source verification grants writes: executable app definitions still need the exact vehicle/ECU joins and existing guarded coding/actuator flows. Android never runs the supplied language or native libraries.
 
 ### Retrieve complete sweep evidence through the GitHub API
 
@@ -110,7 +153,7 @@ python3 tools/thinkdiag/verify_app_database.py --directory .local/toyota-app-ass
 
 `build_app_database.py` retains every decoded byte, rehashes every stored payload, includes all English records (including 4,502 non-UTF-8 records), and validates the full census and reader-backed frame joins. Unknown schemas and the three invalid command descriptors remain explicit. A separate NUL-free `search_text` derivative handles old Android SQLite's NUL-terminating `LOWER()` without altering original text/raw bytes. The shared SQL schema is tested by Python and by the app's SQLite JDBC fixtures.
 
-Gradle requires these complete verified assets; Android CI prepares/caches them automatically. The inspection workflow builds the library twice and compares the complete ZIP/manifest byte-for-byte on the same toolchain. After building an APK, add `--apk app/build/outputs/apk/debug/app-debug.apk` to the verification command to prove the actual package contains the same data. Push CI additionally runs the real APK's source-library tests on Android 24; test output is published as the **Toyota Android 24 source smoke evidence** check as well as an artifact. See the [app-library guide](../../docs/toyota-app-library.md) for storage, browsing and the remaining operational-semantic boundary. Raw archives, ELF files and research directories are not copied into the APK.
+This full SQLite build is a legacy/research derivative, **not a current Gradle prerequisite or APK asset**. Android CI instead requires the verified `.local/vehicle-pack-assets/toyota-vehicle-packs/index.json`, builds the actual APK, verifies corpus exclusion, and runs the exact selected-path range/offline-cache tests on Android 24. See the [current delivery/build guide](../../docs/toyota-vehicle-packs.md). Raw archives, ELF files, source scripts and research directories are not copied into the APK.
 
 ## Conversion audit
 

@@ -111,6 +111,8 @@ jobs:
             app/build/reports/
             app/build/test-results/
             build/reports/
+            .local/toyota-vehicle-packs/native-oracle.json
+            .local/toyota-vehicle-packs/native-oracle.md
           if-no-files-found: warn
 
   selected-vehicle-device:

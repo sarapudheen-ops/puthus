@@ -1,18 +1,30 @@
 package com.bod3.app.obd.uds
 
 /** KWP/manufacturer status bits are not implicitly UDS status bits. */
-enum class DtcStatusMeaning { UDS, RAW }
+enum class DtcStatusMeaning { UDS, RAW, TOYOTA }
+
+/** Exact TEXT_EN.GAG IDs used by DTCF GetDtcStateResult. CURRENT does not imply MIL. */
+enum class ToyotaDtcState(val textId: Long, val label: String) {
+    CURRENT(0xFFFF0050L, "Current"), HISTORY(0xFFFF0051L, "History"), PENDING(0xFFFF0052L, "Pending"),
+    READNESS(0xFFFF0053L, "Readness"), PERMANENT(0xFFFF0054L, "Permanent"),
+    TEST_FAILED(0xFFFF0055L, "Test Failed"), CONFIRMED(0xFFFF0056L, "Confirmed"),
+}
 
 /** A diagnostic trouble code; RAW status remains opaque unless its bit meanings are documented. */
-data class DtcRecord(val code: String, val status: Int?, val raw: List<Int>, val statusMeaning: DtcStatusMeaning = DtcStatusMeaning.UDS) {
-    val testFailed: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x01 != 0
-    val pending: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x04 != 0
-    val confirmed: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && (status == null || status and 0x08 != 0)
+data class DtcRecord(val code: String, val status: Int?, val raw: List<Int>, val statusMeaning: DtcStatusMeaning = DtcStatusMeaning.UDS,
+                     val nativeCode: Long? = null, val toyotaState: ToyotaDtcState? = null, val sourceDescription: String? = null) {
+    val testFailed: Boolean get() = if (statusMeaning == DtcStatusMeaning.TOYOTA) toyotaState == ToyotaDtcState.TEST_FAILED
+        else statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x01 != 0
+    val pending: Boolean get() = if (statusMeaning == DtcStatusMeaning.TOYOTA) toyotaState == ToyotaDtcState.PENDING
+        else statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x04 != 0
+    val confirmed: Boolean get() = if (statusMeaning == DtcStatusMeaning.TOYOTA) toyotaState == ToyotaDtcState.CONFIRMED
+        else statusMeaning == DtcStatusMeaning.UDS && (status == null || status and 0x08 != 0)
     val warningLamp: Boolean get() = statusMeaning == DtcStatusMeaning.UDS && status != null && status and 0x80 != 0
 
     /** Short status summary, e.g. "confirmed, MIL". */
     val statusText: String
         get() {
+            if (statusMeaning == DtcStatusMeaning.TOYOTA) return toyotaState?.label ?: "Unknown Toyota state"
             if (statusMeaning == DtcStatusMeaning.RAW) return status?.let { "raw status 0x%02X".format(it) } ?: "stored"
             if (status == null) return "stored (OBD)"
             val parts = buildList {

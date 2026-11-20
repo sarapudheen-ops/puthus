@@ -47,6 +47,17 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Compare supplied FILE COMM DTCF CALC instructions with bounded ports (offline only)
+        run: |
+          python3 tools/thinkdiag/toyota_native_oracle.py run .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/report/native-oracle.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota offline native differential' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Bounded offline semantic comparison; no adapter or ECU' \
+            -F 'output[summary]=@.local/thinkdiag/report/native-oracle.md'
       - name: Sweep every diagnostic-table family and native reader
         run: |
           python3 tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \

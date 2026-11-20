@@ -124,6 +124,52 @@ and system/feature UI are being integrated in this PR. They do **not** supply mi
 semantics. Until the joins listed above are translated and tested, every recovered real system
 stays disabled. Synthetic KWP/CAN tests establish engine behavior, not recovered Toyota coverage.
 
+### Native execution and fault-decoder port — not counted as executable
+
+Owner-authorized supplied functions now execute in bounded offline AArch64 emulation. This supersedes
+older static-only descriptions; no host `dlopen`, constructors, JNI, syscalls, network, adapter or ECU
+is bridged. `native-oracle.json` records explicit file-array/libc/formatting fakes. Full-archive owner
+verification precedes every source run, and every decoded payload is checked against the complete
+manifest before any native reader sees it. The reviewed individual library identities/result hashes
+are in [`native-oracle-v1.json`](../tools/thinkdiag/schema/native-oracle-v1.json).
+
+| Executed native consumer | Compared domain | Result |
+|---|---|---|
+| FILE `GetInfoFromEnterList` | all 1,308 source entries | byte-for-byte loaded fields match |
+| FILE `GetRDtcDataFromRDTCPart` / `GetCDtcDataFromCDTCPart` | 1,186 fault blocks / 1,184 clear blocks; 1,881 / 1,208 queries; 180,316 mappings across EU/NA/JP | exact fields, offsets, mapping arrays and source round trips match |
+| COMM `GetCommFrameInfo` / `GetFuncCommFrameInfo_MultiCmd` | all 8,775 regional frame records, 34,671 default/declared-fault template lookups; 18 starting EU/function-61 joins | exact request/mask/reply bytes, frame IDs and source order match; 372 nondefault bindings are counted, not executed; not transport proof |
+| DTCF `GetDtcStateResult` / `GetDTCCodeFromAnsP3P4` | 70,144 status/mask and 2,112 record vectors | independent Python and app Kotlin result hashes match |
+| DTCF `GetShowDtcInfo` / `InitDtcNum` / `SetDiagCodeData` | 27,035 exact TCODE pairs; 3,584 width/display vectors; 21 missing-key display calls; 196,608 exact-key byte merges | Python matches native consumer instructions; Kotlin display/merge hashes match; English IdSearch/TEXT/libc boundaries are declared shims |
+| CALC numeric evaluator / `ResultCalcFromScript` | 65,792 numeric vectors, two arithmetic forms, eight script edges | numeric results match; libc/printf is a declared shim |
+
+The new strict app `TOYOTA_P3P4` fault layout preserves the native count/presence rules, query/mode
+origin override, assembly kinds, exact 32-bit code keys and source state IDs. It rejects malformed
+partial replies atomically rather than copying native partial-success behavior. Source states are not
+assumed UDS bits, and missing selected-system labels do not fall back to global descriptions. Exact
+KWP `12`/`13` reads and the separately confirmed physical KWP `04` → `44` clear variant never become
+`18`/`14` substitutions or broadcast commands. Same-current-ECU guards are checked before consuming a
+clear confirmation; the read/write/clear policy tests are unchanged.
+
+The exact label compiler joins **179,770 distinct per-function keys** from all 180,316 mapping rows,
+with **zero missing TCODE keys** (EU 66,396; NA 56,342; JP 57,032). It preserves alternate descriptions
+with identical printed codes and every source mapping row ID. GAG extraction now retains original
+index/text offsets and encoded lengths. Source runs re-extract English records from the pinned archive,
+not mutable JSON. An optional source-defined unknown-code presentation preserves the original key;
+it is not a global P-code lookup. The app-layout compiler rejects PSA/P5/flash callers and the P3/P4
+kind-5 workflow query whose native caller deliberately skips fault decoding.
+
+Local checks at this checkpoint: **160 Python tests**, **121 Kotlin source files compiled**, and
+**108 standalone core scenario groups passed**, including the DTCF state/assembly/display/merge vector
+domains. Standalone compiler/scenario results are **not** Gradle/JUnit, lint, Android or physical-vehicle
+results. Native comparisons completed locally on recovered hash-checked inputs; original-archive/
+manifest CLI integration and Android build/device results for this checkpoint are pending Actions
+until explicitly recorded below. Prior green runs do not validate these edits.
+
+**Still incomplete:** complete transport/init/session/timing mapping, source fault-query conditions/
+selection and multi-query workflows, general EXPRESS/control flow/signed/string helpers, ECU-info,
+coding, actuator and special-function conversion. Exact parsing and native equivalence do not fill
+these gaps. **Executable recovered definitions remain 0**; no physical test was performed.
+
 ### Current live conversion work — not counted as executable
 
 The native A801 reply origin and separate support/discovery pipeline have now been traced; the runtime
