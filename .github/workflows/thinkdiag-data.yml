@@ -127,17 +127,22 @@ jobs:
             --output .local/thinkdiag/sweep --report .local/thinkdiag/report
       - name: Convert source-bound, on-demand vehicle packs in Actions
         run: |
+          set -euo pipefail
+          echo "[ecmect] compile pinned read artifacts"
           python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/vehicle-packs
+          echo "[ecmect] convert vehicle packs (reads artifacts)"
           python3 tools/thinkdiag/convert_vehicle_packs.py .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --read-artifacts .local/thinkdiag/vehicle-packs \
             --output .local/thinkdiag/vehicle-packs
+          echo "[ecmect] lifecycle contracts"
           python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/vehicle-packs
+          echo "[ecmect] verify artifacts"
           python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/thinkdiag/vehicle-packs
           python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/thinkdiag/vehicle-packs
           python3 tools/thinkdiag/toyota_runtime_compile.py test-artifacts .local/thinkdiag/vehicle-packs > .local/thinkdiag/vehicle-packs/compiled-source-read-validation.json
