@@ -90,7 +90,28 @@ class PackObjectStore(
     private val maxCacheBytes: Long = 128L * 1024 * 1024,
 ) {
     private val directory = directory.canonicalFile
+    private val cached = linkedMapOf<File, Long>() // Oldest first; initialized once, not an O(n²) directory scan per object.
+    private var tracked = false
+    private var cachedBytes = 0L
     init { require(maxCacheBytes >= PackRange.MAX_PACKED_BYTES) }
+
+    private fun remember(file: File) {
+        if (!tracked) {
+            directory.listFiles().orEmpty().filter { it.isFile && it.name.matches(Regex("[0-9a-f]{64}\\.gz")) }
+                .sortedBy { it.lastModified() }.forEach { cached[it] = it.length() }
+            cachedBytes = cached.values.sum(); tracked = true
+        }
+        cachedBytes -= cached.remove(file) ?: 0L
+        cached[file] = file.length(); cachedBytes += file.length()
+        file.setLastModified(System.currentTimeMillis())
+        val oldest = cached.entries.iterator()
+        while (cachedBytes > maxCacheBytes && oldest.hasNext()) {
+            val entry = oldest.next()
+            if (entry.key != file && (!entry.key.exists() || entry.key.delete())) {
+                cachedBytes -= entry.value; oldest.remove()
+            }
+        }
+    }
 
     @Synchronized
     fun load(container: String, total: Long, range: PackRange, checkCancelled: () -> Unit = {}): Map<*, *> {
@@ -103,7 +124,7 @@ class PackObjectStore(
         if (file.isFile && file.length() == range.bytes.toLong()) {
             val cached = try { PackCompression.json(file.readBytes(), range) } catch (_: Exception) { null }
             if (cached != null) {
-                checkCancelled(); file.setLastModified(System.currentTimeMillis()); return cached
+                checkCancelled(); remember(file); return cached
             }
         }
         val bytes = source.fetch(container, total, range, checkCancelled)
@@ -116,11 +137,7 @@ class PackObjectStore(
             checkCancelled()
             require(staging.renameTo(file)) { "Cannot atomically install the vehicle-pack object" }
         } finally { staging.delete() }
-        directory.listFiles().orEmpty().filter { it.name.matches(Regex("[0-9a-f]{64}\\.gz")) && it != file }
-            .sortedBy { it.lastModified() }.let { files ->
-                var size = files.sumOf { it.length() } + file.length()
-                for (old in files) { if (size <= maxCacheBytes) break; val length = old.length(); if (old.delete()) size -= length }
-            }
+        remember(file)
         return document
     }
 }

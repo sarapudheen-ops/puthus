@@ -163,6 +163,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                     "Opaque fields stay named by source offset; pattern matches are not diagnostic definitions."]}
     all_files = []
     native_census = []
+    replay_inputs = []
     calc_evidence = None
     opaque_natives, top_level_data = [], []
     with zipfile.ZipFile(archive_path) as archive:
@@ -178,6 +179,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             if name.endswith(".so") and not data.startswith(b"\x7fELF"):
                 opaque_natives.append({"file": info.filename, "bytes": len(data), "prefixHex": data[:32].hex(" ")})
             if name.endswith(".so") and data.startswith(b"\x7fELF"):
+                # The owner authorizes offline sandbox execution for semantic comparison.
+                # Preserve hashed replay inputs in ignored research evidence ONLY, never
+                # in the app/range packs or Git. This step does not execute them.
+                replay_inputs.append({"file": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                    "compression": "zlib", "base64": base64.b64encode(zlib.compress(data, 9)).decode("ascii")})
                 native = native_info(data, name)
                 exports = [f for f in native["functions"] if f["defined"]]
                 native_census.append({"library": name, "bytes": len(data), "machine": native["machine"],
@@ -197,6 +203,8 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                         if not member.is_dir():
                             all_files.append({"path": info.filename + "!/" + member.filename, "bytes": member.file_size,
                                               "type": "nested BIN" if member.filename.endswith(".BIN") else "nested other"})
+    emit_report("native-replay-inputs", "Owner-authorized native semantic replay inputs (research only; never app assets)",
+                json_text({"sourceSha256": source_hash, "executed": False, "inputs": replay_inputs}))
     (output / "archive-inventory.json").write_text(json_text(all_files))
     (output / "native-exports.json").write_text(json_text(native_census))
     findings["archiveEntriesIncludingNestedFiles"] = len(all_files)
@@ -460,7 +468,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # evidence path when release-asset downloads are inaccessible. Never native library bytes.
     applicability = []
     for name, source in sorted(paths.items()):
-        if name == "MENU.BIN" or re.fullmatch(r"(?:SYSLIST|FUNCDATA)_(?:EU|JP|NA)\.BIN", name):
+        if name in ("MENU.BIN", "SPECFUNC.BIN", "OBD2_SYS_DATA.BIN", "FUNCH_CFG.BIN") or re.fullmatch(r"(?:SYSLIST|FUNCDATA)_(?:EU|JP|NA)\.BIN", name):
             raw = source.read_bytes()
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                   "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
@@ -468,9 +476,9 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # The complete corpus is still converted in Actions, not shipped in Git or the APK.
     ecu_samples = {"0006", "000b", "0024", "0028", "002d", "006e", "0070", "0081", "0085", "00c1", "00c2", "00d4"}
     for name, source in sorted(paths.items()):
-        if name == "SYSTEMENTER.BIN" or (name.startswith("EU/") and (
-                re.fullmatch(r"EU/(?:Toyota|Viewer)_bin_[0-9a-fA-F]+\.BIN", name)
-                or any(name.casefold() == f"eu/ecu_data_{identity}.bin" for identity in ecu_samples))):
+        if (name == "SYSTEMENTER.BIN" or re.fullmatch(r"(?:EU|JP|NA)/(?:Toyota|Viewer)_bin_[0-9a-fA-F]+\.BIN", name)
+                or any(name.casefold() == f"eu/ecu_data_{identity}.bin" for identity in ecu_samples)
+                or re.fullmatch(r"(?:JP|NA)/Ecu_Data_(?:0001|0081)\.BIN", name)):
             raw = source.read_bytes()
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                   "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})

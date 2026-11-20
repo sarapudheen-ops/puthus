@@ -1,8 +1,9 @@
 """Conservative, exact source-path normalization. Not vehicle/ECU inference.
 
-Only the four independently traced MENU -> EU SYSLIST paths below are reviewed.
-All other 24k+ source leaves retain hierarchy_untranslated. Do not assign FEBA
-labels to models heuristically, or relabel these TGN branches as AN40 diesel.
+This module retains the original IDs for four independently traced MENU -> EU
+SYSLIST paths. toyota_hierarchy supplies lossless regional source-tree grouping
+for the remaining vehicle paths without inferring chassis generations. Do not
+assign FEBA labels heuristically or relabel these TGN branches as AN40 diesel.
 Names/years here come only from these literal source paths. Missing engine,
 fuel, transmission and an open start date stay absent, not guessed.
 """

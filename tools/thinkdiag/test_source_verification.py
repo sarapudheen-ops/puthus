@@ -22,7 +22,9 @@ class SourceVerificationTest(unittest.TestCase):
                    ("verification", "assertedBy", "converter"),
                    ("runtimeAuthority", "writeAuthorization", True),
                    ("runtimeAuthority", "automaticVehicleSelection", True),
-                   ("runtimeAuthority", "physicalEcuVerification", True)]
+                   ("runtimeAuthority", "physicalEcuVerification", True),
+                   ("verification", "verified", 1), ("runtimeAuthority", "writeAuthorization", 0),
+                   ("source", "bytes", 71755650.0)]
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "verification.json"
             for group, key, flag in changes:

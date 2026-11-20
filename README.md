@@ -351,15 +351,20 @@ Conflicts, placeholders and unsupported code forms are excluded, and extended co
 base codes. No Toyota PIDs, ECU addresses, coding or actuator commands have been enabled from this data.
 
 **On-demand vehicle packs (conversion in progress):** **Vehicle catalog / Data packs → Choose Toyota
-vehicle pack** opens the reviewed Make → Model → Generation → Variant picker and per-vehicle system/
-feature counts. Only the small hash-tree index is in the APK; vehicle/system objects are downloaded by
+vehicle pack** opens the manual Make → Model → source Generation/group → Variant picker and per-vehicle
+system/feature counts. It now exposes 24,653 exact regional vehicle paths, retaining every source detail
+and distinguishing duplicate labels by source-node ID; nine non-vehicle tasks are accounted separately. Only the small hash-tree index is in the APK; vehicle/system objects are downloaded by
 bounded, checksum-verified HTTP ranges and cached privately. The previous full offline source database
 is no longer packaged. Downloads never choose configuration, and VIN/profile loading never selects it.
 
 The full-source conversion currently reports **zero executable recovered Toyota definitions**. All real
 systems remain disabled with source IDs and reasons; synthetic KWP/CAN engine tests and a working pack
-loader are not recovered vehicle coverage. Four literal reviewed Kijang Innova/TGN source branches do
-not establish AN40/diesel applicability. No addresses, formulas or write mappings are guessed.
+loader are not recovered vehicle coverage. The four reviewed Kijang Innova/TGN source branches retain
+their original hierarchy IDs; missing engine/fuel/transmission fields are not inferred and do not
+establish AN40/diesel applicability. No addresses, formulas or write mappings are guessed. Full-archive
+owner verification and sandbox inspection/decoding/execution permission are recorded in
+[`toyota-verified.json`](tools/thinkdiag/verification/toyota-verified.json); that is not a write grant or
+physical-ECU verification.
 
 See [on-demand delivery, build steps and safeguards](docs/toyota-vehicle-packs.md),
 [exact conversion accounting and limitations](docs/conversion-report.md),

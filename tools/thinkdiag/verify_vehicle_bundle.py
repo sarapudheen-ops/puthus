@@ -13,6 +13,7 @@ import zipfile
 
 from vehicle_bundle import (FORMAT, VERSION, SOURCE_SHA256, MAGIC, MAX_CONTAINER_BYTES,
                             MAX_COMPRESSED_BYTES, MAX_OBJECT_BYTES, read_object)
+from source_verification import load_verification
 
 MAX_INDEX_BYTES = 256 * 1024
 
@@ -26,6 +27,8 @@ def load_index(path):
             or index.get("converterVersion") != 1 or index.get("sourceSha256") != SOURCE_SHA256
             or index.get("manualSelectionOnly") is not True):
         raise ValueError("Unknown or unpinned vehicle-pack index")
+    if index.get("summary", {}).get("sourceVerification") != load_verification():
+        raise ValueError("Vehicle-pack pin is missing the exact whole-archive owner verification")
     digest = index.get("containerSha256")
     if not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest) or index.get("container") != f"toyota-{digest}.bin":
         raise ValueError("Unsafe or unpinned container filename")
@@ -66,6 +69,13 @@ def verify(directory, *, index_only=False, apk=None):
             for chunk in iter(lambda: stream.read(1024 * 1024), b""): digest.update(chunk)
         if digest.hexdigest() != index["containerSha256"]: raise ValueError("Container checksum mismatch")
         seen = {}
+        # Source metadata is deliberately shared by hundreds of system records.
+        from functools import lru_cache
+        @lru_cache(maxsize=2048)
+        def source_document(offset, size, json_size, digest):
+            return read_object(container, {"offset": offset, "bytes": size, "jsonBytes": json_size, "sha256": digest})
+        def source(ref):
+            return source_document(ref["offset"], ref["bytes"], ref["jsonBytes"], ref["sha256"])
         pending = list(references(index))
         while pending:
             ref = pending.pop()
@@ -83,6 +93,21 @@ def verify(directory, *, index_only=False, apk=None):
                     raise ValueError("This converter version has no resolved executable Toyota systems")
                 if any(c["converted"] != 0 for c in value["counts"].values()):
                     raise ValueError("Disabled system overstates its conversion coverage")
+                for key, kind, fields in (("ecuSource", "ecu-source", ("sourceFile", "sha256")),
+                                          ("functionSource", "function-source", ("sourceRecord", "functionKey", "declaredLiveRows"))):
+                    stub = value.get(key)
+                    if stub is not None and "object" in stub:
+                        metadata = source(stub["object"])
+                        if (metadata.get("kind") != kind or any(metadata.get(f) != stub.get(f) for f in fields)
+                                or "pages" in stub or "livePages" in stub):
+                            raise ValueError("Shared metadata crossed an exact ECU/function boundary")
+            if value["kind"] == "converted-vehicle" and value.get("systemsSource") is not None:
+                manual = source(value["systemsSource"])
+                if ("systems" in value or manual.get("kind") != "manual-vehicle" or manual.get("hierarchyResolved") is not True
+                        or manual.get("id") != value.get("systemsSourceId")
+                        or (value.get("sourceRecords") or [None])[-1] != manual.get("id")
+                        or value.get("sourceSelection") != [s.get("name") for s in manual.get("selection", [])]):
+                    raise ValueError("Shared system descriptors crossed an exact manual vehicle boundary")
             if value["kind"] == "bring-up-candidates":
                 candidates = value.get("candidates")
                 if not isinstance(candidates, list) or not 1 <= len(candidates) <= 128:

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Publish/recover checksum-verified sweep reports using a few bounded checks.
 
-The human overview is readable directly. Detailed text reports are a compressed
-JSON bundle, not executable code; raw vendor libraries are never included.
+The human overview is readable directly. Detailed reports are a compressed JSON
+bundle. Owner-authorized native replay inputs may be represented as hashed,
+base64-encoded data in research reports; unpacking never executes their contents.
+Neither these reports nor vendor libraries belong in the Android assets.
 """
 import argparse
 import base64

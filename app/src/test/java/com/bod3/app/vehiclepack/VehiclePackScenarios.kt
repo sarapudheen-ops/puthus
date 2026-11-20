@@ -46,7 +46,8 @@ object VehiclePackScenarios {
         val folder = Files.createTempDirectory("bod3-pack-test").toFile()
         try { block(folder) } finally { folder.deleteRecursively() }
     }
-    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false) {
+    private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false,
+                          referenced: Boolean = false, corruptReference: String? = null) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -74,15 +75,29 @@ object VehiclePackScenarios {
         }
         private val bringUpPage = if (bringUp) add(mapOf("kind" to "bring-up-candidates", "candidates" to listOf(
             com.bod3.app.bringup.BringUpCodec.candidateMap(com.bod3.app.bringup.BringUpScenarios.candidate())))) else null
+        private val unresolvedPage = if (referenced) add(mapOf("kind" to "disabled-items", "items" to listOf(
+            mapOf("id" to "synthetic:row", "enabled" to false, "reasons" to listOf("mapping_missing"))))) else null
+        private val ecuSource = if (referenced) mapOf("sourceFile" to "synthetic.bin", "sha256" to "a".repeat(64),
+            "object" to add(mapOf("kind" to "ecu-source", "sourceFile" to if (corruptReference == "ecu") "another.bin" else "synthetic.bin",
+                "sha256" to "a".repeat(64), "pages" to listOf(unresolvedPage)))) else null
+        private val functionSource = if (referenced) mapOf("sourceRecord" to "synthetic:function", "functionKey" to 1, "declaredLiveRows" to 1,
+            "object" to add(mapOf("kind" to "function-source", "sourceRecord" to "synthetic:function",
+                "functionKey" to if (corruptReference == "function") 2 else 1, "declaredLiveRows" to 1, "livePages" to emptyList<Any>()))) else null
         private val system = add(mapOf("kind" to "vehicle-system", "id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
             "reasons" to why, "sourceVerified" to true, "sourceRecords" to listOf("synthetic:system"), "counts" to counts,
+            "ecuSource" to ecuSource, "functionSource" to functionSource,
             "bringUpPages" to listOfNotNull(bringUpPage), "data" to CatalogCodec.dataMap(original)))
         private val systemChoice = mapOf("id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled, "reasons" to why, "counts" to counts, "object" to system)
         val path = CatalogPack("synthetic-path", "Synthetic path", nodes = listOf(
             CatalogNode("make", null, CatalogLevel.MAKE, "Synthetic make"), CatalogNode("model", "make", CatalogLevel.MODEL, "Synthetic model"),
             CatalogNode("generation", "model", CatalogLevel.GENERATION, "Synthetic generation"), CatalogNode("variant", "generation", CatalogLevel.VARIANT, "Synthetic variant")))
+        private val systemsSource = if (referenced) add(mapOf("kind" to "manual-vehicle", "id" to "synthetic:source-leaf", "hierarchyResolved" to true,
+            "selection" to listOf(mapOf("id" to "synthetic:source-leaf", "name" to if (corruptReference == "path") "Another source path" else "Synthetic source path")),
+            "systems" to listOf(systemChoice))) else null
         private var root: Map<String, Any> = add(mapOf("kind" to "converted-vehicle", "level" to "variant", "id" to "variant", "name" to "Synthetic variant",
-            "catalog" to CatalogCodec.packMap(path), "sourceSelection" to listOf("Synthetic source path"), "hierarchyResolved" to true, "reasons" to emptyList<String>(), "systems" to listOf(systemChoice)))
+            "catalog" to CatalogCodec.packMap(path), "sourceSelection" to listOf("Synthetic source path"), "hierarchyResolved" to true, "reasons" to emptyList<String>()) +
+            if (referenced) mapOf("systemsSource" to systemsSource, "systemsSourceId" to "synthetic:source-leaf", "sourceRecords" to listOf("synthetic:source-leaf"))
+            else mapOf("systems" to listOf(systemChoice)))
         init {
             var id = "variant"
             for ((parent, level) in listOf("generation" to "generation", "model" to "model", "make" to "make", "root" to "root")) {
@@ -122,6 +137,30 @@ object VehiclePackScenarios {
         rejects { PackRange.parse(mapOf("offset" to 11, "bytes" to true, "jsonBytes" to raw.size, "sha256" to range.sha256), 1000) }
     }
 
+    fun cacheLruStaysBoundedAcrossDownloadsAndReopening() = temporary { cache ->
+        val random = java.util.Random(714L)
+        val objects = linkedMapOf<String, ByteArray>()
+        var at = PackRange.MAGIC_BYTES
+        val refs = (0..4).map { i ->
+            val noise = ByteArray(900_000).also(random::nextBytes)
+            val raw = JsonWriter.write(mapOf("kind" to "cache-test", "id" to i, "data" to java.util.Base64.getEncoder().encodeToString(noise))).toByteArray()
+            val data = packed(raw); val digest = sha256(data); objects[digest] = data
+            PackRange(at, data.size, raw.size, digest).also { at += data.size }
+        }
+        val container = "toyota-${"0".repeat(64)}.bin"
+        val budget = PackRange.MAX_PACKED_BYTES.toLong(); var requests = 0
+        val store = PackObjectStore(cache, PackRangeSource { _, _, ref, _ -> requests++; objects.getValue(ref.sha256) }, budget)
+        refs.take(4).forEach { store.load(container, at, it) }
+        check(requests == 4)
+        store.load(container, at, refs[0]) // Keep 0 newer than 1 in the LRU, even if file timestamps tie.
+        store.load(container, at, refs[4])
+        check(cache.listFiles()!!.sumOf { it.length() } <= budget)
+        check(File(cache, refs[0].sha256 + ".gz").isFile && !File(cache, refs[1].sha256 + ".gz").exists())
+        val offline = PackObjectStore(cache, PackRangeSource { _, _, _, _ -> error("Unexpected network") }, budget)
+        check(offline.load(container, at, refs[0])["id"] == 0.0)
+        check(cache.listFiles()!!.sumOf { it.length() } <= budget && requests == 5)
+    }
+
     fun rangeHttpContract() {
         val range = PackRange(100, 20, 30, "0".repeat(64))
         PackHttpSource.checkResponse(206, "bytes 100-119/1000", 20, null, 1000, range)
@@ -153,6 +192,31 @@ object VehiclePackScenarios {
         client.system(vehicle, vehicle.systems.single())
         check(fixture.fetches == 7)
         check(cache.listFiles()!!.none { it.extension == "partial" })
+    }
+
+    fun referencedSourcesAreScopedAndReopenOffline() = temporary { cache ->
+        val fixture = Fixture(referenced = true); val client = fixture.client(cache)
+        val ids = listOf("make", "model", "generation", "variant")
+        val vehicle = client.selectedVehicle(ids)
+        check(fixture.fetches == 6) // Exact path plus its shared source-system descriptors, no ECU metadata yet.
+        val system = client.system(vehicle, vehicle.systems.single())
+        check(fixture.fetches == 9 && system.unresolvedPages.size == 1)
+        check(client.unresolved(system.unresolvedPages.single()).single()["id"] == "synthetic:row")
+        val count = fixture.fetches
+        val offline = VehiclePackCatalog(fixture.index, PackObjectStore(cache, PackRangeSource { _, _, _, _ -> error("Unexpected network") }))
+        val restored = offline.selectedVehicle(ids)
+        check(offline.system(restored, restored.systems.single()).unresolvedPages == system.unresolvedPages)
+        check(fixture.fetches == count)
+    }
+
+    fun referencedSourcesCannotCrossVehicleEcuOrFunction() = temporary { cache ->
+        for (bad in listOf("path", "ecu", "function")) {
+            val client = Fixture(referenced = true, corruptReference = bad).client(cache)
+            rejects {
+                val vehicle = client.selectedVehicle(listOf("make", "model", "generation", "variant"))
+                client.system(vehicle, vehicle.systems.single())
+            }
+        }
     }
 
     fun trustedConversionNotImportedFlags() = temporary { cache ->
@@ -360,6 +424,9 @@ object VehiclePackScenarios {
         }))
         var variants = 0
         var recoveredCandidates = 0
+        val checkedSystems = mutableSetOf<String>()
+        val checkedPages = mutableSetOf<String>()
+        val checkedCandidates = mutableSetOf<List<String>>()
         fun visit(level: PackLevel, ids: List<String>) {
             for (choice in level.children) {
                 if (choice.level != "variant") visit(client.open(choice), ids + choice.id)
@@ -367,9 +434,11 @@ object VehiclePackScenarios {
                     val vehicle = client.vehicle(choice)
                     check(client.selectedVehicle(ids + choice.id).variantId == vehicle.variantId)
                     for (system in vehicle.systems) {
+                        if (!checkedSystems.add(system.id)) continue // Reused exact source record, not another ECU mapping.
                         val loaded = client.system(vehicle, system)
                         check(!loaded.enabled && loaded.data.count == 0)
-                        loaded.unresolvedPages.firstOrNull()?.let { check(client.unresolved(it).isNotEmpty()) }
+                        loaded.unresolvedPages.firstOrNull()?.let { if (checkedPages.add(it.sha256)) check(client.unresolved(it).isNotEmpty()) }
+                        if (!checkedCandidates.add(loaded.bringUpPages.map { it.sha256 })) continue
                         val candidates = client.bringUpCandidates(loaded)
                         check(candidates.all { !it.runnable && it.runtime == null && it.sourceRecords.isNotEmpty() })
                         check(candidates.map { it.supportCount } == candidates.map { it.supportCount }.sortedDescending())

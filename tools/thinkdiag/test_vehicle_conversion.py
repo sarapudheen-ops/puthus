@@ -123,6 +123,51 @@ class ConversionTest(unittest.TestCase):
             self.assertTrue((Path(d) / "entry-index.json").exists())
             self.assertTrue((Path(d) / "conversion-report.md").read_text().startswith("# Toyota conversion report"))
 
+    def test_general_manual_vehicle_uses_exact_shared_systems_and_metadata_deterministically(self):
+        sources, labels = fixture()
+        titles = ["Show Menu", "Manual Select", "16PIN DLC (Europe and Other)", "Others", "Synthetic model", "Group X", "Variant Y"]
+        tasks = [0xFEF0, 0xFEF1, 0xFEE9, 0xFEBA, 0xFEBA, 0xFEBA, 7]
+        menu = bytearray()
+        for i, (title, task) in enumerate(zip(titles, tasks)):
+            children = int(i + 1 < len(titles)); node = bytearray(38 + children * 23)
+            struct.pack_into("<I", node, 0, len(node)); struct.pack_into("<I", node, 8, 100 + i)
+            struct.pack_into("<HH", node, 34, task, children)
+            if children: struct.pack_into("<I", node, 57, len(menu) + len(node))
+            labels[f"{100 + i:08X}"] = title; menu += node
+        sources["MENU.BIN"] = bytes(menu)
+        with tempfile.TemporaryDirectory() as d:
+            indexes = []
+            for name in ("first", "second"):
+                p = Path(d) / name; p.mkdir()
+                index = Converter(sources, labels, p).finish(); indexes.append(index)
+                self.assertEqual(1, index["summary"]["normalizedVehicleChoices"])
+                self.assertEqual(0, index["summary"]["unresolvedHierarchyChoices"])
+                container = p / index["container"]; page = read_object(container, index["catalogRoot"])
+                for level in ("make", "model", "generation", "variant"):
+                    child, = page["children"]; self.assertEqual(level, child["level"])
+                    page = read_object(container, child["object"])
+                self.assertNotIn("systems", page)
+                source = read_object(container, page["systemsSource"])
+                self.assertEqual(page["sourceRecords"][-1], source["id"])
+                self.assertEqual(page["systemsSourceId"], source["id"])
+                self.assertEqual(page["sourceSelection"], [s["name"] for s in source["selection"]])
+                system = read_object(container, source["systems"][0]["object"])
+                ecu = read_object(container, system["ecuSource"]["object"])
+                function = read_object(container, system["functionSource"]["object"])
+                self.assertEqual("EU/Ecu_Data_ffff.BIN", ecu["sourceFile"])
+                self.assertEqual("ecu-source", ecu["kind"])
+                self.assertEqual("function-source", function["kind"])
+                self.assertEqual(1, function["declaredLiveRows"])
+                self.assertTrue(ecu["pages"] and function["livePages"])
+                self.assertNotIn("pages", system["ecuSource"])
+                self.assertNotIn("livePages", system["functionSource"])
+                verify(p)
+                from check_pack_delivery import check
+                result = check(p, lambda _, __, ref: read_object(container, ref))
+                self.assertEqual(7, result["requests"])
+                self.assertEqual(system["id"], result["systemId"])
+            self.assertEqual(indexes[0], indexes[1])
+
     def test_malformed_known_layout_is_not_forgiven_or_padded(self):
         with tempfile.TemporaryDirectory() as d:
             sources, labels = fixture()

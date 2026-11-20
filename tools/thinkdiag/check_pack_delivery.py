@@ -97,9 +97,19 @@ def check(directory, downloader=fetch):
         page = get(child["object"])
         if page["id"] != child["id"]:
             raise ValueError("Published path identity mismatch")
-    if page["kind"] != "converted-vehicle" or not page["systems"]:
+    systems = page.get("systems")
+    if page.get("systemsSource") is not None:
+        if systems is not None:
+            raise ValueError("Ambiguous source system descriptors")
+        source = get(page["systemsSource"])
+        if (source.get("kind") != "manual-vehicle" or source.get("id") != page.get("systemsSourceId")
+                or (page.get("sourceRecords") or [None])[-1] != source.get("id")
+                or [s.get("name") for s in source.get("selection", [])] != page.get("sourceSelection")):
+            raise ValueError("Published systems belong to another source vehicle")
+        systems = source.get("systems")
+    if page["kind"] != "converted-vehicle" or not systems:
         raise ValueError("Published selected vehicle has no system accounting")
-    system = get(page["systems"][0]["object"])
+    system = get(systems[0]["object"])
     if system["kind"] != "vehicle-system":
         raise ValueError("Published selected system has the wrong object type")
     return {"requests": requests, "rangeBytes": transferred, "containerBytes": index["containerBytes"],

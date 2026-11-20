@@ -9,11 +9,11 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 | ecuFiles | 1307 |
 | manualLeaves | 24662 |
 | manualLeavesWithSystemJoin | 24642 |
-| normalizedVehicleChoices | 4 |
+| normalizedVehicleChoices | 24653 |
 | systemEntryRecords | 1308 |
 | systems | 287030 |
 | systemsWithExactEntryJoin | 286149 |
-| unresolvedHierarchyChoices | 24658 |
+| unresolvedHierarchyChoices (non-vehicle tasks) | 9 |
 | unresolvedSourceRecords | 1055750 |
 | Executable definitions | 0 |
 
@@ -43,7 +43,20 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 
 ## Reviewed manual choices — exact system accounting
 
-Only these literal source paths have been normalized so far. This is not coverage of all Toyota models or of AN40 diesel. The source month boundaries are retained in generation names; missing engine/fuel/transmission are not invented.
+The full checksum-verified manual MENU tree now supplies 24,653 vehicle paths: EU 13,941, NA 5,762,
+JP 4,950. Nine short non-vehicle tasks are not fabricated as vehicle models. Source models are literal;
+the first detail is a source generation/group, not an inferred chassis generation, and variants retain
+all remaining details plus region/communication menu and exact source-node identity. The four starting
+reviewed Innova paths below keep their existing IDs and month boundaries. The table is a starting-choice
+excerpt, not the full ledger and not executable coverage of those vehicles or of AN40 diesel.
+
+The whole archive is owner-verified by
+[`toyota-verified.json`](../tools/thinkdiag/verification/toyota-verified.json), including nested members.
+This attestation is verified before conversion and included in the index; its sandbox-execution permission
+is separate from executable conversion, operation grants and physical testing. Shared source-system lists
+and ECU/function metadata have explicit typed hash references; a reference cannot cross the selected
+vehicle/ECU/function boundary. Full regeneration/Android evidence for these changes is recorded below
+when it completes, not inferred from historical CI.
 
 | Manual vehicle choice | Source system ID / name | PIDs converted / unresolved candidates | DTCs | Tests | Coding | Reasons |
 |---|---|---:|---|---|---|---|
@@ -91,8 +104,8 @@ The verified full regional SYSLIST excerpts give these exact joins (no low-nibbl
 | JP | 54,545 | 54,545 | 0 |
 | Total | 287,030 | 286,149 | 881 |
 
-These joins do not change the **zero executable definitions** figure. The accounting table above is
-from the full conversion in [Actions run 44482990080](https://github.com/sarapudheen-ops/puthus/actions/runs/44482990080)
+These joins do not change the **zero executable definitions** figure. The system/entry/row counts above
+were originally established by the full conversion in [Actions run 44482990080](https://github.com/sarapudheen-ops/puthus/actions/runs/44482990080)
 for `d782c9a94b87e032fd9725aceb2d0154edcaa05a` (conversion check `135420684960`). The 1,313 additional
 unresolved records versus the pre-entry-reader report are the 1,308 entry records and five unclaimed
 spans, not newly supported diagnostic features. This run published 527 checksum-verified static

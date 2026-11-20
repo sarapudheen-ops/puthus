@@ -17,8 +17,9 @@ import re
 from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_directory,
                               system_lists, typed_table, uint)
 from vehicle_bundle import BundleWriter, SOURCE_SHA256, canonical, read_object
-from reviewed_hierarchy import normalize
+from toyota_hierarchy import normalize_source_vehicle
 from toyota_entries import EntryIndex
+from source_verification import load_verification, verify_archive
 
 REGIONS = {0xFEE9: "EU", 0xFEEA: "NA", 0xFEEB: "JP"}
 REASONS = {
@@ -45,8 +46,7 @@ def source_id(name, offset, suffix=""):
 
 
 def load_sources(archive, decoded, manifest):
-    if sha(archive.read_bytes()) != SOURCE_SHA256:
-        raise ValueError("Unexpected Toyota source archive hash")
+    verify_archive(archive)
     entries = json.loads(manifest.read_text())
     if not isinstance(entries, list) or len(entries) != 1410:
         raise ValueError("Incomplete decoded source manifest")
@@ -181,8 +181,10 @@ class Converter:
                         rows.append(self.disabled(source_id(name, at, f"#slot{section.identity}:row{i}"), "unclassified",
                                                   table.body[i * table.stride:(i + 1) * table.stride],
                                                   ["record_schema_untranslated"], tableTag=table.identity))
-            self.ecus[name.casefold()] = {"sourceFile": name, "sha256": sha(raw), "sections": sections,
-                                          "unclassifiedSourceRecords": len(rows), "pages": self.pages(rows)}
+            metadata = {"kind": "ecu-source", "sourceFile": name, "sha256": sha(raw), "sections": sections,
+                        "unclassifiedSourceRecords": len(rows), "pages": self.pages(rows)}
+            self.ecus[name.casefold()] = {"sourceFile": name, "sha256": metadata["sha256"],
+                                          "object": self.writer.add(metadata)}
             self.census["ecuFiles"] += 1
 
     def convert_functions(self):
@@ -215,8 +217,10 @@ class Converter:
                         at = p + 4 + i * 30
                         live_rows.append(self.disabled(source_id(name, at, f"#function{row[0]}:live{i}"), "pid-candidate",
                             raw[at:at + 30], ["ecu_entry_untranslated", "service_reply_untranslated", "formula_untranslated"]))
+                metadata = {"kind": "function-source", "sourceRecord": identity, "functionKey": row[0],
+                            "sourceFields": list(row), "declaredLiveRows": live_count, "livePages": self.pages(live_rows)}
                 self.functions[region, row[0]] = {"sourceRecord": identity, "functionKey": row[0],
-                    "sourceFields": list(row), "declaredLiveRows": live_count, "livePages": self.pages(live_rows)}
+                    "declaredLiveRows": live_count, "object": self.writer.add(metadata)}
 
     def convert_systems(self):
         for region in REGIONS.values():
@@ -301,6 +305,7 @@ class Converter:
             if not manual and not children:
                 return None
             value = {"kind": "manual-menu", "id": step["id"], "name": title, "children": children}
+            normalized = None
             if manual and not children:
                 systems = self.vehicle_systems.get((region, task)) if task < 0x8000 else None
                 reasons = ["hierarchy_untranslated"]
@@ -311,23 +316,28 @@ class Converter:
                               "hierarchyResolved": False, "enabled": False, "reasons": reasons})
                 record = {"id": step["id"], "path": [s["name"] for s in path[2:]], "region": region,
                           "sourceKey": task, "systems": [s["id"] for s in systems or []], "reasons": reasons}
-                catalog = normalize(record)
+                catalog = normalize_source_vehicle(record)
                 if catalog is not None:
-                    if systems is None:
-                        raise ValueError("Reviewed hierarchy lost its exact regional system join")
                     reasons.remove("hierarchy_untranslated")
                     value.update(hierarchyResolved=True)
                     record.update(hierarchyResolved=True, normalizedVariantId=catalog["nodes"][-1]["id"])
-                    self.normalized.append({"kind": "converted-vehicle", "level": "variant",
+                    normalized = {"kind": "converted-vehicle", "level": "variant",
                         "id": catalog["nodes"][-1]["id"], "name": catalog["nodes"][-1]["name"],
-                        "catalog": catalog, "sourceSelection": record["path"], "sourceRecords": [record["id"]],
-                        "hierarchyResolved": True, "reasons": [], "systems": systems})
+                        "catalog": catalog, "sourceSelection": record["path"], "sourceRecords": [s["id"] for s in path],
+                        "hierarchyResolved": True, "reasons": [], "sourceIssues": list(reasons), "systems": systems or []}
+                    self.normalized.append(normalized)
                 else:
                     self.hierarchy_issues.append(record)
                 self.vehicle_report.append(record)
                 self.census["manualLeaves"] += 1
                 self.census["manualLeavesWithSystemJoin"] += systems is not None
-            return {"id": value["id"], "name": title, "leaf": value["kind"] == "manual-vehicle", "object": self.writer.add(value)}
+            ref = self.writer.add(value)
+            if normalized is not None:
+                # Reuse the exact source leaf's system descriptors, rather than embedding
+                # their counts/reasons/ranges a second time for all 24k vehicle variants.
+                normalized["systemsSource"] = ref
+                normalized["systemsSourceId"] = step["id"]
+            return {"id": value["id"], "name": title, "leaf": value["kind"] == "manual-vehicle", "object": ref}
 
         root = visit(0, [], None, False)
         if len(visited) != len(nodes):
@@ -348,7 +358,7 @@ class Converter:
                         "id": node["id"], "name": node["name"], "level": node["level"], "children": {}})
         def write(node):
             if node["level"] == "variant":
-                value = node
+                value = {key: value for key, value in node.items() if key != "systems" or "systemsSource" not in node}
             else:
                 value = {**node, "kind": "catalog-level", "children": [
                     write(child) for child in sorted(node["children"].values(), key=lambda n: (n["name"], n["id"]))]}
@@ -366,7 +376,7 @@ class Converter:
         catalog_root = self.convert_catalog()
         self.ledger.close(); self._ledger_stream.close()
         summary = {**dict(self.census), "complete": False, "executableDefinitions": 0,
-                   "physicalValidation": False, "reasons": REASONS}
+                   "sourceVerification": load_verification(), "physicalValidation": False, "reasons": REASONS}
         index = self.writer.finish(root["object"], summary, catalog_root)
         for name, records in (("vehicles", self.vehicle_report), ("systems", self.system_report)):
             with (self.output / f"{name}.jsonl.gz").open("wb") as file:
@@ -386,12 +396,17 @@ class Converter:
             "- Opaque whole-file formats and non-live functional row schemas are not yet enumerated as individual features. Full original source IDs remain in the separate research library; this report is not yet an exhaustive feature census.",
             "", "## Disabling reasons", ""]
         report += [f"- `{key}`: {value}" for key, value in REASONS.items()]
-        report += ["", "## Reviewed manual choices — exact system accounting", "",
-                   "Only these literal source paths have been normalized so far. This is not coverage of all Toyota models or of AN40 diesel. "
-                   "The source month boundaries are retained in generation names; missing engine/fuel/transmission are not invented.", "",
+        report += ["", "## Full manual hierarchy and starting choices", "",
+                   "All regional vehicle paths are exposed as Make / exact source Model / first source detail or group / "
+                   "remaining details plus region and communication menu. Missing detail levels are labelled as absent; "
+                   "a source group is not asserted to be a chassis generation. The four previously reviewed Innova paths retain their IDs and month boundaries. "
+                   "Non-vehicle manual tasks remain in the lossless source tree. Full per-path/per-system accounting is in the compressed ledgers, "
+                   "not an unbounded CI summary. The following table shows only the four starting reviewed choices; it is not a claim of executable coverage.", "",
                    "| Manual vehicle choice | Source system ID / name | PIDs converted / unresolved candidates | DTCs | Tests | Coding | Reasons |",
                    "|---|---|---:|---|---|---|---|"]
         for vehicle in self.normalized:
+            if not vehicle["catalog"]["id"].startswith("recovered-toyota-"):
+                continue
             title = vehicle["catalog"]["name"].replace("|", "\\|")
             for system in vehicle["systems"]:
                 def count(kind):

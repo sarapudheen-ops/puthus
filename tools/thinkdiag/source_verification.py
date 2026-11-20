@@ -28,7 +28,11 @@ def load_verification(path=MANIFEST):
                 "scope": "entire-archive-including-nested-members", "authoritativeSpecification": True,
                 "completeSource": True, "sandboxInspectionDecodingAndExecutionAuthorized": True}
             or value.get("runtimeAuthority") != {"automaticVehicleSelection": False, "crossSystemFallback": False,
-                "physicalEcuVerification": False, "writeAuthorization": False}):
+                "physicalEcuVerification": False, "writeAuthorization": False}
+            or type(value["formatVersion"]) is not int or type(value["source"]["bytes"]) is not int
+            or any(type(value["verification"][key]) is not bool for key in ("verified", "authoritativeSpecification",
+                    "completeSource", "sandboxInspectionDecodingAndExecutionAuthorized"))
+            or any(type(flag) is not bool for flag in value["runtimeAuthority"].values())):
         raise ValueError("Missing or mismatched full-archive owner verification")
     return value
 
