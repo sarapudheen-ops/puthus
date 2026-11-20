@@ -60,14 +60,16 @@ def frame(entry) -> dict:
     # Transport is chosen per system/function, not per entry; emit both known forms.
     layout = "can-13byte" if header >> 4 in (0x07E, 0x07D, 0x18D) else "iso9141-9byte"
     if header == 0:
-        return {"layout": "unresolved", "transport": mode, "header": header,
-                "reply": reply, "address": address, "bytes": None}
+        return {"layout": "unresolved", "transport": mode, "header": header & 0xFFFF,
+                "reply": reply & 0xFFFF, "address": address, "bytes": None}
+    # The frame only carries two header bytes; the wider field is reported separately.
+    high, low = (header >> 8) & 0xFF, header & 0xFF
     if layout == "can-13byte":
-        body = bytes([0x03, header >> 8, header & 0xFF, 0x30, reply >> 8, reply & 0xFF, 0x0B])
-        return {"layout": layout, "transport": mode, "header": header, "reply": reply,
-                "address": address, "bytes": (SEED + body).hex()}
-    body = bytes([header >> 8, header & 0xFF, 0x30, reply >> 8, reply & 0xFF])
-    return {"layout": layout, "transport": mode, "header": header, "reply": reply,
+        body = bytes([0x03, high, low, 0x30, (reply >> 8) & 0xFF, reply & 0xFF, 0x0B])
+        return {"layout": layout, "transport": mode, "header": header & 0xFFFF,
+                "reply": reply & 0xFFFF, "address": address, "bytes": (SEED + body).hex()}
+    body = bytes([high, low, 0x30, (reply >> 8) & 0xFF, reply & 0xFF])
+    return {"layout": layout, "transport": mode, "header": header & 0xFFFF, "reply": reply & 0xFFFF,
             "address": address, "bytes": (SEED + body).hex()}
 
 
