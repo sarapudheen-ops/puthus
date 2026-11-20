@@ -282,11 +282,16 @@ class Converter:
                         # Enablement is allowed only via the pinned, independently
                         # verified compiler artifact; enable() itself asserts the exact
                         # source join (function 61, full selector 0x11, raw bytes, hashes).
-                        from toyota_ecmect_pack import enable
+                        from toyota_ecmect_pack import candidate_for, enable
                         enable(value, self.ecmect_review)
+                        # Replace the untranslated evidence page with the ONE runnable
+                        # read-only candidate carrying the exact translated runtime.
+                        candidate = candidate_for(value, self.ecmect_review)
+                        value["bringUpPages"] = [self.writer.add({"kind": "bring-up-candidates", "candidates": [candidate]})]
                     ref = self.writer.add(value)
                     brief = {"id": identity, "name": value["name"], "counts": value["counts"],
-                             "enabled": value["enabled"], "reasons": value["reasons"], "object": ref}
+                             "enabled": value["enabled"], "reasons": value["reasons"], "object": ref,
+                             "readOnly": bool(value.get("readOnly"))}
                     refs.append(brief)
                     self.systems[identity] = ref
                     self.system_report.append({"id": identity, "region": region, "system": value["name"],

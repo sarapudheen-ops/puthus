@@ -102,6 +102,21 @@ def runtime_for(review):
             'session': 'DEFAULT', 'identityKind': 'NON_UNIQUE'}
 
 
+def candidate_for(system, review):
+    """The ONE runnable read-only bring-up candidate of the enabled slice.
+
+    The runtime carries only already-translated definitions; physical vehicle
+    validation stays PENDING and the candidate never enters a non-default
+    session, clears or writes."""
+    records = list(system['sourceRecords'])
+    return {'id': system['id'] + '#translated-entry', 'name': system['name'],
+            'sourceRecords': records, 'supportRecords': records, 'supportCount': len(records),
+            'metadata': {'supportBasis': 'Distinct source records attached to this translated system',
+                         'physicalValidation': 'PENDING',
+                         'transport': 'Existing MIC3313 KWP transport policy; native firmware equivalence not claimed'},
+            'blockers': [], 'runtime': runtime_for(review)}
+
+
 def enable(system, review):
     """Join only the exact selected record; no other system may use this enablement."""
     require(system['id'] == MANDATORY_SYSTEM and system['kind'] == 'vehicle-system' and system['sourceVerified'] is True and
