@@ -141,6 +141,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onExpertMode = viewModel::setExpertMode,
                 catalogTitle = state.catalog.selected?.title,
                 catalogConnection = state.catalog.selected?.data?.connection?.values.orEmpty(),
+                catalogCoverage = state.catalog.selected?.coverage,
+                catalogDownloaded = state.catalog.downloadedSelection,
             )
         }
 

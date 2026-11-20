@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.bod3.app.catalog.CatalogCodec
+import com.bod3.app.catalog.CatalogCoverage
 import com.bod3.app.catalog.CatalogData
 import com.bod3.app.catalog.CatalogEditing
 import com.bod3.app.catalog.CatalogPack
@@ -64,6 +65,8 @@ fun CatalogDefinitionsScreen(target: CatalogDataTarget, pack: CatalogPack, adapt
     val inherited = remember(pack, target) {
         if (node == null) CatalogData() else CatalogTree(pack.copy(nodes = pack.nodes.map { if (it.id == node.id) it.copy(data = CatalogData()) else it })).resolve(node.id)?.data ?: CatalogData()
     }
+    // What this level plus its ancestors actually provide: names/years alone are not coverage.
+    val effective = remember(inherited, local) { inherited.overlay(local) }
     val sectionMap = CatalogCodec.dataMap(local)
     val exclusion = (sectionMap["exclude"] as? Map<*, *>)?.get(section.key)
     var text by rememberSaveable(target) { mutableStateOf(JsonPretty.format(JsonWriter.write(
@@ -105,6 +108,13 @@ fun CatalogDefinitionsScreen(target: CatalogDataTarget, pack: CatalogPack, adapt
         }) { Text("Validate & save") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
+            val effectiveCoverage = effective.coverage
+            Text(
+                if (effectiveCoverage.executable) "Effective coverage of this level and its ancestors: ${effectiveCoverage.counts}."
+                else "Effective coverage of this level and its ancestors. ${CatalogCoverage.NO_ENHANCED_DATA}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (effectiveCoverage.executable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
+            )
             Text("Local declarations only. The same stable key overrides an inherited item. Removing a local override restores the parent; exclude suppresses a parent item here. Data is validated together before a single save.", style = MaterialTheme.typography.bodySmall)
             if (section in listOf(CatalogSection.ACTUATORS, CatalogSection.CODING, CatalogSection.SECURITY)) Text("Always unverified. Definitions never bypass Expert mode, preconditions, confirmation, backup or write verification. Security access runs only inside a guarded test/coding recipe.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
             error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
@@ -123,6 +133,13 @@ fun CatalogDefinitionsScreen(target: CatalogDataTarget, pack: CatalogPack, adapt
             } else {
                 if (section == CatalogSection.CONNECTION) {
                     Text("Sparse patch: omit a key to inherit; null clears a nullable option. Adapter settings not specified by the catalog are preserved. Payload macros, writes and security requests are forbidden in init commands.", style = MaterialTheme.typography.bodySmall)
+                    val inheritedOverrides = inherited.connection.values
+                    Text(
+                        if (inheritedOverrides.isEmpty()) "No inherited connection overrides from parent levels or platforms."
+                        else "${inheritedOverrides.size} inherited connection ${if (inheritedOverrides.size == 1) "override" else "overrides"}: " +
+                            inheritedOverrides.keys.sorted().joinToString(),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     OutlinedButton(onClick = {
                         text = JsonPretty.format(JsonWriter.write(mapOf("connection" to (ConnectionProfileCodec.encode(adapter) - setOf("id", "name")))))
                     }) { Text("Copy current adapter settings (explicit overrides)") }

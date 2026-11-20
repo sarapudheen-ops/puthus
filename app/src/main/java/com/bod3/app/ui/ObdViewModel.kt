@@ -1572,7 +1572,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             catalog.select(id, connectionStore.activeProfile())
             coding.select(null); actuators.select(null)
             refreshData(); coding.refresh(); actuators.refresh()
-            catalogMessage(catalog.selected()?.let { "Selected ${it.title}. Its ECU list and inherited connection overrides will be used on the next connection." } ?: "No vehicle selected. No catalog ECU list or connection overrides will be used.")
+            catalogMessage(catalog.selected()?.selectionMessage ?: "No vehicle selected. No catalog ECU list or connection overrides will be used.")
         }.onFailure { catalogMessage(it.message) }
     }
 

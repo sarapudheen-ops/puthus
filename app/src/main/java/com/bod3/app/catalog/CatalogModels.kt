@@ -29,6 +29,29 @@ data class CatalogExclusions(
     val dtcGroups: Set<String> = emptySet(), val moduleNames: Set<String> = emptySet(),
 )
 
+/**
+ * What a selected level actually contributes to a connection: ECUs, PIDs and connection overrides.
+ * Passive DTC reference text is deliberately not coverage — it changes no ECU list and no protocol.
+ */
+data class CatalogCoverage(val ecus: Int, val pids: Int, val connectionOverrides: Int) {
+    val executable: Boolean get() = ecus > 0 || pids > 0 || connectionOverrides > 0
+
+    /** Meaningful counts, e.g. "3 ECUs · 12 PIDs · 2 connection overrides". */
+    val counts: String get() = listOf(
+        item(ecus, "ECU", "ECUs"), item(pids, "PID", "PIDs"),
+        item(connectionOverrides, "connection override", "connection overrides"),
+    ).joinToString(" · ")
+
+    /** Counts when the level supplies executable data, otherwise the explicit no-coverage statement. */
+    val label: String get() = if (executable) counts else NO_ENHANCED_DATA
+
+    companion object {
+        /** Truthful description of a names/years-only level; it promises no ECU or protocol override. */
+        const val NO_ENHANCED_DATA = "Name/year only — no enhanced ECU or connection definitions; generic OBD only."
+        private fun item(value: Int, singular: String, plural: String) = "$value ${if (value == 1) singular else plural}"
+    }
+}
+
 /** Local declarations only. Saving a child never copies its inherited definitions. */
 data class CatalogData(
     val ecus: List<EcuDefinition> = emptyList(),
@@ -101,6 +124,9 @@ data class CatalogData(
     val count: Int get() = ecus.size + pids.size + dtcCount + moduleNames.size + actuators.size + coding.size + security.size + connection.values.size
     val summary: String get() = "${ecus.size} ECUs · ${pids.size} PIDs · $dtcCount DTC texts · ${actuators.size} tests · ${coding.size} coding recipes"
 
+    /** Executable enhanced coverage of this data alone. DTC text, tests and coding are not part of it. */
+    val coverage: CatalogCoverage get() = CatalogCoverage(ecus.size, pids.size, connection.values.size)
+
     companion object {
         fun moduleKey(m: ModuleNameEntry): String = "${m.requestId.uppercase(Locale.ROOT)}/${m.responseId?.uppercase(Locale.ROOT).orEmpty()}/${m.makes.map(CatalogIds::normalize).sorted().joinToString(",")}"
     }
@@ -141,6 +167,15 @@ data class ResolvedCatalog(val path: List<CatalogNode>, val data: CatalogData, v
     val title: String get() = path.joinToString(" / ") { it.label }
     val make: String get() = path.first().name
     val model: String? get() = path.firstOrNull { it.level == CatalogLevel.MODEL }?.name
+
+    /** Executable coverage of the resolved path, never of names, years or DTC text. */
+    val coverage: CatalogCoverage get() = data.coverage
+
+    /** Confirmation that states counts, or admits that only names/years are selected. */
+    val selectionMessage: String
+        get() = if (coverage.executable) "Selected $title. ${coverage.counts} will be used on the next connection."
+            else "Selected $title. ${CatalogCoverage.NO_ENHANCED_DATA}"
+
     fun connection(base: ConnectionProfile): ConnectionProfile = data.connection.apply(base).copy(id = "catalog-${node.id}", name = title)
 }
 
