@@ -34,6 +34,9 @@ REASONS = {
     "missing_system_entry": "No SYSTEMENTER entry exactly matches this region, function and complete selector byte; another selector or ECU is never substituted.",
     "missing_system_key": "The ordinary manual MENU leaf has no matching SYSLIST key in its source region.",
     "nonordinary_menu_task": "This manual leaf uses a special task, not the proven ordinary VehicleSystemScan key path.",
+    "live_applicability_untranslated": "The source row's runtime applicability conditions are not fully translated.",
+    "calc_semantics_unreviewed": "The exact EXPRESS/CALC expression is not in the runtime-compiled subset.",
+    "dynamic_scaling_untranslated": "The source row's dynamic scaling behavior is not fully translated.",
 }
 
 
@@ -195,6 +198,13 @@ class Converter:
             self.census["ecuFiles"] += 1
 
     def convert_functions(self):
+        omissions = {}
+        compiled = set()
+        if self.ecmect_review is not None:
+            # The enabled function's live rows are partitioned exactly: 30 compiled
+            # into the slice, the other 985 keep their first implementation blocker.
+            omissions = {row["id"]: row for row in self.omissions["items"]}
+            compiled = {row["id"] for row in self.ecmect_review["liveReads"]}
         for region in REGIONS.values():
             name = f"FUNCDATA_{region}.BIN"
             raw = self.sources[name]
@@ -222,20 +232,24 @@ class Converter:
                             raise ValueError("Live command sequence exceeds source block")
                     for i in range(live_count):
                         at = p + 4 + i * 30
-                        live_rows.append(self.disabled(source_id(name, at, f"#function{row[0]}:live{i}"), "pid-candidate",
-                            raw[at:at + 30], ["ecu_entry_untranslated", "service_reply_untranslated", "formula_untranslated"]))
+                        identity = source_id(name, at, f"#function{row[0]}:live{i}")
+                        omitted = omissions.get(identity)
+                        if self.ecmect_review is not None and (region, row[0]) == ("EU", 61):
+                            if omitted is None:
+                                if identity not in compiled:
+                                    raise ValueError("ECMECT live row is neither compiled nor accounted as omitted")
+                                continue  # Compiled into the enabled read-only slice, not unresolved.
+                            live_rows.append(self.disabled(identity, "pid-candidate", raw[at:at + 30],
+                                omitted["reasons"], detail=omitted["detail"]))
+                        else:
+                            live_rows.append(self.disabled(identity, "pid-candidate",
+                                raw[at:at + 30], ["ecu_entry_untranslated", "service_reply_untranslated", "formula_untranslated"]))
                 metadata = {"kind": "function-source", "sourceRecord": identity, "functionKey": row[0],
                             "sourceFields": list(row), "declaredLiveRows": live_count, "livePages": self.pages(live_rows)}
                 self.functions[region, row[0]] = {"sourceRecord": identity, "functionKey": row[0],
                     "declaredLiveRows": live_count, "object": self.writer.add(metadata)}
 
     def convert_systems(self):
-        if self.read_artifacts is not None:
-            _, artifact_dir = self.read_artifacts
-            from toyota_ecmect_pack import load_review
-            self.ecmect_review = load_review(artifact_dir)
-        else:
-            self.ecmect_review = None
         for region in REGIONS.values():
             name = f"SYSLIST_{region}.BIN"
             index, blocks = system_lists(self.sources[name])
@@ -393,20 +407,20 @@ class Converter:
 
     def convert_inventory(self):
         if self.ecmect_review is not None:
-            from toyota_ecmect_pack import live_omissions, stage_review, verify_enabled
+            from toyota_ecmect_pack import stage_review, verify_enabled
             from toyota_runtime_compile import MANDATORY_SYSTEM
-            # Re-verify the enabled object against the exact artifact allowlist, account
-            # for the 985 reviewed-but-not-compiled live rows of the ONE enabled system,
-            # and stage the pinned compiler artifacts alongside the pack (not in the APK).
+            # Re-verify the enabled object against the exact artifact allowlist and
+            # stage the omissions ledger plus pinned compiler artifacts next to the
+            # pack (the omissions page stays in the container; artifacts are not
+            # APK content).
             enabled_ref = self.systems.get(MANDATORY_SYSTEM)
             if enabled_ref is None:
                 raise ValueError("Mandatory ECMECT system record is missing")
             verify_enabled(read_object(self.writer.path, enabled_ref), self.ecmect_review)
-            omissions = live_omissions(self.sources, self.english, self.ecmect_review)
-            self.omissions_ref = self.writer.add(omissions)
-            (self.output / "ecmect-live-omissions.json").write_bytes(canonical(omissions) + b"\n")
+            self.omissions_ref = self.writer.add(self.omissions)
+            (self.output / "mandatory-ecmect-live-omissions.json").write_bytes(canonical(self.omissions) + b"\n")
             stage_review(self.ecmect_review, self.output)
-            self.census["ecmectOmittedLiveRows"] = omissions["omittedLiveRows"]
+            self.census["ecmectOmittedLiveRows"] = self.omissions["omittedLiveRows"]
         # The source has SYSLIST blocks not reached by ordinary manual MENU paths.
         # Keep ALL source systems/ECUs/functions in a separate audit root. They are
         # never attached to another vehicle, selected as fallback, or hidden from
@@ -422,6 +436,13 @@ class Converter:
             "unclaimedEntryPages": self.unclaimed_entry_pages})
 
     def finish(self):
+        self.ecmect_review = None
+        self.omissions = None
+        if self.read_artifacts is not None:
+            _, artifact_dir = self.read_artifacts
+            from toyota_ecmect_pack import live_omissions, load_review
+            self.ecmect_review = load_review(artifact_dir)
+            self.omissions = live_omissions(self.sources, self.english, self.ecmect_review)
         self.convert_entries()
         self.convert_ecus()
         self.convert_functions()

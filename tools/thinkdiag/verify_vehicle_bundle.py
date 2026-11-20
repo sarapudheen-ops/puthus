@@ -259,7 +259,7 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
         if artifact.is_file():
             from toyota_ecmect_pack import ARTIFACTS, candidate_for, load_review, verify_enabled
             require(all((directory / name).is_file() for name in ARTIFACTS) and
-                    (directory / "ecmect-live-omissions.json").is_file(),
+                    (directory / "mandatory-ecmect-live-omissions.json").is_file(),
                     "Enabled ECMECT pack is missing staged compiler artifacts or the omissions ledger")
             review = load_review(directory)
             require(sorted(enabled_objects) == [review["systemId"]],
@@ -267,7 +267,7 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
             verify_enabled(enabled_objects[review["systemId"]], review)
             require(runnable_candidates == [candidate_for(enabled_objects[review["systemId"]], review)],
                     "Runnable bring-up candidate differs from the pinned ECMECT slice")
-            omissions = json.loads((directory / "ecmect-live-omissions.json").read_bytes())
+            omissions = json.loads((directory / "mandatory-ecmect-live-omissions.json").read_bytes())
             require(isinstance(omissions, dict) and omissions.get("kind") == "ecmect-live-omissions" and
                     omissions.get("systemId") == review["systemId"] and
                     omissions.get("omittedLiveRows") == review["uncompiledLiveRows"] ==

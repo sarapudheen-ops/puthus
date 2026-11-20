@@ -14,7 +14,7 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 | systems | 287030 |
 | systemsWithExactEntryJoin | 286149 |
 | unresolvedHierarchyChoices (non-vehicle tasks) | 9 |
-| unresolvedSourceRecords | 1055750 |
+| unresolvedSourceRecords | 1055720 |
 | ecmectOmittedLiveRows | 985 |
 | Executable definitions | 1445 |
 | Enabled source systems | 1 |
@@ -89,7 +89,7 @@ Exactly one reviewed system is enabled, read-only: `SYSLIST_EU.BIN@0009d8f2` ECM
 selector 0x11, `EU/Ecu_Data_0081.BIN`; TX `8013F0` / RX `80F013`, 10416 baud, init frame `8113F08105`)
 with 30 exact live PIDs, 1,414 exact DTC labels, 4 ordered fault queries and 1 exact 0904
 calibration-ID read. Clearing, coding, actuators, security access and flashing are excluded; all other
-systems remain disabled. The 985 remaining reviewed live rows are itemized in `ecmect-live-omissions.json`.
+systems remain disabled. The 985 remaining reviewed live rows are itemized in `mandatory-ecmect-live-omissions.json`.
 No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.
 Source verification is distinct from completed conversion and from physical vehicle testing.
 

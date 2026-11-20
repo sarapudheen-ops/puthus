@@ -220,7 +220,7 @@ one reviewed system: `SYSLIST_EU.BIN@0009d8f2` (function 61, full selector 0x11,
 init frame `8113F08105`, on the app's existing MIC3313 KWP transport policy — native Toyota
 firmware equivalence is **not** required or claimed. The enabled system is read-only: fault
 clearing, coding, actuators, security access and flashing are excluded. The 985 reviewed live
-rows that are not compiled keep exact IDs and first blockers in `ecmect-live-omissions.json`.
+rows that are not compiled keep exact IDs and first blockers in `mandatory-ecmect-live-omissions.json`.
 Bundle verification re-checks the enabled object byte-for-byte against the artifact allowlist
 and rejects any other enabled system. No raw EXPRESS or vendor library executes on Android.
 Enabling this slice grants no writes, no unique-ECU-serial proof, and no physical validation.
