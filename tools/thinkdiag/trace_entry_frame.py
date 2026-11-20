@@ -164,16 +164,18 @@ def analyse(data: bytes) -> dict:
     seed = {}
     for index, ins in enumerate(instructions):
         if ins.mnemonic == "ldr" and ins.op_str.startswith("q0,"):
-            for back in range(index - 1, max(index - 6, -1), -1):
+            page = None
+            offset = None
+            for back in range(index - 1, max(index - 8, -1), -1):
                 before = instructions[back]
-                if before.mnemonic == "adrp" and before.op_str.startswith("x9,"):
+                if before.mnemonic == "adrp" and before.op_str.startswith("x9,") and page is None:
                     page = int(split_ops(before.op_str)[1].lstrip("#"), 0)
-                    break
-                if before.mnemonic == "add" and before.op_str.startswith("x9, x9,"):
-                    seed["offset"] = int(split_ops(before.op_str)[2].lstrip("#"), 0)
-                    seed["page"] = page
-                    seed["raw"] = binary.read(page + seed["offset"], 16).hex()
-                    seed["address"] = f"0x{page + seed['offset']:x}"
+                if before.mnemonic == "add" and before.op_str.startswith("x9, x9,") and offset is None:
+                    offset = int(split_ops(before.op_str)[2].lstrip("#"), 0)
+            if page is not None and offset is not None:
+                seed = {"offset": offset, "page": page,
+                        "address": f"0x{page + offset:x}",
+                        "raw": binary.read(page + offset, 16).hex()}
             break
 
     branches = []

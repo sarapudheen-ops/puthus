@@ -157,13 +157,21 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/thinkdiag/trace_entry_frame.py .local/brands/TOYOTA.zip \
-            --output .local/recon/entry-frame.md || echo "entry frame trace failed"
+            --output .local/recon/entry-frame.md 2> .local/recon/entry-frame.err \
+            || echo "entry frame trace failed"
           if [ -f .local/recon/entry-frame.md ]; then
             gh api --method POST "repos/$GH_REPO/check-runs" \
               -f name='Entry frame layouts' -f head_sha="$GITHUB_SHA" \
               -f status=completed -f conclusion=success \
               -f 'output[title]=Transport byte to ECU frame' \
               -F 'output[summary]=@.local/recon/entry-frame.md' || echo "frame publish skipped"
+          else
+            { echo "## Entry frame trace failed"; echo '```'; tail -20 .local/recon/entry-frame.err; echo '```'; } > .local/recon/entry-frame.md
+            gh api --method POST "repos/$GH_REPO/check-runs" \
+              -f name='Entry frame layouts' -f head_sha="$GITHUB_SHA" \
+              -f status=completed -f conclusion=failure \
+              -f 'output[title]=Transport byte to ECU frame' \
+              -F 'output[summary]=@.local/recon/entry-frame.md' || true
           fi
 
       - name: Trace the Toyota COMM request path
