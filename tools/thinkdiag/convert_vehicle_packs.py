@@ -212,8 +212,11 @@ class Converter:
             index, _ = function_index(raw)
             pointers = sorted({p for row in index for p in row[1:6] if p not in (0, 0xFFFFFFFF)} | {len(raw)})
             stops = {p: pointers[i + 1] for i, p in enumerate(pointers[:-1])}
-            for row in index:
-                identity = source_id(name, 1 + 28 * next(i for i, r in enumerate(index) if r[0] == row[0]))
+            for row_index, row in enumerate(index):
+                # Match toyota_runtime_compile.FunctionBlocks.index_offsets so the
+                # function source record joins the pinned compiler artifact exactly
+                # (last key position wins, as in the dict comprehension there).
+                identity = source_id(name, 1 + 28 * row_index)
                 live_rows = []
                 # CDSF ReadDStreamFunc @0xFBB0 passes runtime+0x107a0 to
                 # FILE GetDsDataFromDSPart; FILE GetInfoFromAddrPart @0x11e30
@@ -233,17 +236,17 @@ class Converter:
                             raise ValueError("Live command sequence exceeds source block")
                     for i in range(live_count):
                         at = p + 4 + i * 30
-                        identity = source_id(name, at, f"#function{row[0]}:live{i}")
-                        omitted = omissions.get(identity)
+                        row_id = source_id(name, at, f"#function{row[0]}:live{i}")
+                        omitted = omissions.get(row_id)
                         if self.ecmect_review is not None and (region, row[0]) == ("EU", 61):
                             if omitted is None:
-                                if identity not in compiled:
+                                if row_id not in compiled:
                                     raise ValueError("ECMECT live row is neither compiled nor accounted as omitted")
                                 continue  # Compiled into the enabled read-only slice, not unresolved.
-                            live_rows.append(self.disabled(identity, "pid-candidate", raw[at:at + 30],
+                            live_rows.append(self.disabled(row_id, "pid-candidate", raw[at:at + 30],
                                 omitted["reasons"], detail=omitted["detail"]))
                         else:
-                            live_rows.append(self.disabled(identity, "pid-candidate",
+                            live_rows.append(self.disabled(row_id, "pid-candidate",
                                 raw[at:at + 30], ["ecu_entry_untranslated", "service_reply_untranslated", "formula_untranslated"]))
                 metadata = {"kind": "function-source", "sourceRecord": identity, "functionKey": row[0],
                             "sourceFields": list(row), "declaredLiveRows": live_count, "livePages": self.pages(live_rows)}
