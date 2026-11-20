@@ -24,6 +24,7 @@ on:
       - '.github/workflows/brand-recon.yml'
       - 'tools/thinkdiag/trace_comm.py'
       - 'tools/thinkdiag/trace_entry_frame.py'
+      - 'tools/thinkdiag/trace_fields.py'
 
 permissions:
   contents: write # Publish the built DTC packs as release assets the app can import.
@@ -151,6 +152,20 @@ jobs:
               -f 'output[title]=Do the recovered tables join?' \
               -F 'output[summary]=@.local/recon/join-probe.md' || echo "join publish skipped"
           fi
+
+      - name: Find who fills the frame fields
+        if: contains(env.BRANDS, 'TOYOTA')
+        run: |
+          set -euo pipefail
+          python3 tools/thinkdiag/trace_fields.py .local/brands/TOYOTA.zip \
+            --output .local/recon/frame-fields.md 2> .local/recon/frame-fields.err \
+            || echo "field trace failed"
+          [ -f .local/recon/frame-fields.md ] || { echo "## Field trace failed"; echo '```'; tail -20 .local/recon/frame-fields.err; echo '```'; } > .local/recon/frame-fields.md
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Frame field writers' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Where the frame fields come from' \
+            -F 'output[summary]=@.local/recon/frame-fields.md' || echo "publish skipped"
 
       - name: Resolve the Toyota entry frame table
         if: contains(env.BRANDS, 'TOYOTA')
