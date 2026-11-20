@@ -119,14 +119,24 @@ def candidate_for(system, review):
 
 def enable(system, review):
     """Join only the exact selected record; no other system may use this enablement."""
-    require(system['id'] == MANDATORY_SYSTEM and system['kind'] == 'vehicle-system' and system['sourceVerified'] is True and
-            system['functionKey'] == 61 and system['entrySelector'] == 17 and system['rawHex'] == review['rawSystemHex'] and
-            system['sourceRecords'] == [MANDATORY_SYSTEM, FUNCTION, 'SYSTEMENTER.BIN@000001c6', ENTRY] and
-            system['ecuSource']['sourceFile'] == MANDATORY_ECU and
-            system['functionSource']['sourceRecord'] == FUNCTION and system['functionSource']['functionKey'] == 61 and
-            system['functionSource']['declaredLiveRows'] == 1015 and
-            system['entrySource']['sourceRecord'] == ENTRY and system['entrySource']['selector'] == 17,
-            'ECMECT source join differs')
+    mismatches = []
+    def check(label, actual, expected):
+        if actual != expected:
+            mismatches.append(f"{label}: got {actual!r} expected {expected!r}")
+    check('id', system['id'], MANDATORY_SYSTEM)
+    check('kind', system['kind'], 'vehicle-system')
+    check('sourceVerified', system['sourceVerified'], True)
+    check('functionKey', system['functionKey'], 61)
+    check('entrySelector', system['entrySelector'], 17)
+    check('rawHex', system['rawHex'], review['rawSystemHex'])
+    check('sourceRecords', system['sourceRecords'], [MANDATORY_SYSTEM, FUNCTION, 'SYSTEMENTER.BIN@000001c6', ENTRY])
+    check('ecuSource.sourceFile', system['ecuSource']['sourceFile'] if system['ecuSource'] else None, MANDATORY_ECU)
+    check('functionSource.sourceRecord', system['functionSource']['sourceRecord'] if system['functionSource'] else None, FUNCTION)
+    check('functionSource.functionKey', system['functionSource']['functionKey'] if system['functionSource'] else None, 61)
+    check('functionSource.declaredLiveRows', system['functionSource']['declaredLiveRows'] if system['functionSource'] else None, 1015)
+    check('entrySource.sourceRecord', system['entrySource']['sourceRecord'] if system['entrySource'] else None, ENTRY)
+    check('entrySource.selector', system['entrySource']['selector'] if system['entrySource'] else None, 17)
+    require(not mismatches, 'ECMECT source join differs: ' + '; '.join(mismatches))
     require(system['ecuSource']['sha256'] == next(i['sha256'] for i in review['inputs'] if i['file'] == MANDATORY_ECU),
             'ECMECT ECU input hash differs')
     system.update(enabled=True, reasons=[], readOnly=True, transportPolicy=transport_for(review), data=data_for(review))
