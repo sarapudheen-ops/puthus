@@ -416,6 +416,7 @@ class Converter:
             enabled_ref = self.systems.get(MANDATORY_SYSTEM)
             if enabled_ref is None:
                 raise ValueError("Mandatory ECMECT system record is missing")
+            self.writer.stream.flush()  # read_object reopens the container path.
             verify_enabled(read_object(self.writer.path, enabled_ref), self.ecmect_review)
             self.omissions_ref = self.writer.add(self.omissions)
             (self.output / "mandatory-ecmect-live-omissions.json").write_bytes(canonical(self.omissions) + b"\n")
