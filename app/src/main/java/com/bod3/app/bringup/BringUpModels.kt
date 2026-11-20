@@ -33,7 +33,8 @@ data class BringUpRuntime(
     val identityKind: EcuIdentityKind = EcuIdentityKind.NON_UNIQUE,
 ) {
     val ecu: EcuDefinition get() = data.ecus.single()
-    val identification: DiagnosticRead get() = ecu.diagnostics!!.identification.single { it.read.id == identificationId }.read
+    val identificationDefinition get() = ecu.diagnostics!!.identification.single { it.read.id == identificationId }
+    val identification: DiagnosticRead get() = identificationDefinition.read
     val live: CustomPid get() = data.pids.single { it.id == livePidId }
 
     fun problems(): List<String> = buildList {
@@ -55,9 +56,11 @@ data class BringUpRuntime(
         val ids = ecu.diagnostics?.identification.orEmpty()
         val id = ids.singleOrNull { it.read.id == identificationId }?.read
         if (id == null || id.minBytes < 1 || id.sourceRecords.isEmpty()) add("A source-bound, nonempty identification read is required")
-        if (ids.any { it.read.sourceRecords.isEmpty() }) add("Every identification definition needs its own source records, not just the probe")
+        if (ids.any { it.read.sourceRecords.isEmpty() || it.read.supportChecks.any { c -> c.sourceRecords.isEmpty() } })
+            add("Every identification definition and prerequisite needs its own source records, not just the probe")
         val dtc = ecu.diagnostics?.faults
-        if (dtc == null || dtc.read.sourceRecords.isEmpty()) add("An exact source-bound DTC read and record layout are required")
+        if (dtc == null || dtc.read.sourceRecords.isEmpty() || dtc.read.supportChecks.any { it.sourceRecords.isEmpty() })
+            add("An exact source-bound DTC read, prerequisites and record layout are required")
         if (dtc?.clear?.sourceRecords?.isEmpty() == true) add("A clear definition needs independent source provenance; a working read cannot approve it")
         val live = data.pids.singleOrNull { it.id == livePidId }
         if (live == null) add("Choose exactly one translated live-data request")
@@ -149,7 +152,7 @@ data class BringUpReport(
                 val runtime = requireNotNull(candidates.single { it.id == a.candidateId }.runtime)
                 require(a.probes.map { Hex.parse(it.request) } == listOf(runtime.identification.requestBytes,
                     runtime.live.requestBytes, runtime.ecu.diagnostics!!.faults!!.read.requestBytes)) { "Probe requests differ from the exact candidate definitions" }
-                require(runtime.identification.data(requireNotNull(Hex.parse(a.probes[0].payload!!)))?.isNotEmpty() == true)
+                require(runtime.identification.data(requireNotNull(Hex.parse(a.probes[0].payload!!)))?.let(runtime.identificationDefinition::accepts) == true)
                 require(runtime.live.decode(requireNotNull(Hex.parse(a.probes[1].payload!!)))?.isFinite() == true)
                 val faults = requireNotNull(runtime.ecu.diagnostics?.faults)
                 require(faults.read.data(requireNotNull(Hex.parse(a.probes[2].payload!!)))?.let {

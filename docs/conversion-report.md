@@ -233,3 +233,249 @@ The migration from full offline source assets to the small pinned index is docum
 [on-demand delivery and reproduction](toyota-vehicle-packs.md). This report must be regenerated
 when actual executable conversion is implemented; zero/unknown counts must not be relabeled as
 completed coverage. No physical vehicle/adapter test has been performed.
+
+## Source DTC caller and explicit session UI (current work, not executable acceptance)
+
+The current converter still emits **zero executable definitions**. The full decoded
+input run checks 1,410 BIN arrays (114,797,280 bytes), retains 287,030 source system
+records, and verifies a 378,283-object graph. Its 3,767-byte index and 366,409,541-byte
+container are delivery/accounting results, not working ECU coverage.
+
+`toyota_runtime_compile.py compile` now also emits a separately named, non-production
+source-read review for the exact `SYSLIST_EU.BIN@0009d8f2` / function 61 / selector
+`0x11` / `EU/Ecu_Data_0081.BIN` join. It contains 30 literal-reviewed numeric live
+reads with exact source units, windows and A801/2100 applicability, 1,414 exact-key
+fault labels, four native ordered fault queries and one dispatch-14 calibration-ID
+read. These are **not** an enabled `vehicle-system.data`: the adapter timing/pin API
+mapping and full native retry/fallback lifecycle remain separate missing gates.
+The generated review explicitly reports `productionExecutableDefinitions: 0` and
+985 source live rows not compiled by this closed numeric class. No production
+coverage count includes these sidecars.
+
+The prepare action and inspection workflow compile and verify these source
+sidecars. Gradle unit tests receive their exact paths and fail when the expected
+generated files are missing, rather than silently skipping the actual-source
+cases. Synthetic adapter simulations consume the source request/formula/unit/
+applicability and fault caller objects. Their synthetic link, replies and ID do
+not establish the mandatory target's MIC3313 timing or physical behavior.
+
+The ECU detail screen now offers an **Expert-only, operation-specific** `10 5F`
+consequences dialog. Ordinary Refresh never changes the diagnostic session. The
+non-persisted dialog intent binds the displayed full ECU definition, Session
+instance, routing generation and a monotonic 60-second expiry. It is consumed
+only after acquiring the bus; reset, reconnection, definition change, dismissal,
+Expert disable and expiry cannot revive it. A fresh selected-ECU identity recheck
+then precedes a separate single-use, initialized-epoch-bound `105F` capability.
+The source-read lease cannot clear or consume a WriteGrant, including through
+nested active-operation calls. Coding, active tests and clears still require the
+separate fresh same-current-ECU guard and reviewed unique ECU serial. Calibration
+IDs remain nonunique and cannot unlock writes. Exact bounded exchanges and the
+outcome are appended to the local diagnostic-session audit even on cancellation;
+no generic restoration command is invented.
+
+Saved module readouts now preserve source request/name/display text, unsigned
+32-bit exact fault keys and Toyota status meaning/state without relabeling them
+as UDS bits. Older records retain legacy interpretation; unknown explicit future
+status schemas display raw metadata. Saved/imported results grant no authority.
+
+Latest local commands/results:
+
+- `PYTHONPATH=.local/python:tools/thinkdiag python -m unittest discover -s tools/thinkdiag -p 'test_*.py' -q`
+  **226 tests PASS** (0.359 s on the final pre-commit run).
+- Complete decoded source-read compilation and
+  `python tools/thinkdiag/toyota_runtime_compile.py verify .local/toyota-complete/vehicle-packs`:
+  **30 live reads / 1,414 labels / four source queries / one ID / zero production definitions**.
+- Standalone Kotlin 2.2.21 / JDK 17 harness: **102 scenario groups PASS**, including
+  actual generated definitions, queued-intent expiry/reset/cancellation, source
+  lease non-escalation and saved metadata. This is not Gradle/Compose/Android
+  acceptance; the project uses its own Kotlin/Android toolchain in CI.
+- Protected `ReadOnlyPolicyTest`, `WritePolicyTest` and `ClearConfirmationTest`
+  remain unchanged. Android 24 still tests index/range/cache delivery only, not
+  nonempty executable Toyota live/DTC screens. No physical validation is claimed.
+
+
+## Extended native lifecycle and artifact regressions (still not enabled coverage)
+
+The complete decoded-input seven-library comparison (all **1,410** manifest/hash-checked
+BIN arrays) passed in **363.546 s**, including all the new negative-entry domains below
+and the existing reviewed domains. This local run did not read `TOYOTA.zip`; it must not
+be called original-ZIP verification. Inspection CI independently loads the original archive
+and verifies its owner-attested SHA.
+
+New bounded source control-flow ports and independent native comparisons add:
+
+- **2,272** fast-entry vectors over all **284** transport-1/5 source entries. They preserve
+  EndCombination's signed-16 result, the alternate Toyota sender on negative combined
+  returns only, the second pulse attempt and 500-microsecond native delay. A negative ECU
+  service produces `FFFE`, not the `FFFF` that selects ISO fallback. All **17** source
+  transport-5 entries select that same-entry fallback on exhausted adapter failures.
+- **2,272** direct ISO-consumer vectors over those same source entry contexts. These test
+  zero-low-word handshake success, two attempts per exact pin pair, unchanged address byte,
+  exact initial-template lookup, and failure on a negative initial sender result. Direct
+  ISO-consumer tests on transport-1 contexts are component vectors, **not** a claim that
+  native transport 1 dispatches an ISO fallback. The high-level slow-init sender remains an
+  explicit fake boundary; it does not establish a MIC3313 electrical implementation.
+- **1,032** exact ECMECT kind-5/template-165 read-reentry vectors, including **576**
+  exit/enter/restore/read-once sequences. These inspect context `+174d1 = FF` at Exit/Enter,
+  restoration before the identical read, signed-negative/`7FFF` trigger conditions, and
+  native transport 1/2/5 restriction. Native ignores lifecycle failure; the app must not
+  treat that behavior as proof or replay `105F`. The later source-API Session integration
+  below connects this callback under an exact source transport lease; no adapter mapping is implied.
+
+Android's custom fast initializer now always requires **one complete selected-ECU C1
+reply with its two keyword bytes**, even outside bring-up. Plain adapter `OK`, empty
+native-style success, short/long/partial replies, wrong ECU, duplicate replies and mixed
+positive/negative/error evidence do not initialize a link. The standalone Kotlin run
+passed **102 scenario groups**, including the actual compiled read definitions and this
+new rejection matrix. This is simulation, not a physical vehicle validation.
+
+`mandatory-read-artifacts-v1.json` is a **compiler-output regression pin**, not a source
+attestation or executable-system approval. The compile CLI recompiles the exact source
+twice and compares canonical bytes. The source-read review now includes the previously
+omitted `EU/Toyota_bin_1B.BIN` input hash, all four canonical decoded text dictionary hashes
+(explicitly not encrypted GAG hashes), and the CALC evidence library hash. The generated
+files are independently checked against the reviewed canonical hash and round-tripped.
+`test-artifacts` runs **48** real-output negative vectors: corrupt/truncated/missing files,
+noncanonical/duplicate JSON, changed function/full-selector/ECU/region, 10416-to-10400
+substitution, pin/pulse changes, formula/unit/offset/applicability changes, changed labels,
+partial queries, changed ID, forged counts/input hashes and path traversal. Both prepare
+and inspection workflows run these tests, including on cache hits; no sidecar enters the APK.
+
+Inspected evidence for the preceding `09e59bf` push (not an acceptance claim for this patch):
+
+- [Inspection run 44708729866](https://github.com/sarapudheen-ops/puthus/actions/runs/44708729866): success.
+- [Android run 44708730041](https://github.com/sarapudheen-ops/puthus/actions/runs/44708730041):
+  assemble/lint/tests success; job `136194736850` reports **579 tests, 0 failures, 0 errors,
+  0 skipped in 70 classes**. This includes actual Android/Compose compilation of the session UI.
+- Android 24 job `136204801894` and evidence check `136205546508`: **2 tests PASS, 2.254 s**,
+  actual APK installation, index/range/private-cache/offline delivery only. This is **not**
+  manual-selection-to-executable-live/DTC acceptance. Disposable emulator CA augmentation
+  remains documented; the APK has no TLS/hostname bypass or test CA.
+
+**Remaining acceptance failures are unchanged:** zero enabled production systems; missing
+native-to-MIC3313 timing/pin/line equivalence and production routing of retry/reentry/ISO;
+mandatory nonempty live/DTC/ECU selection on Android 24; complete remaining live language,
+identity/transport/workflow classes, coding/actuators/special functions and whole-source
+coverage. PR14 is draft, with no merge authorization for this new work; source completeness
+is not being blamed for these implementation gaps.
+
+
+## Portable lifecycle and Session integration (scripted source API, not MIC3313 approval)
+
+`SourceKwpLifecycle` now ports the bounded native API control flow and exact source argument
+positions into Kotlin. `SourceKwpPlanCodec` reads a closed projection, snapshots it before
+callbacks, and rejects changed classes, cross-region frame provenance, incomplete byte fields,
+unknown keys, integer overflow and session/write smuggling. This is deliberately **not** an
+adapter command or enabled vehicle-pack codec. Native configuration failures are hardened to
+abort, and native zero/adapter ACK cannot replace one complete, checksum-valid, exact-ECU C1.
+
+`Session.withSourceKwpTransport` holds the existing executor/operation lease across configuration,
+entry, reads, function-specific keepalive and bounded noncancellable cleanup. It does not use
+legacy KLineConfig default timing/pacing or generic AT/ST/VT initialization. It rejects profile
+addressing overrides, scope switches, write/clear/coding/actuator escalation and later generic
+K-line substitution for a source-used address. An I/O error/reset invalidates current-target and
+epoch evidence; cleanup does not reconnect to send an exit. C1 is link evidence only, never a
+reviewed ECU serial or write proof.
+
+The actual workbench now invokes the source reentry callback when this exact source transport
+lease exists: only an unambiguous missing read, exact function/transport/ECU, exit → same-entry
+initialization with C1 → context restoration → one identical read. It never retries `105F`,
+setup/discovery, malformed/mixed replies or a disconnected exchange. No-data plus a data frame
+is explicitly incomplete, not a trigger for reconnect/retry. Context restoration runs on cancellation.
+
+`source-kwp-contracts.json` is a **4,956,450-byte test-only artifact**, SHA-256
+`b26df7cb4cc791e66363bfaac1cd9b09603e68ec83a4c1e1395624584c296004`. The generator's
+**double regeneration PASS** checked all 1,410 recovered decoded input lengths/hashes and
+matched the independently pinned native binding/fast/ISO domains: **284 entries, 2,272 fast
+vectors, 2,272 ISO vectors, zero production executable definitions**. The local run did not
+verify the original ZIP. Prepare/inspection workflows now compile it from the original archive
+and verify the complete pinned artifact on cache hits too. Only the existing small index is staged
+for the APK; this sidecar remains outside assets.
+
+Local results after Session integration: **229 Python tests PASS** and **113 standalone Kotlin
+scenario groups PASS** (real generated definitions, scripted API I/O and synthetic ECU replies).
+The Kotlin scenarios include the actual 30-live/four-query/1,414-label/0904 definition artifacts,
+all 284 lifecycle bindings, six keepalive variants, rejected configuration, invalid C1, cancellation,
+exclusive bus ownership and actual workbench reentry failure/success. The production driver
+is still unimplemented: these tests are not MIC3313/physical proof or enabled manual-selection
+acceptance. Protected policy test files remain unchanged.
+
+Observed CI failure: `c1129eb` Android run **44716990874** failed
+`:app:compileDebugAndroidTestKotlin` on an invalid top-level `assertDoesNotExist` import;
+that API is a node member in this Compose version. Its JVM result was **580 tests, zero
+failures/errors/skips, 70 classes**. Commit `770ef89` removed the import; the new build was
+not complete when this note was written. Inspection run **44715073185** succeeded for the
+preceding `f2b96ed` baseline. None of these observations certifies this lifecycle patch.
+
+**Still zero enabled production definitions and 1,055,750 unresolved records in the last
+whole-source accounting.** Exact native → MIC3313 timing/pin/electrical mapping remains the
+mandatory target's blocker. Android 24 must still install the actual app and perform explicit
+manual Toyota selection into nonempty executable live/DTC definitions, followed by complete
+source feature/vehicle coverage. Draft PR14 is not ready to merge.
+
+## Supplemental timing, primary transaction and native result boundary
+
+The independent `tools/thinkdiag/toyota_firmware_timing.py` CLI now executes the pinned supplied
+abstract layer and a pinned supplemental public Mini Cortex-M firmware image. The Toyota archive
+remains authoritative; this auxiliary image is **not identified as MIC3313 firmware**. Raw inputs
+remain outside Git/APK. No host native loader, syscall, network or device is exposed; unknown MMIO
+aborts. GPIO/clock/timer/UART configuration, byte I/O, delay completion and IRQ arrival are explicitly
+synthetic leaves, not silently modeled electrical behavior.
+
+The local CLI was run twice with byte-identical results: **8 interval / 3 UART exchange / 6 keepalive /
+6 native KWP-result / 6 native PRIMARY-result vectors plus 1 unequal-pulse component probe**.
+The canonical saved report is 31,466 bytes, SHA-256
+`824e4cb8eb7cd56b5a900e0ef792e91f4256e79cac500acdbc0fa1eb22042e48`;
+its comparison digest is `c8780bc9d1092560c6b4cb77cb0516c7bcaa80150b58fbf27f8b4f60dbcec646`.
+The exact input pins, public provenance, bounded reproduction command and fake boundaries are
+in the [tool guide](../tools/thinkdiag/README.md#supplemental-native-to-firmware-timing-and-result-experiment).
+
+Important distinctions established by executed instructions:
+
+- `OpenAbstractCommDll@0001e860..0001e884` resolves source cell `CommSubFunc_00000003`
+  to the **`CommSubFunc0003`** export. That real primary serializer emits `6402`, and the
+  firmware's real dispatcher/alias table maps it to the `6109` consumer. The queued source
+  pulse+PRIMARY transaction is **`60070000196007ff00196402ff01058113f08105`**, emitted only
+  at EndCombination. This is not the same claim as merely calling the separate KWP/6109 API.
+- Native `(5,60,600)` encodes `6003003206003c`. The consumer uses 5,000-us TX gaps,
+  a 60-ms repeated-request delay and 600 normal RX polls, not three guessed generic P2/P3 values.
+  Literal 10416 reaches UART-settings RAM as **10416**, without 10400 normalization.
+- Pulse 25/25 reaches two 25,000-us delay-arm leaves; the unequal 35/15 component reaches
+  35,000/15,000 us with other settings deliberately fixed. Neither GPIO-bit trace proves OBD
+  pin mapping, transceiver polarity or physical timing. Complete native configuration/lifecycle
+  routing and MIC3313 equivalence remain unfinished.
+- Real 6004 setup, callback and disable execute for all six source keepalive payloads.
+  Third argument **3 is an RX-byte drain bound in this supplemental image**, not retries.
+  With synthetic 5-ms IRQ ticks, first TX is tick **161 / 805 declared-clock ms**, then one byte
+  per tick and three 1,000-tick drains. Firmware clock declarations are not an oscillator/clock-tree
+  measurement. `ATSW28` must not be approved simply because its nominal period is 800 ms.
+- The real native queue/EndCombination/result parser—not a fake internal ACK—maps a complete
+  synthetic C1 to count **9**, records `010783f013c1e98fbf`; no RX gives firmware `ff02` and
+  signed-low-word **−70**. Corrupt checksum, partial packet, wrong ECU and negative service also
+  yield **positive copied-byte counts**. Positive native return alone cannot establish ECU proof.
+
+`SourceKwpNativeResultCodec` ports only the bounded answer-record envelope. It rejects mismatched
+counts, truncated records, overflow, ignored tails and data attached to a failed return. It preserves
+raw packets for independent exact ECU/header/checksum/service/C1 verification. The app regressions
+consume both six-case native domains and require that only complete selected-ECU C1 initializes the
+lifecycle. Saved-result checking is not rerunning guest code; normal CI has no supplemental firmware
+input. These changes do not add a physical adapter implementation or enable a production pack.
+
+Refreshed local evidence: **238 Python tests PASS** (0.432 s), **115 standalone Kotlin scenario
+groups PASS** (real generated artifacts, synthetic I/O), compile PASS, catalog-seed check PASS,
+`git diff --check` PASS. The nine timing unit tests verify encodings/pins/saved results, while the
+separate explicitly invoked CLI performed guest execution.
+
+The preceding lifecycle head **`d02481d`** has now completed all three observed parent runs:
+[inspection 44720562676](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562676),
+[push Android 44720562551](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562551),
+and [PR Android 44720576573](https://github.com/sarapudheen-ops/puthus/actions/runs/44720576573)
+are **success**. Push build check `136235018008` reports **591 JVM tests / 0 failures / 0 errors /
+0 skipped / 71 classes**. Android 24 check `136248033562` reports **5 tests PASS / 3.673 s**:
+two real APK range/cache tests and three synthetic callback-only consent UI tests. The documented
+disposable-emulator CA augmentation still applies. This proves neither untouched-2016 trust nor
+manual selected-system executable diagnostics, and does not certify later local edits.
+
+**Production remains 0 executable definitions / 1,055,750 unresolved records at last whole-source
+accounting.** Mandatory enabled-system loading, native-to-MIC3313 mapping, selected-system Android
+24 live/DTC/ECU acceptance and every-source executable feature coverage are still outstanding.

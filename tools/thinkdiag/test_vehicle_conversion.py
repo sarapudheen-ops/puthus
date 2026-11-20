@@ -168,6 +168,30 @@ class ConversionTest(unittest.TestCase):
                 self.assertEqual(system["id"], result["systemId"])
             self.assertEqual(indexes[0], indexes[1])
 
+    def test_nonmanual_source_systems_remain_auditable_without_becoming_vehicle_fallbacks(self):
+        sources, labels = fixture()
+        block = sources['SYSLIST_EU.BIN'][12:]
+        sources['SYSLIST_EU.BIN'] = struct.pack('<IIIII', 7, 20, 8, 20 + len(block), 0xFFFFFFFF) + block + block
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory); index = Converter(sources, labels, path).finish()
+            self.assertEqual(2, index['summary']['systems'])
+            verify(path)
+            container = path / index['container']
+            inventory = read_object(container, index['sourceInventory'])
+            rows = [row for ref in inventory['systemPages'] for row in read_object(container, ref)['systems']]
+            self.assertEqual(2, len(rows))
+            page = read_object(container, index['root'])
+            for title in ('Manual Select', 'Region', 'Synthetic variant'):
+                page = read_object(container, next(c for c in page['children'] if c['name'] == title)['object'])
+            self.assertEqual(1, len(page['systems']))
+            self.assertTrue(all(not read_object(container, r['object'])['enabled'] for r in rows))
+            # Losing the separate inventory must fail full-source accounting,
+            # not quietly lower the denominator to the reachable menu subset.
+            del index['sourceInventory']
+            (path / 'index.json').write_bytes(canonical(index) + b'\n')
+            with self.assertRaisesRegex(ValueError, 'summary.*2.*actual.*1'):
+                verify(path)
+
     def test_malformed_known_layout_is_not_forgiven_or_padded(self):
         with tempfile.TemporaryDirectory() as d:
             sources, labels = fixture()

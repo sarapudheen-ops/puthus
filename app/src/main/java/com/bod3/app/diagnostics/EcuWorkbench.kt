@@ -24,6 +24,8 @@ data class DtcRecords(val extended: DtcRecordResult, val snapshot: DtcRecordResu
  * Missing converted features never cause a generic UDS/emissions request to be substituted.
  */
 class EcuWorkbench(private val session: Session, private val client: UdsClient = UdsClient(session)) {
+    private val prerequisites = com.bod3.app.obd.session.ReadPrerequisites(session)
+
     suspend fun readIdentification(ecu: EcuDefinition, onReading: (DidReading) -> Unit = {}): List<DidReading> {
         ecu.diagnostics?.let { definitions ->
             validate(ecu)
@@ -31,7 +33,12 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
             for (definition in definitions.identification) {
                 val r = definition.read
                 val id = r.requestBytes.drop(1).fold(0) { a, b -> a * 256 + b }
-                val reading = DidReading(id, read(ecu, r), r.id, r.name, r.request, definition.encoding == IdentificationEncoding.HEX)
+                val result = read(ecu, r).let { value ->
+                    if (value is DidResult.Value && !definition.accepts(value.data))
+                        DidResult.Failed("Incomplete or invalid identification record; no partial text accepted") else value
+                }
+                val reading = DidReading(id, result, r.id, r.name, r.request, definition.encoding != IdentificationEncoding.ASCII,
+                    (result as? DidResult.Value)?.let { definition.display(it.data) })
                 readings += reading; onReading(reading)
                 if (readings.size == 1 && reading.result is DidResult.NoResponse) break
             }
@@ -47,10 +54,12 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
         return readings
     }
 
-    suspend fun readDtcs(ecu: EcuDefinition): DtcReadResult {
+    suspend fun readDtcs(ecu: EcuDefinition, diagnosticSession: com.bod3.app.obd.session.DiagnosticSessionConfirmation? = null): DtcReadResult {
         ecu.diagnostics?.let { definitions ->
             validate(ecu)
             val d = definitions.faults ?: return DtcReadResult.Failed("This ECU has no resolved fault-read definition; no generic request was sent.")
+            if (d.workflow != null) return ToyotaFaultWorkflowReader(session).read(ecu, d, diagnosticSession)
+            require(diagnosticSession == null) { "No source diagnostic-session setup belongs to this ECU" }
             return when (val result = read(ecu, d.read)) {
                 is DidResult.Value -> d.layout.decode(result.data, "${ecu.protocol.label} ${d.read.request} · ${d.read.name}")
                 is DidResult.Negative -> DtcReadResult.Negative(result.nrc)
@@ -65,12 +74,42 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
         }
     }
 
+    /**
+     * Entry point ONLY for the operation-specific Expert-mode confirmation UI.
+     * Fresh preparation/identity guarding precedes the epoch-bound capability;
+     * no token is retained across the dialog, connection reset or bus wait.
+     * A source-read lease cannot authorize a clear, write, coding or active test.
+     */
+    suspend fun readDtcsWithConfirmedSourceSession(ecu: EcuDefinition, expertModeEnabled: Boolean): DtcReadResult {
+        require(expertModeEnabled) { "Source diagnostic-session setup needs Expert mode and an explicit confirmation" }
+        validate(ecu)
+        val definitions = requireNotNull(ecu.diagnostics)
+        val workflow = requireNotNull(definitions.faults?.workflow)
+        require(workflow.requiresSessionConfirmation) { "This ECU has no source diagnostic-session setup" }
+        return session.withSourceReadSessionOperation(ecu.target) {
+            val identities = readIdentification(ecu)
+            if (identities.isEmpty() || identities.any { (it.result as? DidResult.Value)?.data.isNullOrEmpty() })
+                return@withSourceReadSessionOperation DtcReadResult.Failed("Fresh selected-ECU identification failed; no diagnostic session was changed")
+            val confirmation = com.bod3.app.obd.session.DiagnosticSessionConfirmation.confirmed(
+                session, ecu.target, workflow, expertModeEnabled)
+            try { readDtcs(ecu, confirmation) } finally { confirmation.revoke() }
+        }
+    }
+
     private fun validate(ecu: EcuDefinition) {
         val errors = ecu.problems()
         require(errors.isEmpty()) { errors.joinToString("\n") }
     }
 
     private suspend fun read(ecu: EcuDefinition, definition: DiagnosticRead): DidResult {
+        if (definition.supportChecks.isEmpty()) return readSupported(ecu, definition)
+        return try {
+            prerequisites.withSupported(ecu.target, definition.supportChecks, timeout(ecu)) { readSupported(ecu, definition) }
+                ?: DidResult.Failed("Current ECU prerequisites were not satisfied; no substitute read was sent")
+        } catch (e: AdapterException) { DidResult.Failed(e.message ?: "adapter error") }
+    }
+
+    private suspend fun readSupported(ecu: EcuDefinition, definition: DiagnosticRead): DidResult {
         val request = definition.requestBytes
         val response = try { session.request(ecu.target, request, timeout(ecu)) }
         catch (e: AdapterException) { return DidResult.Failed(e.message ?: "adapter error") }

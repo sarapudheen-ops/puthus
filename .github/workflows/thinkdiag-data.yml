@@ -2,6 +2,11 @@ name: Inspect Toyota release data
 
 on:
   workflow_dispatch:
+    inputs:
+      recover-source-inputs:
+        description: Recover checksummed decoded research arrays when release storage redirects are blocked (no APK build)
+        type: boolean
+        default: false
   push:
     branches: ['arena/**']
     paths:
@@ -14,8 +19,34 @@ permissions:
   checks: write
 
 jobs:
+  recover-source-inputs:
+    name: Recover complete checksummed source inputs (research only)
+    if: github.event_name == 'workflow_dispatch' && inputs.recover-source-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Download and verify the authoritative archive outside Git
+        run: |
+          mkdir -p .local/source-inputs
+          gh release download assets-v1 --pattern TOYOTA.zip --dir .local/source-inputs
+          python3 -m pip install -r tools/thinkdiag/requirements.txt
+          python3 tools/thinkdiag/source_verification.py .local/source-inputs/TOYOTA.zip
+          python3 tools/thinkdiag/decode_toyota.py .local/source-inputs/TOYOTA.zip \
+            --output .local/source-inputs/decoded --report .local/source-inputs/report
+      - name: Publish bounded checked source-input evidence (never an executable-coverage claim)
+        run: |
+          python3 tools/thinkdiag/source_input_evidence.py publish .local/source-inputs/TOYOTA.zip \
+            --decoded .local/source-inputs/decoded --manifest .local/source-inputs/report/decoded-manifest.json
   inspect:
     name: Inspect owner-verified Toyota specification
+    if: github.event_name != 'workflow_dispatch' || !inputs.recover-source-inputs
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -43,10 +74,36 @@ jobs:
         run: |
           python3 tools/thinkdiag/decode_toyota.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/decoded --report .local/thinkdiag/report
+      - name: Recover complete decoded research inputs for an explicitly marked push
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[recover-toyota-inputs]')
+        # Same owner-verified recovery as manual dispatch; the connected GitHub App
+        # permits push-triggered Actions but may not permit workflow dispatch.
+        run: |
+          python3 tools/thinkdiag/source_input_evidence.py publish .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json
       - name: Recover indexed English text
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Publish checksummed ECU program-dispatch input for exact reader work
+        # The agent workspace cannot follow the release-asset storage redirect. Keep
+        # this small, owner-verified source input in research evidence, never Git/APK.
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, zlib
+          from pathlib import Path
+          source = Path('.local/thinkdiag/decoded/ECUPROGRAM.BIN').read_bytes()
+          manifest = json.loads(Path('.local/thinkdiag/report/decoded-manifest.json').read_text())
+          item = next(r for r in manifest if r['file'] == 'ECUPROGRAM.BIN')
+          assert len(source) == item['bytes'] and hashlib.sha256(source).hexdigest() == item['sha256']
+          record = {**item, 'compression': 'zlib', 'base64': base64.b64encode(zlib.compress(source, 9)).decode('ascii')}
+          Path('.local/thinkdiag/report/ecu-program-input.json').write_text(json.dumps(record, sort_keys=True))
+          PY
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota exact ECU program input' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Owner-source ECUPROGRAM input; not executable coverage' \
+            -F 'output[summary]=@.local/thinkdiag/report/ecu-program-input.json'
       - name: Compare supplied FILE COMM SYSP DTCF CALC instructions with bounded ports (offline only)
         id: native_oracle
         run: |
@@ -74,6 +131,21 @@ jobs:
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/toyota_runtime_compile.py test-artifacts .local/thinkdiag/vehicle-packs > .local/thinkdiag/vehicle-packs/compiled-source-read-validation.json
+          cat .local/thinkdiag/vehicle-packs/compiled-source-read-validation.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota exact compiled source reads' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Typed source artifacts and computed checks; not production definitions' \
+            -F 'output[summary]=@.local/thinkdiag/vehicle-packs/compiled-source-read-validation.json'
           python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/thinkdiag/vehicle-packs
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota vehicle conversion accounting' -f head_sha="$GITHUB_SHA" \

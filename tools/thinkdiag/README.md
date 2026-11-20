@@ -199,3 +199,100 @@ This full SQLite build is a legacy/research derivative, **not a current Gradle p
 The application now migrates the unchanged passive `dtcGroups` reference into a reusable catalog platform, retaining the original make restrictions and source once rather than copying 11,989 meanings into every generation. Catalog JSON exports preserve that platform and its restrictions; ECU CSV intentionally does not carry DTC text. A known profile make wins over a conflicting saved link or manual catalog choice for passive fault wording, but no reference lookup selects a vehicle, ECU list or connection profile. See the [catalog format/migration guide](../../docs/vehicle-catalog.md) and the catalog JVM migration/integration tests. This integration does not change the converter or bundled derivative's bytes/hash, and introduces no recovered diagnostic requests.
 
 Tests establish format handling, reproducibility and application isolation, **not** correctness of vendor descriptions for every vehicle. No real-car/adapter validation has been performed.
+
+### Mandatory compiled-read artifact regression checks
+
+```sh
+"$PY" tools/thinkdiag/toyota_runtime_compile.py compile .local/thinkdiag/TOYOTA.zip \
+  --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+  --output .local/thinkdiag/vehicle-packs
+"$PY" tools/thinkdiag/toyota_runtime_compile.py verify .local/thinkdiag/vehicle-packs
+"$PY" tools/thinkdiag/toyota_runtime_compile.py test-artifacts .local/thinkdiag/vehicle-packs
+```
+
+Compilation is performed twice over the archive-verified decoded inputs, and canonical output
+must match exactly. The reviewed compiler pin covers the complete typed read/diagnostics review,
+input hashes (including detail table and decoded text record dictionaries), and exact source
+transport metadata. The 48 real-artifact negative vectors reject even a canonical but changed
+formula/unit/window/scope/baud/pin/pulse/label/identity/query/counter, plus damaged split payloads.
+This is not adapter approval: the sidecars report zero production executable definitions and
+are never copied into the APK. Inspection publishes their computed counts as a separate check.
+
+The lifecycle oracle now also compares 2,272 fast-entry retry/negative/zero/ISO-dispatch vectors,
+2,272 direct ISO-consumer vectors and 1,032 DTC read-reentry vectors. Every fake boundary and
+native zero-result/ignored-failure hardening is explicit in the report. There is no MIC3313
+native-API equivalence, physical vehicle, enabled production-system or Android executable
+acceptance claim from a passing offline oracle.
+
+
+### Kotlin source-API lifecycle contracts
+
+```sh
+"$PY" tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/thinkdiag/TOYOTA.zip \
+  --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+  --output .local/thinkdiag/vehicle-packs
+"$PY" tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/thinkdiag/vehicle-packs
+```
+
+The two regenerations must match each other, the complete canonical-output regression pin
+and the independently pinned native binding/fast/ISO comparison hashes. The 4,956,450-byte
+artifact is test-only, never an APK asset. Its 284 source entries/2,272 fast/2,272 ISO vectors
+now also exercise Kotlin Session transport leases and actual mandatory diagnostic workbench
+reentry using scripted I/O. Legacy P1/P2/P3 defaults are not substituted for native API values.
+Configuration rejection, failed/partial/wrong-ECU C1, cancellation, bus interleaving, missing-read
+classification and same-entry reinitialization are covered. The native→MIC3313 mapping remains
+unimplemented, with **zero** enabled production executable definitions; passing contracts
+are not physical validation or Android executable-selection acceptance.
+
+### Supplemental native-to-firmware timing and result experiment
+
+`toyota_firmware_timing.py` executes the supplied abstract-layer serializer/queue/result parser
+and selected consumers in a separately pinned **public ThinkDiag Mini V1.23.004** Cortex-M image.
+This image supplements the Toyota specification; it is **not MIC3313 firmware or hardware proof**.
+The CLI refuses any other binary identity and exposes no network, device, host loader, syscall or
+mapped peripheral to guest instructions. IAR SRAM initialization runs in the guest. GPIO, clock,
+UART configuration/byte I/O, timer control, SysTick completion and IRQ arrival are explicit synthetic
+boundaries. Reaching a configuration leaf does not prove its electrical effects or oscillator rate.
+
+With the two inputs kept outside Git (exact hashes and public provenance are in the script/report):
+
+```sh
+"$PY" tools/thinkdiag/toyota_firmware_timing.py \
+  --abstract .local/thinkdiag/libCOMM_ABSTRACT_LAYER.so \
+  --firmware .local/thinkdiag/thinkdiag-mini-firmware.bin \
+  --output .local/thinkdiag/report/mini-firmware-timing.json
+cmp .local/thinkdiag/report/mini-firmware-timing.json tools/thinkdiag/verification/mini-firmware-timing.json
+```
+
+The saved, canonical **31,466-byte** report has full-file SHA-256
+`824e4cb8eb7cd56b5a900e0ef792e91f4256e79cac500acdbc0fa1eb22042e48` and result digest
+`c8780bc9d1092560c6b4cb77cb0516c7bcaa80150b58fbf27f8b4f60dbcec646`.
+Nine Python tests check bounded encodings, float32 rounding, binary identity and saved-result integrity.
+Gradle passes that saved file to two additional Kotlin lifecycle/result-record regressions. Normal CI
+**does not execute the supplemental firmware**: it checks the saved comparison, not guest execution.
+The CLI was executed twice locally and produced byte-identical output.
+
+Observed component domains: eight unequal/rounding interval vectors, three UART exchanges, all six
+source keepalive payloads/disable, six native KWP/6109 result cases, six native PRIMARY/pulse/6402 cases,
+and one unequal-pulse component probe. `OpenAbstractCommDll@0001e860..0001e884` explicitly resolves
+`CommSubFunc_00000003` to the real export **`CommSubFunc0003`**; the Mini's real dispatcher maps
+`6402` to `6109`. The complete native queued pulse+PRIMARY bytes are
+`60070000196007ff00196402ff01058113f08105`. No pulse or send I/O happens before EndCombination.
+The separate unequal 35/15 probe deliberately holds baud/timing fixed; it is not a complete 9600-baud
+source entry. These are component comparisons, not complete entry/retry/exit/ISO/pin equivalence.
+
+Literal 10416 reaches the firmware's UART-settings RAM as **10416**, never 10400. Native 5/60/600
+encodes `6003003206003c`: 5,000-us inter-byte TX delay, 60-ms repeated-request delay, and 600 normal
+receive polls (1,000 us each at the firmware's *declared*, unmeasured clock). Pulse 25/25 reaches two
+25,000-us delay-arm leaves; GPIO-bit writes are logged but cannot establish transceiver polarity or
+OBD pin routing. The native SetLinkKeep third argument 3 is consumed as an RX-byte drain bound in
+this image, not a retry count. Its 800/5 callback comparison is strict: first TX on synthetic tick 161,
+**805 declared-clock ms**, then one byte per tick and three 1,000-tick drains. `ATSW28` equivalence
+must not be assumed from the number 800.
+
+A synthetic complete C1 produces native copied-byte count 9 / records `010783f013c1e98fbf`; no data
+produces `ff02` then signed-low-word **−70**. Corrupt checksum, partial, wrong-ECU and negative-service
+bytes also produce **positive counts**. `SourceKwpNativeResultCodec` bounds/count-checks the raw
+record envelope and leaves all ECU framing/address/checksum/C1 verification to `SourceKwpPlan`.
+Tests require that only the complete addressed C1 initializes a link. This is still **zero production
+executable definitions**; no raw firmware/library or saved research report is staged into APK assets.

@@ -88,6 +88,7 @@ class Converter:
         self.entry_pages = {}
         self.bring_up_pages = {}
         self.entry_support = {}
+        self.unclaimed_entry_pages = []
 
     def record(self, item):
         self.ledger.write(canonical(item) + b"\n")
@@ -124,8 +125,9 @@ class Converter:
         # Markers/padding stay explicit; they are not silently decoded as zero
         # features, guessed requests or a second ECU's configuration.
         for span in self.entries.unclaimed:
-            self.disabled(source_id("SYSTEMENTER.BIN", span["offset"], "#unclaimed"), "unclassified-entry-span",
-                          bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
+            item = self.disabled(source_id("SYSTEMENTER.BIN", span["offset"], "#unclaimed"), "unclassified-entry-span",
+                                 bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
+            self.unclaimed_entry_pages.extend(self.pages([item]))
         (self.output / "entry-index.json").write_bytes(canonical(self.entries.report()) + b"\n")
 
     def bring_up_candidates(self, region, function, selector, flash=False):
@@ -273,7 +275,7 @@ class Converter:
                     self.system_report.append({"id": identity, "region": region, "system": value["name"],
                         "functionKey": key, "entrySelector": raw[27], "ecuFile": ecu_file,
                         "sourceRecords": sources, "entrySource": entry.source_id if entry else None,
-                        "counts": counts, "reasons": reasons})
+                        "counts": counts, "enabled": value["enabled"], "reasons": reasons})
                 for key, block in index:
                     if block == offset:
                         self.vehicle_systems[region, key] = refs
@@ -313,7 +315,7 @@ class Converter:
                     reasons.append("missing_system_key" if task < 0x8000 else "nonordinary_menu_task")
                 value.update({"kind": "manual-vehicle", "region": region, "sourceKey": task,
                               "make": "Toyota", "selection": path[2:], "systems": systems or [],
-                              "hierarchyResolved": False, "enabled": False, "reasons": reasons})
+                              "hierarchyResolved": False, "systemJoinResolved": systems is not None, "enabled": False, "reasons": reasons})
                 record = {"id": step["id"], "path": [s["name"] for s in path[2:]], "region": region,
                           "sourceKey": task, "systems": [s["id"] for s in systems or []], "reasons": reasons}
                 catalog = normalize_source_vehicle(record)
@@ -367,6 +369,21 @@ class Converter:
         self.census["unresolvedHierarchyChoices"] = len(self.hierarchy_issues)
         return write(tree)["object"]
 
+    def convert_inventory(self):
+        # The source has SYSLIST blocks not reached by ordinary manual MENU paths.
+        # Keep ALL source systems/ECUs/functions in a separate audit root. They are
+        # never attached to another vehicle, selected as fallback, or hidden from
+        # computed coverage merely because navigation cannot currently reach them.
+        systems = sorted(self.systems.items())
+        pages = [self.writer.add({"kind": "source-inventory-page", "systems": [
+            {"id": identity, "object": ref} for identity, ref in systems[i:i + 256]]})
+            for i in range(0, len(systems), 256)]
+        return self.writer.add({"kind": "source-inventory", "systemPages": pages,
+            "ecuSources": [value["object"] for _, value in sorted(self.ecus.items())],
+            "functionSources": [value["object"] for _, value in sorted(self.functions.items())],
+            "entryPages": [ref for _, values in sorted(self.entry_pages.items()) for ref in values],
+            "unclaimedEntryPages": self.unclaimed_entry_pages})
+
     def finish(self):
         self.convert_entries()
         self.convert_ecus()
@@ -374,19 +391,32 @@ class Converter:
         self.convert_systems()
         root = self.convert_menu()
         catalog_root = self.convert_catalog()
+        source_inventory = self.convert_inventory()
         self.ledger.close(); self._ledger_stream.close()
-        summary = {**dict(self.census), "complete": False, "executableDefinitions": 0,
+        categories = ("pids", "dtcs", "tests", "coding", "specialFunctions", "ecuInfo")
+        converted = {kind: sum(s["counts"][kind]["converted"] for s in self.system_report) for kind in categories}
+        executable = sum(converted.values())
+        enabled = sum(s["enabled"] for s in self.system_report)
+        complete = (executable > 0 and enabled == self.census["systems"] and self.census["unresolvedSourceRecords"] == 0 and
+                    self.census["unresolvedHierarchyChoices"] == 0 and self.census["manualLeavesWithSystemJoin"] == self.census["manualLeaves"] and
+                    self.census["normalizedVehicleChoices"] == self.census["manualLeaves"] and
+                    all(s["counts"][kind]["unresolved"] == 0 for s in self.system_report for kind in categories))
+        ledger = self.ledger_path.read_bytes()
+        summary = {**dict(self.census), "complete": complete, "executableDefinitions": executable,
+                   "enabledSystems": enabled, "converted": converted,
+                   "unresolvedLedger": {"file": self.ledger_path.name, "bytes": len(ledger), "sha256": sha(ledger)},
                    "sourceVerification": load_verification(), "physicalValidation": False, "reasons": REASONS}
-        index = self.writer.finish(root["object"], summary, catalog_root)
+        index = self.writer.finish(root["object"], summary, catalog_root, source_inventory)
         for name, records in (("vehicles", self.vehicle_report), ("systems", self.system_report)):
             with (self.output / f"{name}.jsonl.gz").open("wb") as file:
                 with gzip.GzipFile(filename="", mode="wb", fileobj=file, mtime=0) as dest:
                     for row in records: dest.write(canonical(row) + b"\n")
-        report = ["# Toyota conversion report", "", "**PARTIAL — NOT runnable enhanced Toyota coverage.**", "",
+        report = ["# Toyota conversion report", "", ("**COMPLETE source conversion; physical validation is separate.**" if complete else
+            f"**PARTIAL — {executable:,} executable definitions across {enabled:,} source systems.**"), "",
             f"Source archive SHA-256: `{SOURCE_SHA256}`.", "",
             "| Measure | Count |", "|---|---:|"]
         report += [f"| {key} | {value} |" for key, value in sorted(self.census.items())]
-        report += ["| Executable definitions | 0 |", "", "## Exact per-item accounting", "",
+        report += [f"| Executable definitions | {executable} |", f"| Enabled source systems | {enabled} |", "", "## Exact per-item accounting", "",
             "- `unresolved-items.jsonl.gz`: every framed ECU row, declared live row, SYSTEMENTER entry and unclaimed entry-file span, stable file/offset/slot/row ID, exact source bytes and all disabling reasons.",
             "- `entry-index.json`: complete reader-backed regional function/selector directory, framed entry fields, binding IDs and every unclaimed byte span. Opaque header/timing values are not approved transport settings.",
             "- `vehicles.jsonl.gz`: every manual source leaf, full exact path, region/key, all system IDs and hierarchy reasons.",

@@ -16,6 +16,15 @@ import kotlinx.coroutines.launch
 
 /** KWP application services are never interpreted as UDS sub-functions. */
 object KwpServices {
+    /** Literal non-writing variants recovered from the function-specific native keepalive bindings.
+     * This is NOT a rule for choosing one. Session accepts only the selected link's exact bytes.
+     * In particular 3E01 is not added to the general read whitelist or to the UDS policy.
+     */
+    fun isSourceKeepAlive(request: List<Int>): Boolean = request in listOf(
+        listOf(0x3E), listOf(0x3E, 0x00), listOf(0x3E, 0x01),
+        listOf(0x21, 0x00), listOf(0x01, 0x00), listOf(0x21, 0x02), listOf(0x21, 0xE1),
+    )
+
     fun readAllowed(request: List<Int>): Boolean = request.all { it in 0..255 } && when (request.firstOrNull()) {
         0x1A, 0x21 -> request.size == 2
         0x22 -> request.size >= 3 && request.size % 2 == 1

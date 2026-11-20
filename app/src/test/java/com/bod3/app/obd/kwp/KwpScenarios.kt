@@ -165,6 +165,26 @@ object KwpScenarios {
         check(rejected.ecuRequests().isEmpty())
     }
 
+    suspend fun fastInitNeedsOneAddressedC1NotAnAdapterAckOrMixedPartialEvidence() {
+        val valid = Hex.format(KLineFrames.encode(listOf(0x80, 0xF1, 0x10), listOf(0xC1, 0xE9, 0x8F)))
+        val short = Hex.format(KLineFrames.encode(listOf(0x80, 0xF1, 0x10), listOf(0xC1)))
+        val long = Hex.format(KLineFrames.encode(listOf(0x80, 0xF1, 0x10), listOf(0xC1, 0xE9, 0x8F, 0)))
+        val wrong = Hex.format(KLineFrames.encode(listOf(0x80, 0xF1, 0x11), listOf(0xC1, 0xE9, 0x8F)))
+        val negative = Hex.format(KLineFrames.encode(listOf(0x80, 0xF1, 0x10), listOf(0x7F, 0x81, 0x22)))
+        for (strict in listOf(false, true)) for (raw in listOf("", "OK", "BUS INIT: OK", short, long, wrong,
+            negative, valid.dropLast(2), "$valid\rOK", "$valid\r$valid", "$valid\r$negative", "$valid\rNO DATA", valid)) {
+            val sim = SimulatedKwpAdapter()
+            val adapter = object : com.bod3.app.obd.elm.CommandExecutor {
+                override suspend fun execute(command: String, timeoutMs: Long) =
+                    if (command.startsWith("STIFI")) com.bod3.app.obd.elm.ElmResponseParser.parse(command, raw)
+                    else sim.execute(command, timeoutMs)
+            }
+            val outcome = runCatching { KLineAdapter.initialize(adapter, target, {}, strict) }
+            check(outcome.isSuccess == (raw == valid)) { "Invalid fast-init acceptance strict=$strict raw=$raw: $outcome" }
+            check(sim.ecu.requests.isEmpty()) // no post-init probe to hide invalid evidence
+        }
+    }
+
     suspend fun fiveBaudAndIso9141() {
         for (protocol in listOf(ObdProtocol.ISO_9141_2, ObdProtocol.ISO_14230_4_KWP_SLOW)) {
             val t = target.copy(link = link.copy(protocol = protocol, kLine = link.kLine!!.copy(init = KLineInit.FIVE_BAUD)))

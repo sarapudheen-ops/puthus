@@ -84,7 +84,7 @@ class DeliveryTest(unittest.TestCase):
                 ref = writer.add({"kind": "catalog-level", "id": parent,
                                   "children": [{"id": identity, "level": identity, "object": ref}]})
                 identity = parent
-            index = writer.finish(ref, {"executableDefinitions": 0, "sourceVerification": load_verification()}, ref)
+            index = writer.finish(ref, {"executableDefinitions": 0, "complete": False, "sourceVerification": load_verification()}, ref)
             requests = []
 
             def local(container, total, wanted):

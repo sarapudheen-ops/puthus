@@ -24,6 +24,7 @@ class KwpTest {
     @Test fun identifierWrite2E() = runBlocking { KwpScenarios.writes(0x2E) }
     @Test fun identifierEcuScopeAndConfirmedClear14() = runBlocking { KwpScenarios.scopeAndClear() }
     @Test fun initTimingExpiryBadChecksumWrongEcuAndRejection() = runBlocking { KwpScenarios.initExpiryAndRejection() }
+    @Test fun fastInitRequiresOneCompleteSelectedEcuC1EvenOutsideBringUp() = runBlocking { KwpScenarios.fastInitNeedsOneAddressedC1NotAnAdapterAckOrMixedPartialEvidence() }
     @Test fun fiveBaudIso9141And14230() = runBlocking { KwpScenarios.fiveBaudAndIso9141() }
     @Test fun kwpServicesOnCan() = runBlocking { KwpScenarios.kwpOverCan() }
     @Test fun routingLeaseIsExclusiveAndCancellationReleasesIt() = runBlocking { KwpScenarios.lease() }

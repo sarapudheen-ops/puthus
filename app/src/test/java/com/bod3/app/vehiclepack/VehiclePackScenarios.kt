@@ -47,7 +47,7 @@ object VehiclePackScenarios {
         try { block(folder) } finally { folder.deleteRecursively() }
     }
     private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false,
-                          referenced: Boolean = false, corruptReference: String? = null) {
+                          referenced: Boolean = false, corruptReference: String? = null, corruptExecutable: String? = null) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -55,23 +55,35 @@ object VehiclePackScenarios {
             return mapOf("offset" to at, "bytes" to data.size, "jsonBytes" to json.size, "sha256" to sha256(data))
         }
         private val why = if (enabled) emptyList() else listOf("mapping_missing")
-        val original = if (enabled) CatalogData(
-            ecus = listOf(EcuDefinition(name = "Synthetic ECU", requestId = "7E0", responseId = "7E8", sourceRecords = listOf("synthetic:ecu"),
-                diagnostics = if (explicitReads) com.bod3.app.diagnostics.EcuReadDefinitions() else null)),
-            pids = listOf(CustomPid("synthetic-rpm", "Synthetic RPM", "221234", "(A*256+B)/4", header = if (crossEcu) "7E1" else "7E0", responseHeader = "7E8", sourceRecords = listOf("synthetic:pid"),
+        private val link = com.bod3.app.obd.kwp.DiagnosticLink(com.bod3.app.obd.protocol.ObdProtocol.ISO_15765_4_CAN_11_500)
+        private val reads = com.bod3.app.diagnostics.EcuReadDefinitions(
+            identification = if (corruptExecutable == "empty-id") emptyList() else listOf(com.bod3.app.diagnostics.IdentificationRead(
+                com.bod3.app.diagnostics.DiagnosticRead("synthetic-id", "Synthetic identity", "221234", "621234", minBytes = 1, maxBytes = 16,
+                    sourceRecords = listOf("synthetic:id")))),
+            faults = if (corruptExecutable == "empty-fault") null else com.bod3.app.diagnostics.FaultRead(
+                com.bod3.app.diagnostics.DiagnosticRead("synthetic-fault", "Synthetic faults", "1902FF", "5902", minBytes = 0, maxBytes = 255,
+                    sourceRecords = listOf("synthetic:fault")),
+                com.bod3.app.diagnostics.ToyotaFaultLayout(255, 0, 2, 2, false, 0, 1, 0,
+                    labels = if (corruptExecutable == "empty-labels") emptyList() else listOf(com.bod3.app.diagnostics.ToyotaFaultLabel(
+                        "00001234", "P1234", "Synthetic fault, not vehicle data", listOf("synthetic:label"))),
+                    sourceRecords = listOf("synthetic:layout"))))
+        val original = if (enabled || corruptExecutable == "disabled-data") CatalogData(
+            ecus = listOf(EcuDefinition(name = "Synthetic ECU", requestId = "7E0", responseId = "7E8", link = link, sourceRecords = listOf("synthetic:ecu"),
+                diagnostics = if (explicitReads) reads else null)),
+            pids = if (corruptExecutable == "empty-live") emptyList() else listOf(CustomPid("synthetic-rpm", "Synthetic RPM", "221234", "(A*256+B)/4", header = if (crossEcu) "7E1" else "7E0", responseHeader = "7E8", link = link, sourceRecords = listOf("synthetic:pid"),
                 supportChecks = supportProvenance?.let { listOf(com.bod3.app.datapack.PidSupportCheck("220001", "A",
                     sourceRecords = if (it) listOf("synthetic:prerequisite") else emptyList())) }.orEmpty())),
             actuators = listOf(ActuatorRecipe("synthetic-io", "Synthetic output", "Not vehicle data",
-                ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8"),
+                ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8", link = link),
                 start = listOf(0x2F, 0x12, 0x34, 3, 1), stop = listOf(0x2F, 0x12, 0x34, 0),
                 safetyNotes = listOf("Synthetic only"), sourceRecords = listOf("synthetic:test"))),
-            coding = listOf(CodingRecipe("synthetic-coding", "Synthetic coding", module = ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8"),
+            coding = listOf(CodingRecipe("synthetic-coding", "Synthetic coding", module = ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8", link = link),
                 method = CodingMethod.DID_VALUE, did = 0x1234, byteIndex = 0,
                 options = listOf(com.bod3.app.coding.CodingOption(0, "Off"), com.bod3.app.coding.CodingOption(1, "On")),
                 sourceRecords = listOf("synthetic:coding"))),
         ) else CatalogData()
         private val counts = listOf("pids", "dtcs", "tests", "coding", "specialFunctions", "ecuInfo").associateWith {
-            mapOf("converted" to if (enabled && it in setOf("pids", "tests", "coding")) 1 else 0, "unresolved" to if (enabled) 0 else null)
+            mapOf("converted" to if (enabled && it in setOf("pids", "tests", "coding", "dtcs", "ecuInfo")) (if (corruptExecutable == "counts" && it == "dtcs") 2 else 1) else 0, "unresolved" to if (enabled) 0 else null)
         }
         private val bringUpPage = if (bringUp) add(mapOf("kind" to "bring-up-candidates", "candidates" to listOf(
             com.bod3.app.bringup.BringUpCodec.candidateMap(com.bod3.app.bringup.BringUpScenarios.candidate())))) else null
@@ -253,6 +265,14 @@ object VehiclePackScenarios {
         val c = Fixture(enabled = true, explicitReads = false).client(cache)
         val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
         rejects { c.system(v, v.systems.single()) }
+    }
+
+    fun enabledCannotMeanEmptyOrMiscalculatedAndDisabledCannotContainData() = temporary { cache ->
+        for (bad in listOf("empty-live", "empty-id", "empty-fault", "empty-labels", "counts", "disabled-data")) {
+            val f = Fixture(enabled = bad != "disabled-data", corruptExecutable = bad)
+            val c = f.client(cache); val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
+            rejects { c.system(v, v.systems.single()) }
+        }
     }
 
     fun convertedPrerequisitesMustCarryTheirOwnProvenance() = temporary { cache ->

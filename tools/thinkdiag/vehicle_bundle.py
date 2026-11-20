@@ -51,7 +51,7 @@ class BundleWriter:
         self.refs[key] = ref
         return ref
 
-    def finish(self, root, summary, catalog_root=None):
+    def finish(self, root, summary, catalog_root=None, source_inventory=None):
         self.stream.flush()
         self.stream.close()
         data = self.path.read_bytes()
@@ -62,6 +62,8 @@ class BundleWriter:
                  "converterVersion": 1, "manualSelectionOnly": True, "container": name,
                  "containerBytes": len(data), "containerSha256": digest, "root": root,
                  "catalogRoot": catalog_root, "summary": summary}
+        if source_inventory is not None:
+            index["sourceInventory"] = source_inventory
         (self.output / "index.json").write_bytes(canonical(index) + b"\n")
         return index
 

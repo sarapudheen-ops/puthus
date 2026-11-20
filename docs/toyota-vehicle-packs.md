@@ -70,8 +70,13 @@ short-packet contract vectors, with every adapter API explicitly faked. A separa
 projection additionally matches real linked FILE → SYSP → COMM execution for 284 first-positive-entry,
 568 keepalive-on/off and 284 exit traces. It preserves all six exact keepalive request variants and
 source-bound exit packets instead of substituting generic testerPresent/stop commands. This does not
-establish ST/VT timing/pin mapping, failed-entry/retry/ISO-fallback semantics or a working diagnostic
-link and is not an executable vehicle pack. All 179,770 distinct per-function
+establish ST/VT timing/pin mapping or a working diagnostic link and is not an executable vehicle pack.
+The extended suite additionally pins 2,272 fast-entry negative/zero/retry/ISO-dispatch vectors,
+2,272 direct ISO-consumer component vectors, and 1,032 failed-read reentry vectors. The latter
+observe temporary FF context, Exit/Enter, restoration and one identical retry; the slow sender
+and adapter remain explicit fake boundaries. Native zero-result success and ignored lifecycle
+failures are not accepted as initialization/vehicle proof. These source control-flow comparisons
+are not the missing MIC3313 lifecycle integration. All 179,770 distinct per-function
 mapping keys have exact source labels; repeated printed codes are never suffix-matched. English pairs
 are re-extracted from the pinned archive, with original GAG index/text offset provenance. The reviewed
 counts/library/result hashes live in `tools/thinkdiag/schema/native-oracle-v1.json`.
@@ -159,6 +164,13 @@ python3 tools/thinkdiag/extract_english.py .local/toyota-conversion/TOYOTA.zip \
 python3 tools/thinkdiag/convert_vehicle_packs.py .local/toyota-conversion/TOYOTA.zip \
   --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
   --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/toyota-conversion/TOYOTA.zip \
+  --decoded .local/toyota-conversion/decoded \
+  --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/toyota-conversion/TOYOTA.zip \
+  --decoded .local/toyota-conversion/decoded \
+  --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/toyota-vehicle-packs
 python3 tools/thinkdiag/toyota_native_oracle.py run .local/toyota-conversion/TOYOTA.zip \
   --decoded .local/toyota-conversion/decoded \
   --manifest .local/toyota-conversion/report/decoded-manifest.json \
@@ -188,3 +200,44 @@ resolved item from this source may be source-verified/default-enabled, but verif
 those engine safeguards or provides physical-test evidence. The app never executes vendor code or
 EXPRESS. Owner-authorized native replay inputs are confined to ignored research evidence for offline
 semantic comparison, not Android assets, runtime downloads or normal imported packs.
+
+## Exact compiled read artifacts (not vehicle-system data)
+
+The mandatory ECMECT source-read sidecars are separate from the range-container executable
+counts. They contain 30 live reads, 1,414 exact fault labels, four ordered source queries and
+one 0904 calibration-ID definition, with `productionExecutableDefinitions: 0`. The compiler
+regenerates twice and verifies a reviewed output pin. `test-artifacts` checks canonical round-trip
+and 48 corrupt/truncated/out-of-scope cases on the actual generated files, also for caches.
+The source review records all input hashes, including the detail table and canonical decoded
+English dictionaries. No raw EXPRESS or vendor library executes on Android. A passing artifact
+test cannot enable a system, grant writes, or turn calibration IDs into unique ECU serial proof.
+
+
+### Source lifecycle regression artifact
+
+Prepare now generates and fully pins `source-kwp-contracts.json` outside APK assets. Gradle
+passes `toyota.lifecycle.contracts.file` to the JUnit source-API lifecycle/Session/workbench
+regressions: 284 actual entry plans, 2,272 fast and 2,272 ISO traces, six keepalive bindings,
+exact C1 checks and bounded same-entry DTC reentry. The driver in these tests is scripted;
+there is **no approved MIC3313 mapping or enabled production definition**. See the latest
+[conversion evidence and remaining acceptance gates](conversion-report.md#portable-lifecycle-and-session-integration-scripted-source-api-not-mic3313-approval).
+
+### Supplemental native/firmware result boundary
+
+A separate pinned public Mini image now consumes the real abstract-layer timing records and queued
+pulse/PRIMARY transaction in bounded offline emulation. This is not MIC3313 firmware identification or
+physical adapter approval. The source's `CommSubFunc_00000003` cell resolves to export `CommSubFunc0003`
+(6402), whose firmware dispatch alias is 6109. Both native API paths preserve positive copied-byte
+counts for partial/corrupt/wrong-ECU replies; the new bounded Kotlin answer-record codec and lifecycle
+tests require independent complete C1 proof, never an ACK/count alone. Keepalive callback timing also shows
+why a nominal 800-ms AT period cannot simply replace the source API. See the
+[reproducible timing experiment](../tools/thinkdiag/README.md#supplemental-native-to-firmware-timing-and-result-experiment).
+The saved report is test evidence only, not an APK asset or an enabled system.
+
+The preceding lifecycle revision `d02481d` now has successful
+[push Android 44720562551](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562551),
+[PR Android 44720576573](https://github.com/sarapudheen-ops/puthus/actions/runs/44720576573) and
+[inspection 44720562676](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562676).
+It reports 591 JVM tests without failures and five Android 24 tests: two actual delivery/cache and three
+synthetic consent-UI callbacks. This is **not** the outstanding manual-selection-to-executable-live/DTC/ECU
+acceptance. Zero production executable definitions remain enabled.
