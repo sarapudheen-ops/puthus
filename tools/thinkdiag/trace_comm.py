@@ -53,6 +53,24 @@ def disassemble(data: bytes, start: int, size: int, limit: int = 120):
     return []
 
 
+TARGETS = ("InitSetEnterFrame", "MenuEnterCommunicationSet", "GetCommFrameInfo",
+           "SendCmdAndGetReceive_EX", "InitCanBusMode", "InitAddressMode", "CHK_ADDR_CODE")
+
+
+def trace_targets(data: bytes, limit: int = 90) -> list[dict]:
+    """Full disassembly of the functions that turn a system entry into a request frame."""
+    table = functions(data)
+    wanted = {name: item for item in table.values() for name in TARGETS if item[2] == name}
+    output = []
+    for name, (addr, size, _) in sorted(wanted.items(), key=lambda kv: kv[1][0]):
+        instructions = disassemble(data, addr, size, limit=limit)
+        output.append({
+            "name": name, "address": f"0x{addr:x}", "size": size,
+            "lines": [f"{ins.address:x}: {ins.mnemonic:<7} {ins.op_str}" for ins in instructions],
+        })
+    return output
+
+
 def describe(data: bytes, wanted: str) -> dict:
     table = functions(data)
     chosen = {addr: item for addr, item in table.items() if INTERESTING.search(item[2])}
@@ -60,13 +78,15 @@ def describe(data: bytes, wanted: str) -> dict:
     for addr, (_, size, name) in sorted(chosen.items())[:MAXFUNCS]:
         instructions = disassemble(data, addr, size)
         # Record the immediate operands: field offsets show up here as small constants.
-        immediates = sorted({ins.op_str for ins in instructions if ins.op_str.startswith("#") and len(ins.op_str) <= 6})
+        immediates = sorted({ins.op_str for ins in instructions
+                             if "#" in ins.op_str and len(ins.op_str) <= 16})
         report["matched"].append({
             "name": name, "address": f"0x{addr:x}", "size": size,
             "instructions": len(instructions),
             "immediates": immediates[:40],
             "sample": [f"{ins.mnemonic} {ins.op_str}" for ins in instructions[:24]],
         })
+    report["targets"] = trace_targets(data)
     text = data.decode("latin-1")
     report["strings"] = sorted({m.group(0) for m in re.finditer(r"[ -~]{6,40}", text)
                                 if INTERESTING.search(m.group(0))})[:60]
@@ -84,12 +104,12 @@ def markdown(report: dict) -> str:
         lines.append(f"| `{item['name']}` | {item['address']} | {item['size']} | "
                      f"{', '.join(item['immediates'][:14]) or '-'} |")
     lines.append("")
-    lines.append("### Disassembly samples")
+    lines.append("### Entry -> request frame conversion")
     lines.append("")
-    for item in report["matched"][:12]:
-        lines.append(f"**`{item['name']}`** @ {item['address']}")
+    for item in report.get("targets", []):
+        lines.append(f"**`{item['name']}`** @ {item['address']} ({item['size']} bytes)")
         lines.append("```")
-        lines.extend(item["sample"])
+        lines.extend(item["lines"])
         lines.append("```")
     if report["strings"]:
         lines.append("### Matching strings")
