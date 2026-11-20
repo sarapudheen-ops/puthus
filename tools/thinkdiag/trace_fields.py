@@ -71,17 +71,23 @@ def scan(data: bytes, name: str) -> list[dict]:
         base = segment.header.p_vaddr
         blob = segment.data()
         for ins in engine.disasm(blob, base):
-            if not ins.mnemonic.startswith("st"):
+            if not (ins.mnemonic.startswith("st")
+                    or (ins.mnemonic in ("add", "sub") and ins.op_str.count(",") == 2)):
                 continue
-            match = STORE_RE.search(ins.op_str)
-            if not match:
-                continue
-            offset = match.group(2)
-            if not offset:
-                continue
-            value = int(offset, 0)
-            if value not in OFFSETS:
-                continue
+            operands = [part.strip() for part in ins.op_str.split(",")]
+            if ins.mnemonic in ("add", "sub"):
+                if len(operands) != 3 or not operands[2].startswith("#"):
+                    continue
+                value = int(operands[2].lstrip("#"), 0)
+                if value not in OFFSETS:
+                    continue
+            else:
+                match = STORE_RE.search(ins.op_str)
+                if not match or not match.group(2):
+                    continue
+                value = int(match.group(2), 0)
+                if value not in OFFSETS:
+                    continue
             key = (name, ins.address)
             if key in seen:
                 continue
