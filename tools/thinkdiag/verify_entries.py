@@ -31,12 +31,13 @@ from pathlib import Path
 
 from toyota_entries import EntryIndex
 
-# The native code builds these with `mov w,#0x10000; movk w,#0x7b0`, so the selector
-# byte lands at 0x17b0 in the runtime context, not 0x7b0.
-HEADER_OFFSET = 0x17B0
-ADDRESS_OFFSET = 0x17B4
-REPLY_OFFSET = 0x17C4
-MODE_OFFSET = 0x1828
+# `toyota_entries.EntryIndex` already names each record field after the runtime slot the
+# native code stores it in, so the frame inputs are those decoded fields, not raw offsets.
+#   runtime107b0 (2B) + runtime107d0 (2B) -> ctx 0x17b0, read by `ldr w8, [x23]`
+#   runtime107b4 (1B)                     -> ctx 0x17b4, read by `ldrb w22`
+#   runtime107c4 (2B)                     -> ctx 0x17c4, read by `ldrh w20`
+# The transport byte at ctx 0x1828 is NOT in the entry record: `MenuEnterCommunicationSet`
+# writes it from the system/function path, so it is reported separately, not guessed.
 HEADER_REMAP = {0x45A8: 0x2E3B}      # csel w21, #0x2e3b, w8, eq
 SEED = bytes.fromhex("55aa0d61010800000000")
 
@@ -44,22 +45,21 @@ LAYOUT = {3: "iso9141-9byte", 4: "iso9141-9byte", 7: "can-13byte", 11: "can-13by
 FALLTHROUGH = {4, 5, 6, 8, 9, 10}
 
 
-def _field(entry, offset: int, size: int) -> int:
-    raw = entry.raw
-    if offset + size > len(raw):
-        return 0
-    return int.from_bytes(raw[offset:offset + size], "big")
+def _field(entry, name: str, fallback: str = "", size: int = 2) -> int:
+    raw = entry.fields.get(name) or entry.fields.get(fallback)
+    return int(raw, 16) if raw else 0
 
 
 def frame(entry) -> dict:
     """Bytes this entry produces, per the traced layouts."""
-    header = _field(entry, HEADER_OFFSET, 2)
+    header = _field(entry, "runtime107b0") | (_field(entry, "runtime107d0") << 16)
     header = HEADER_REMAP.get(header, header)
-    reply = _field(entry, REPLY_OFFSET, 2)
-    address = _field(entry, ADDRESS_OFFSET, 1)
-    mode = _field(entry, MODE_OFFSET, 1)
-    layout = LAYOUT.get(mode)
-    if layout is None:
+    reply = _field(entry, "runtime107c4")
+    address = _field(entry, "runtime107b4", size=1)
+    mode = 0
+    # Transport is chosen per system/function, not per entry; emit both known forms.
+    layout = "can-13byte" if header >> 4 in (0x07E, 0x07D, 0x18D) else "iso9141-9byte"
+    if header == 0:
         return {"layout": "unresolved", "transport": mode, "header": header,
                 "reply": reply, "address": address, "bytes": None}
     if layout == "can-13byte":
