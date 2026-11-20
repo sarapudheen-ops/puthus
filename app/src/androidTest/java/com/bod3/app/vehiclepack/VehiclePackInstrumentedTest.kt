@@ -26,6 +26,8 @@ class VehiclePackInstrumentedTest {
         assertEquals(1307, (index.summary["ecuFiles"] as Number).toInt())
         assertEquals(24653, (index.summary["normalizedVehicleChoices"] as Number).toInt())
         assertEquals(9, (index.summary["unresolvedHierarchyChoices"] as Number).toInt())
+        assertEquals(1445, (index.summary["executableDefinitions"] as Number).toInt())
+        assertEquals(1, (index.summary["enabledSystems"] as Number).toInt())
         val sourceVerification = index.summary["sourceVerification"] as Map<*, *>
         assertEquals(true, (sourceVerification["verification"] as Map<*, *>)["verified"])
         assertTrue(index.containerBytes > 100 * 1024 * 1024L) // external corpus, not an APK asset
@@ -64,7 +66,21 @@ class VehiclePackInstrumentedTest {
             val system = client.system(vehicle, selected)
             assertEquals(9, requests) // Selected system and its two shared ECU/function metadata objects.
             assertTrue(system.sourceRecords.isNotEmpty())
-            if (!system.enabled) {
+            if (system.enabled) {
+                // The single pinned read-only ECMECT slice: 1 ECU · 30 PIDs · 1,414 DTCs · 1 calibration-ID read.
+                assertTrue(system.readOnly)
+                assertEquals("1 ECU · 30 PIDs · 1,414 DTCs · 1 ECU info read", system.coverage)
+                assertEquals(1, system.data.ecus.size)
+                assertEquals(30, system.data.pids.size)
+                assertEquals(30, system.counts.getValue("pids").converted)
+                assertEquals(1414, system.counts.getValue("dtcs").converted)
+                assertEquals(1, system.counts.getValue("ecuInfo").converted)
+                assertEquals(0, system.counts.getValue("tests").converted)
+                assertEquals(0, system.counts.getValue("coding").converted)
+                assertEquals(0, system.counts.getValue("specialFunctions").converted)
+                assertTrue(system.data.actuators.isEmpty() && system.data.coding.isEmpty() && system.data.security.isEmpty())
+                assertNull(system.data.ecus.single().diagnostics!!.faults!!.clear)
+            } else {
                 assertTrue(system.reasons.isNotEmpty())
                 assertEquals(0, system.data.count)
                 assertTrue(system.counts.values.all { it.converted == 0 })
@@ -77,8 +93,14 @@ class VehiclePackInstrumentedTest {
             val candidates = client.bringUpCandidates(system)
             assertEquals(requestsBeforeCandidates + system.bringUpPages.size, requests)
             if (system.sourceRecords.any { it.startsWith("SYSTEMENTER.BIN@") }) assertTrue(candidates.isNotEmpty())
-            assertTrue(candidates.all { !it.runnable && it.runtime == null && it.sourceRecords.isNotEmpty() })
-            assertEquals(candidates.map { it.supportCount }.sortedDescending(), candidates.map { it.supportCount })
+            if (system.enabled) {
+                // The enabled slice ships exactly one runnable read-only translated candidate.
+                val candidate = candidates.single()
+                assertTrue(candidate.runnable && candidate.runtime != null && candidate.blockers.isEmpty() && candidate.sourceRecords.isNotEmpty())
+            } else {
+                assertTrue(candidates.all { !it.runnable && it.runtime == null && it.sourceRecords.isNotEmpty() })
+                assertEquals(candidates.map { it.supportCount }.sortedDescending(), candidates.map { it.supportCount })
+            }
             assertTrue("Only one selected path/system should transfer", transferred < 2 * 1024 * 1024)
             assertEquals(app.noBackupFilesDir.canonicalFile, cache.canonicalFile.parentFile)
             assertFalse(cache.listFiles().orEmpty().any { it.extension == "partial" })
