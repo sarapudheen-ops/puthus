@@ -11,6 +11,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import sys
 from pathlib import Path
 import re
 
@@ -515,6 +516,8 @@ class Converter:
 
 
 def main():
+    import traceback
+    sys.excepthook = lambda *exc: (traceback.print_exception(*exc), sys.stdout.flush(), sys.stderr.flush())
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
     parser.add_argument("--decoded", type=Path, required=True)
