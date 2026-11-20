@@ -90,6 +90,7 @@ class SimulatedCanAdapter(
     private fun handleAt(c: String): String {
         val arg = c.drop(4)
         when {
+            c in setOf("ATPC", "ATH1", "ATCAF1", "ATCFC1") -> Unit
             c.startsWith("ATSP") -> {
                 protocolCode = c[4]
                 header = null

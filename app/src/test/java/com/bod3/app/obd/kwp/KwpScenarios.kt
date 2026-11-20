@@ -56,6 +56,28 @@ object KwpScenarios {
         check(KLineFrames.decode("C1F11081" + "43", listOf(0x80, 0xF1, 0x10)) == null)
     }
 
+    /** Supplied COMM MultiPackFunc, source flag 81/33 short addressed branch only.
+     * Addresses in this digest are synthetic argument vectors, not vehicle/receive IDs.
+     * No adapter configuration, startup, timing, service or physical-ECU claim follows.
+     */
+    fun nativeToyotaShortPacketContract() {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        var count = 0
+        for (flags in listOf(0x81, 0x33)) for (source in listOf(0, 0xF0, 0xF1, 255)) {
+            for (target in listOf(0, 0x10, 0x13, 255)) for (size in 1..63) {
+                val payload = List(size) { (it * 73 + size) and 255 }
+                val wire = KLineFrames.encode(listOf(0x80, target, source), payload)
+                digest.update((listOf(flags, source, target, size) + wire).map(Int::toByte).toByteArray())
+                check(wire.size == size + 4 && wire[0] == 0x80 + size)
+                check(KLineFrames.decode(Hex.format(wire), listOf(0x80, target, source))?.payload == payload)
+                count++
+            }
+        }
+        check(count == 2016)
+        check(digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) } ==
+            "35cab2b30e208c0608d5967d510c9e439aed92aff0aeb3937ee943c38b774a3f")
+    }
+
     suspend fun reads(service: Int) {
         val b = Bench()
         val response = when (service) {

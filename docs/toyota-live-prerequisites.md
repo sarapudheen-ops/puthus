@@ -87,7 +87,10 @@ The original CALC data and reader reports from
 `y=(0x100*x1+x2)/4;`. `toyota_calc.py` checks the exact library/object hashes, operator IDs, binding
 powers and arithmetic branches before attaching separate `calcReview` metadata. The app decoder is
 compared against the independently translated numeric/formatting result for every one of the 65,792
-unsigned-byte inputs. No native evaluator is run. Other scripts do not inherit this review by algebraic
+unsigned-byte inputs. The owner-authorized offline oracle now also executes the supplied native numeric
+consumer on that entire domain, plus eight full `ResultCalcFromScript` calls. Numeric results agree;
+libc/printf remains an explicitly declared shim, not native-libc formatting proof. The original static
+review did not execute a native evaluator. Other scripts do not inherit this review by algebraic
 similarity, whitespace normalization, or a familiar label.
 
 Replaying the same exact source join locally gives **30 numerically reviewed rows within the unchanged

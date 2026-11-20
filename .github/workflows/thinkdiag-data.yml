@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   inspect:
-    name: Inspect Toyota archive (no vendor code execution)
+    name: Inspect owner-verified Toyota specification
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -27,6 +27,8 @@ jobs:
         run: |
           mkdir -p .local/thinkdiag
           gh release download assets-v1 --pattern TOYOTA.zip --dir .local/thinkdiag
+      - name: Verify the complete archive against the owner's attestation
+        run: python3 tools/thinkdiag/source_verification.py .local/thinkdiag/TOYOTA.zip
       - name: Install offline analysis dependencies
         run: python3 -m pip install -r tools/thinkdiag/requirements.txt
       - name: Test inspection tools
@@ -45,6 +47,21 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Compare supplied FILE COMM SYSP DTCF CALC instructions with bounded ports (offline only)
+        id: native_oracle
+        run: |
+          python3 tools/thinkdiag/toyota_native_oracle.py run .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/report/native-oracle.json
+      - name: Publish native comparison outcome (including failed reference gates)
+        if: always() && hashFiles('.local/thinkdiag/report/native-oracle.md') != ''
+        run: |
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota offline native differential' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion='${{ steps.native_oracle.outcome }}' \
+            -f 'output[title]=Bounded offline semantic comparison; no adapter or ECU' \
+            -F 'output[summary]=@.local/thinkdiag/report/native-oracle.md'
       - name: Sweep every diagnostic-table family and native reader
         run: |
           python3 tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \

@@ -1,0 +1,338 @@
+{
+  "adapterAccess": false,
+  "calcComparison": {
+    "fakeBoundaries": [
+      "malloc/calloc/free within guest heap",
+      "libc string/printf shims; not native libc formatting proof"
+    ],
+    "librarySha256": "364645c275977f139e92ac0a9b7995ab20939f32a86371876e0bdbe04a7e1197",
+    "nativeInstructionsExecuted": true,
+    "vectors": [
+      {
+        "binary64ResultsSha256": "6b4019371f8a5d8d2e9f8774a2d58cd5750a164de3bbe74861874bf513fe84d7",
+        "scriptEdges": [
+          {
+            "input": "0000",
+            "output": "-40"
+          },
+          {
+            "input": "00ff",
+            "output": "-40"
+          },
+          {
+            "input": "7f80",
+            "output": "87"
+          },
+          {
+            "input": "ffff",
+            "output": "215"
+          }
+        ],
+        "scriptSha256": "9be5ddba1b51a4bc948d16c492770c0496a0c1886817e7bc1ca3887f5ba546ad",
+        "vectors": 256
+      },
+      {
+        "binary64ResultsSha256": "fbe60ca2024c212b33ee10f2120f25efa1e34cb0e51996aef5f0eeccb765f061",
+        "scriptEdges": [
+          {
+            "input": "0000",
+            "output": "0"
+          },
+          {
+            "input": "00ff",
+            "output": "63.750"
+          },
+          {
+            "input": "7f80",
+            "output": "8160"
+          },
+          {
+            "input": "ffff",
+            "output": "16383.750"
+          }
+        ],
+        "scriptSha256": "a28a6cc7917e784524ec2c2dc3a1d6f9bf0733d0d8947f6d7ca6ccdbaa0f738f",
+        "vectors": 65536
+      }
+    ]
+  },
+  "entryComparison": {
+    "bySelector": {
+      "11": 267,
+      "12": 496,
+      "14": 30,
+      "17": 3,
+      "1a": 2,
+      "1c": 1,
+      "21": 10,
+      "22": 479,
+      "32": 1,
+      "4a": 1,
+      "51": 17,
+      "62": 1
+    },
+    "comparedRecords": 1308,
+    "function": "GetInfoFromEnterList",
+    "inMemoryReadCalls": 28952,
+    "librarySha256": "dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0",
+    "nativeInstructionsExecuted": true
+  },
+  "faultDecoderComparison": {
+    "atomicHardening": "The port additionally rejects short counts, invalid layouts and partial record tails; native partial-result behavior is not enabled",
+    "fakeBoundaries": [
+      "malloc/realloc/free within guest heap"
+    ],
+    "librarySha256": "686dc71e111d2a82205df75ddfa9d2a873ae4d7eea5de7aef81abcde295c39b7",
+    "nativeInstructionsExecuted": true,
+    "recordResultsSha256": "bb1ed0df809e6216d04d56993cf4757453eafbd946125872385e4186b7d06cb5",
+    "recordVectors": 2112,
+    "stateResultsSha256": "b8df1d29c9ea83ce79e430d53b8f4df50ac2a7ff70b259aeacebcf8156983d0d",
+    "stateVectors": 70144
+  },
+  "faultLabelComparison": {
+    "atomicHardening": "The merge port rejects a 256th distinct record instead of wrapping the native one-byte count",
+    "exactLabelResultsSha256": "ba3f924c6ef422f286632bcebf0f74bbf7a92257ce71a7ebe0ef0eea58dc9350",
+    "exactLabelVectors": 27035,
+    "fakeBoundaries": [
+      "IdSearch over source-decoded English pairs; not native libSTD search/decryption",
+      "English language selection and TEXT lookups over source-decoded records",
+      "libc string/printf shims; not native libc proof"
+    ],
+    "fallbackResultsSha256": "a259849cf4d39cf99fa6ff60eb0e614fde331694d115654d2f0b18142213c7aa",
+    "fallbackVectors": 3584,
+    "librarySha256": "686dc71e111d2a82205df75ddfa9d2a873ae4d7eea5de7aef81abcde295c39b7",
+    "mergeResultsSha256": "92d9955108602d4c01438a01b08f06c738c5c584502dba9a0327e7be2e731464",
+    "mergeVectors": 196608,
+    "missingLabelDisplayCalls": 21,
+    "nativeInstructionsExecuted": true,
+    "scopedLabels": {
+      "EU": {
+        "exactLabels": 66396,
+        "faultBlocks": 410,
+        "missingExactLabels": 0
+      },
+      "JP": {
+        "exactLabels": 57032,
+        "faultBlocks": 424,
+        "missingExactLabels": 0
+      },
+      "NA": {
+        "exactLabels": 56342,
+        "faultBlocks": 352,
+        "missingExactLabels": 0
+      }
+    },
+    "scopedLabelsSha256": "091d6c5d062eb263626c6ab591d27896da6b2fe220f1fd47a5d82089623b6cd4"
+  },
+  "frameComparison": {
+    "comparedTemplates": 18,
+    "fakeBoundaries": [
+      "libc memory functions"
+    ],
+    "frameResultsSha256": "3a76c84a87dbc2310c7339205b38ddafbb52ee9906bbf6ec3d1c06da29633f61",
+    "function": 61,
+    "librarySha256": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+    "nativeInstructionsExecuted": true,
+    "region": "EU"
+  },
+  "functionReaderComparison": {
+    "comparedFieldBytesSha256": "627f5c043439e15da5b1e0572a9e6e04ee051c439c6c86f29c7af8c2ca8361a8",
+    "fakeBoundaries": [
+      "fopenEx/fseekEx/freadEx/fcloseEx over supplied decoded byte arrays; not libDEVICEID decryption",
+      "OpenDeviceIdDll does not load host code",
+      "no online override files"
+    ],
+    "inMemoryReadCalls": 563735,
+    "librarySha256": "dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0",
+    "nativeInstructionsExecuted": true,
+    "regions": {
+      "EU": {
+        "clearBlocks": 409,
+        "clearQueries": 417,
+        "faultBlocks": 410,
+        "faultCodeMappings": 66638,
+        "faultQueries": 659
+      },
+      "JP": {
+        "clearBlocks": 423,
+        "clearQueries": 431,
+        "faultBlocks": 424,
+        "faultCodeMappings": 57119,
+        "faultQueries": 660
+      },
+      "NA": {
+        "clearBlocks": 352,
+        "clearQueries": 360,
+        "faultBlocks": 352,
+        "faultCodeMappings": 56559,
+        "faultQueries": 562
+      }
+    }
+  },
+  "functionRoundTrips": {
+    "EU": {
+      "clearBlocks": 409,
+      "clearQueries": 417,
+      "faultCodeMappings": 66638,
+      "faultsBlocks": 410,
+      "faultsQueries": 659
+    },
+    "JP": {
+      "clearBlocks": 423,
+      "clearQueries": 431,
+      "faultCodeMappings": 57119,
+      "faultsBlocks": 424,
+      "faultsQueries": 660
+    },
+    "NA": {
+      "clearBlocks": 352,
+      "clearQueries": 360,
+      "faultCodeMappings": 56559,
+      "faultsBlocks": 352,
+      "faultsQueries": 562
+    }
+  },
+  "kind": "offline-native-differential",
+  "kwpLifecycleComparison": {
+    "consumerCallsSha256": "d14837717846cacb7bcdb476a581e3cd5d477c8fcd6758010466ea32f2704736",
+    "exitRequests": {
+      "3e": 42,
+      "3e01": 6,
+      "82": 236
+    },
+    "fakeBoundaries": [
+      "FILE fseekEx/freadEx see only supplied decoded arrays; not libDEVICEID decryption",
+      "Open*Dll exports do not load host code; six explicitly identified SYSP cells link to real COMM guest functions",
+      "Every adapter operation is an explicit trace-only fake; EndCombination returns synthetic positive 9",
+      "Synthetic addressed C1 reply, libc memory and no-wait usleep shims; not initialization/electrical/clock proof"
+    ],
+    "inMemoryReadCalls": 7198,
+    "keepaliveRequests": {
+      "0100": 42,
+      "2100": 174,
+      "2102": 4,
+      "21e1": 3,
+      "3e": 41,
+      "3e01": 20
+    },
+    "librarySha256": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432",
+    "linkedLibrariesSha256": {
+      "libTOYOTA_COMM.so": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+      "libTOYOTA_FILE.so": "dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0",
+      "libTOYOTA_SYSP.so": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432"
+    },
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "Fast-entry failure/negative-reply/retry and native-transport-5 ISO fallback branches",
+      "MIC3313 ST/VT timing/line/pin mapping and physical validation",
+      "Keepalive adapter argument units, runtime scheduling/receive semantics and production emission"
+    ],
+    "sourceBindingsSha256": "91ead1d7cc8e7ad1062b7b6273473497f6280ed4846bad616c6ed53aaccadff1",
+    "sourceEntries": 284,
+    "sourcePulseArguments": {
+      "1919": 78,
+      "230f": 206
+    },
+    "vectors": {
+      "exit": 284,
+      "fastPositiveEntry": 284,
+      "keepaliveOff": 284,
+      "keepaliveOn": 284
+    }
+  },
+  "kwpTransportComparison": {
+    "allEntryCensusByNativeTransport": {
+      "1": 267,
+      "10": 3,
+      "2": 10,
+      "3": 498,
+      "4": 479,
+      "5": 17,
+      "6": 1,
+      "7": 3,
+      "8": 30
+    },
+    "configurationResultsSha256": "2d6acec1f47d77601a27de5cd793a98d2279a54aa4a6205f540e2360d310f2a8",
+    "configurationVectors": 568,
+    "fakeBoundaries": [
+      "OpenAbstractCommDll does not load host code",
+      "Every adapter API is an explicit trace-only fake returning 1; not initialization/timing proof",
+      "libc memory functions"
+    ],
+    "librarySha256": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "MIC3313 ST/VT equivalent timing/pin/line configuration",
+      "SYSP fast/slow entry, sessions, replies, keepalive/exit and retry behavior",
+      "Native transports other than 1/5 and packets above 63 source payload bytes",
+      "Production executable-definition emission and physical validation"
+    ],
+    "sourceEntries": 284,
+    "sourceEntryResultsSha256": "175481ce290b29605655ded55ff66a33ab4bf7c01be2428b03cef729ef86e792",
+    "sourcePacketResultsSha256": "a6f651694aba913a0e65b93c267fcb4f98ad73eb258258c51fa87cdb13b4603a",
+    "sourcePacketVectors": 17892,
+    "syntheticConfigurationResultsSha256": "b67a5bce229d949c050bcc0a6388e64489a2eb6748d2eb6567d0366aa68cef61",
+    "syntheticConfigurationVectors": 8,
+    "wireContractResultsSha256": "35cab2b30e208c0608d5967d510c9e439aed92aff0aeb3937ee943c38b774a3f",
+    "wireContractVectors": 2016
+  },
+  "networkAccess": false,
+  "p5DecoderComparison": {
+    "atomicHardening": "The port rejects an incomplete record tail instead of retaining a native partial result",
+    "fakeBoundaries": [
+      "malloc/realloc/free within guest heap",
+      "context+1e8=1 disables auxiliary P5 freeze-frame/mask side-table allocation"
+    ],
+    "librarySha256": "686dc71e111d2a82205df75ddfa9d2a873ae4d7eea5de7aef81abcde295c39b7",
+    "nativeInstructionsExecuted": true,
+    "notCovered": "P5 query selection, mask discovery, auxiliary diagnostic side tables, transport and ECU applicability",
+    "recordResultsSha256": "80d7b89ebccc5f36c996053c4682840b978fddbbb7afde6b99714477f2ef6f50",
+    "recordVectors": 49152,
+    "sourceBlocks": 395,
+    "sourceBlocksByRegion": {
+      "EU": 145,
+      "JP": 123,
+      "NA": 127
+    },
+    "sourceLayoutBytes": "0308ff020406"
+  },
+  "physicalValidation": false,
+  "regionalTemplateComparison": {
+    "fakeBoundaries": [
+      "libc memory functions; no adapter or query-condition execution"
+    ],
+    "frameResultsSha256": "a92cb728a8653f3ea240de3fa1f6ec2048552c5d23161b22c85773c9bfcc03bd",
+    "librarySha256": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+    "nativeInstructionsExecuted": true,
+    "regions": {
+      "EU": {
+        "defaultBindingKeys": 11410,
+        "faultClearInitialLookups": 1147,
+        "nondefaultBindingsNotExecuted": 118,
+        "resolvedFrames": 12064,
+        "standaloneFrames": 2925,
+        "templateLookups": 11415,
+        "withoutDefaultBinding": 5
+      },
+      "JP": {
+        "defaultBindingKeys": 11900,
+        "faultClearInitialLookups": 1170,
+        "nondefaultBindingsNotExecuted": 139,
+        "resolvedFrames": 12558,
+        "standaloneFrames": 2925,
+        "templateLookups": 11904,
+        "withoutDefaultBinding": 4
+      },
+      "NA": {
+        "defaultBindingKeys": 11348,
+        "faultClearInitialLookups": 981,
+        "nondefaultBindingsNotExecuted": 115,
+        "resolvedFrames": 12003,
+        "standaloneFrames": 2925,
+        "templateLookups": 11352,
+        "withoutDefaultBinding": 4
+      }
+    }
+  },
+  "sourceSha256": "26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a"
+}

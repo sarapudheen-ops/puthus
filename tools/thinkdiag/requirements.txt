@@ -1,4 +1,5 @@
-# Offline static-analysis dependencies; not part of the Android application.
+# Offline conversion/semantic-replay dependencies; never part of the Android application.
 pyelftools==0.32
 capstone==5.0.6
 py3rijndael==0.3.3
+unicorn==2.1.4

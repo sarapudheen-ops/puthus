@@ -123,6 +123,51 @@ class ConversionTest(unittest.TestCase):
             self.assertTrue((Path(d) / "entry-index.json").exists())
             self.assertTrue((Path(d) / "conversion-report.md").read_text().startswith("# Toyota conversion report"))
 
+    def test_general_manual_vehicle_uses_exact_shared_systems_and_metadata_deterministically(self):
+        sources, labels = fixture()
+        titles = ["Show Menu", "Manual Select", "16PIN DLC (Europe and Other)", "Others", "Synthetic model", "Group X", "Variant Y"]
+        tasks = [0xFEF0, 0xFEF1, 0xFEE9, 0xFEBA, 0xFEBA, 0xFEBA, 7]
+        menu = bytearray()
+        for i, (title, task) in enumerate(zip(titles, tasks)):
+            children = int(i + 1 < len(titles)); node = bytearray(38 + children * 23)
+            struct.pack_into("<I", node, 0, len(node)); struct.pack_into("<I", node, 8, 100 + i)
+            struct.pack_into("<HH", node, 34, task, children)
+            if children: struct.pack_into("<I", node, 57, len(menu) + len(node))
+            labels[f"{100 + i:08X}"] = title; menu += node
+        sources["MENU.BIN"] = bytes(menu)
+        with tempfile.TemporaryDirectory() as d:
+            indexes = []
+            for name in ("first", "second"):
+                p = Path(d) / name; p.mkdir()
+                index = Converter(sources, labels, p).finish(); indexes.append(index)
+                self.assertEqual(1, index["summary"]["normalizedVehicleChoices"])
+                self.assertEqual(0, index["summary"]["unresolvedHierarchyChoices"])
+                container = p / index["container"]; page = read_object(container, index["catalogRoot"])
+                for level in ("make", "model", "generation", "variant"):
+                    child, = page["children"]; self.assertEqual(level, child["level"])
+                    page = read_object(container, child["object"])
+                self.assertNotIn("systems", page)
+                source = read_object(container, page["systemsSource"])
+                self.assertEqual(page["sourceRecords"][-1], source["id"])
+                self.assertEqual(page["systemsSourceId"], source["id"])
+                self.assertEqual(page["sourceSelection"], [s["name"] for s in source["selection"]])
+                system = read_object(container, source["systems"][0]["object"])
+                ecu = read_object(container, system["ecuSource"]["object"])
+                function = read_object(container, system["functionSource"]["object"])
+                self.assertEqual("EU/Ecu_Data_ffff.BIN", ecu["sourceFile"])
+                self.assertEqual("ecu-source", ecu["kind"])
+                self.assertEqual("function-source", function["kind"])
+                self.assertEqual(1, function["declaredLiveRows"])
+                self.assertTrue(ecu["pages"] and function["livePages"])
+                self.assertNotIn("pages", system["ecuSource"])
+                self.assertNotIn("livePages", system["functionSource"])
+                verify(p)
+                from check_pack_delivery import check
+                result = check(p, lambda _, __, ref: read_object(container, ref))
+                self.assertEqual(7, result["requests"])
+                self.assertEqual(system["id"], result["systemId"])
+            self.assertEqual(indexes[0], indexes[1])
+
     def test_malformed_known_layout_is_not_forgiven_or_padded(self):
         with tempfile.TemporaryDirectory() as d:
             sources, labels = fixture()
@@ -160,6 +205,68 @@ class ConversionTest(unittest.TestCase):
             p = Path(d)
             (p / "archive").write_bytes(b"unverified source")
             with self.assertRaises(ValueError): load_sources(p / "archive", p / "decoded", p / "manifest")
+
+
+class BringUpCandidateConversionTest(unittest.TestCase):
+    def candidates(self, sources):
+        with tempfile.TemporaryDirectory() as d:
+            _, labels = fixture()
+            converter = Converter(sources, labels, Path(d))
+            index = converter.finish()
+            records = [json.loads(line) for line in gzip.decompress((Path(d) / "systems.jsonl.gz").read_bytes()).splitlines()]
+            container = Path(d) / index["container"]
+            system = read_object(container, converter.systems[records[0]["id"]])
+            candidates = [c for ref in system["bringUpPages"] for c in read_object(container, ref)["candidates"]]
+            verify(Path(d))
+            return system, candidates
+
+    def alternatives(self):
+        sources, _ = fixture()
+        record = sources["SYSTEMENTER.BIN"][20:]
+        alt = bytearray(record); alt[0] = 0x51; alt[1] = 5
+        first = bytes([2, 0, 0, 0]) + record + alt
+        second = bytes([1, 0, 0, 0]) + record
+        sources["SYSTEMENTER.BIN"] = (bytes([1, 1]) + struct.pack("<I", 6) + struct.pack("<HIIII", 2, 1, 24, 2, 24 + len(first))
+                                         + first + second)
+        return sources
+
+    def test_every_source_alternative_ranked_by_distinct_record_support(self):
+        system, candidates = self.candidates(self.alternatives())
+        self.assertEqual(2, len(candidates))
+        self.assertEqual([2, 1], [c["supportCount"] for c in candidates])
+        self.assertTrue(all(c["supportCount"] == len(set(c["supportRecords"])) for c in candidates))
+        self.assertEqual(["11", "51"], [c["metadata"]["selector"] for c in candidates])
+        self.assertTrue(any("Selector differs" in why for why in candidates[1]["blockers"]))
+        self.assertFalse(any("Selector differs" in why for why in candidates[0]["blockers"]))
+        self.assertEqual({}, system["data"])
+        self.assertFalse(system["enabled"])
+
+    def test_opaque_fields_are_preserved_not_invented_as_runtime_protocol_or_timings(self):
+        _, candidates = self.candidates(fixture()[0])
+        c = candidates[0]
+        self.assertIsNone(c["runtime"])
+        self.assertTrue(c["blockers"])
+        self.assertEqual("10400", c["metadata"]["baudRaw"])
+        self.assertIn("1234", c["metadata"]["addresses"])
+        self.assertIn("053c001919", c["metadata"]["timing"])
+        self.assertIn("Unmapped native transport", c["metadata"]["protocol"])
+        self.assertIn("not cross-vehicle applicability", c["metadata"]["supportBasis"])
+
+    def test_missing_exact_selector_still_lists_evidence_but_blocks_all_alternatives(self):
+        sources = self.alternatives()
+        raw = bytearray(sources["SYSLIST_EU.BIN"]); raw[14 + 27] = 0x31; sources["SYSLIST_EU.BIN"] = bytes(raw)
+        system, candidates = self.candidates(sources)
+        self.assertIsNone(system["entrySource"])
+        self.assertEqual(2, len(candidates))
+        self.assertTrue(all(any("Selector differs" in why for why in c["blockers"]) for c in candidates))
+        self.assertTrue(all(c["runtime"] is None for c in candidates))
+
+    def test_no_function_directory_never_substitutes_another_ecu(self):
+        sources, _ = fixture()
+        raw = bytearray(sources["SYSLIST_EU.BIN"]); struct.pack_into("<I", raw, 14, 99); sources["SYSLIST_EU.BIN"] = bytes(raw)
+        system, candidates = self.candidates(sources)
+        self.assertEqual([], candidates)
+        self.assertEqual([], system["bringUpPages"])
 
 
 class HierarchyReviewTest(unittest.TestCase):

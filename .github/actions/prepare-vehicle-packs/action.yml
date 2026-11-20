@@ -13,7 +13,7 @@ runs:
       id: pack-cache
       with:
         path: .local/toyota-vehicle-packs
-        key: toyota-vehicle-packs-v1-${{ runner.os }}-${{ hashFiles('tools/thinkdiag/*.py', 'tools/thinkdiag/requirements.txt') }}
+        key: toyota-vehicle-packs-v1-${{ runner.os }}-${{ hashFiles('tools/thinkdiag/*.py', 'tools/thinkdiag/requirements.txt', 'tools/thinkdiag/verification/*.json', 'tools/thinkdiag/schema/*') }}
     - name: Convert the complete source on cache miss (never on the phone)
       if: steps.pack-cache.outputs.cache-hit != 'true'
       shell: bash
@@ -23,6 +23,7 @@ runs:
         set -euo pipefail
         mkdir -p .local/toyota-conversion
         gh release download assets-v1 --repo "$GITHUB_REPOSITORY" --pattern TOYOTA.zip --dir .local/toyota-conversion
+        python3 tools/thinkdiag/source_verification.py .local/toyota-conversion/TOYOTA.zip
         python3 tools/thinkdiag/decode_toyota.py .local/toyota-conversion/TOYOTA.zip \
           --output .local/toyota-conversion/decoded --report .local/toyota-conversion/report
         python3 tools/thinkdiag/extract_english.py .local/toyota-conversion/TOYOTA.zip \
@@ -31,11 +32,16 @@ runs:
           --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
           --manifest .local/toyota-conversion/report/decoded-manifest.json \
           --output .local/toyota-vehicle-packs
+        python3 tools/thinkdiag/toyota_native_oracle.py run .local/toyota-conversion/TOYOTA.zip \
+          --decoded .local/toyota-conversion/decoded \
+          --manifest .local/toyota-conversion/report/decoded-manifest.json \
+          --output .local/toyota-vehicle-packs/native-oracle.json
     - name: Verify even cached objects and stage only the small index for Android
       shell: bash
       run: |
         set -euo pipefail
         python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs
+        python3 tools/thinkdiag/toyota_native_oracle.py verify .local/toyota-vehicle-packs/native-oracle.json
         mkdir -p .local/vehicle-pack-assets/toyota-vehicle-packs
         cp .local/toyota-vehicle-packs/index.json .local/vehicle-pack-assets/toyota-vehicle-packs/index.json
         test "$(find .local/vehicle-pack-assets -type f | wc -l)" -eq 1

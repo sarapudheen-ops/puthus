@@ -6,6 +6,7 @@ import org.junit.Test
 /** Every service is its own CI case; the fixtures are synthetic, never source-derived car mappings. */
 class KwpTest {
     @Test fun frameBoundariesChecksumsAndHeaders() = KwpScenarios.framing()
+    @Test fun shortPacketEncodingMatchesSuppliedToyotaNativeConsumer() = KwpScenarios.nativeToyotaShortPacketContract()
     @Test fun startCommunication81() = runBlocking { KwpScenarios.reads(0x81) }
     @Test fun identification1A() = runBlocking { KwpScenarios.reads(0x1A) }
     @Test fun localRead21() = runBlocking { KwpScenarios.reads(0x21) }

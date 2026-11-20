@@ -7,6 +7,7 @@ import unittest
 
 from check_pack_delivery import check, check_url, fetch
 from vehicle_bundle import BundleWriter, canonical, read_object
+from source_verification import load_verification
 
 
 class Response(io.BytesIO):
@@ -83,7 +84,7 @@ class DeliveryTest(unittest.TestCase):
                 ref = writer.add({"kind": "catalog-level", "id": parent,
                                   "children": [{"id": identity, "level": identity, "object": ref}]})
                 identity = parent
-            index = writer.finish(ref, {"executableDefinitions": 0}, ref)
+            index = writer.finish(ref, {"executableDefinitions": 0, "sourceVerification": load_verification()}, ref)
             requests = []
 
             def local(container, total, wanted):

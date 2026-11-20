@@ -9,11 +9,11 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 | ecuFiles | 1307 |
 | manualLeaves | 24662 |
 | manualLeavesWithSystemJoin | 24642 |
-| normalizedVehicleChoices | 4 |
+| normalizedVehicleChoices | 24653 |
 | systemEntryRecords | 1308 |
 | systems | 287030 |
 | systemsWithExactEntryJoin | 286149 |
-| unresolvedHierarchyChoices | 24658 |
+| unresolvedHierarchyChoices (non-vehicle tasks) | 9 |
 | unresolvedSourceRecords | 1055750 |
 | Executable definitions | 0 |
 
@@ -43,7 +43,20 @@ Source archive SHA-256: `26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd
 
 ## Reviewed manual choices — exact system accounting
 
-Only these literal source paths have been normalized so far. This is not coverage of all Toyota models or of AN40 diesel. The source month boundaries are retained in generation names; missing engine/fuel/transmission are not invented.
+The full checksum-verified manual MENU tree now supplies 24,653 vehicle paths: EU 13,941, NA 5,762,
+JP 4,950. Nine short non-vehicle tasks are not fabricated as vehicle models. Source models are literal;
+the first detail is a source generation/group, not an inferred chassis generation, and variants retain
+all remaining details plus region/communication menu and exact source-node identity. The four starting
+reviewed Innova paths below keep their existing IDs and month boundaries. The table is a starting-choice
+excerpt, not the full ledger and not executable coverage of those vehicles or of AN40 diesel.
+
+The whole archive is owner-verified by
+[`toyota-verified.json`](../tools/thinkdiag/verification/toyota-verified.json), including nested members.
+This attestation is verified before conversion and included in the index; its sandbox-execution permission
+is separate from executable conversion, operation grants and physical testing. Shared source-system lists
+and ECU/function metadata have explicit typed hash references; a reference cannot cross the selected
+vehicle/ECU/function boundary. Full regeneration/Android evidence for these changes is recorded below
+when it completes, not inferred from historical CI.
 
 | Manual vehicle choice | Source system ID / name | PIDs converted / unresolved candidates | DTCs | Tests | Coding | Reasons |
 |---|---|---:|---|---|---|---|
@@ -91,8 +104,8 @@ The verified full regional SYSLIST excerpts give these exact joins (no low-nibbl
 | JP | 54,545 | 54,545 | 0 |
 | Total | 287,030 | 286,149 | 881 |
 
-These joins do not change the **zero executable definitions** figure. The accounting table above is
-from the full conversion in [Actions run 44482990080](https://github.com/sarapudheen-ops/puthus/actions/runs/44482990080)
+These joins do not change the **zero executable definitions** figure. The system/entry/row counts above
+were originally established by the full conversion in [Actions run 44482990080](https://github.com/sarapudheen-ops/puthus/actions/runs/44482990080)
 for `d782c9a94b87e032fd9725aceb2d0154edcaa05a` (conversion check `135420684960`). The 1,313 additional
 unresolved records versus the pre-entry-reader report are the 1,308 entry records and five unclaimed
 spans, not newly supported diagnostic features. This run published 527 checksum-verified static
@@ -110,6 +123,97 @@ The selected-path loader, closed selected-system scope, manual confirmation, bou
 and system/feature UI are being integrated in this PR. They do **not** supply missing diagnostic
 semantics. Until the joins listed above are translated and tested, every recovered real system
 stays disabled. Synthetic KWP/CAN tests establish engine behavior, not recovered Toyota coverage.
+
+### Native execution and fault-decoder port — not counted as executable
+
+Owner-authorized supplied functions now execute in bounded offline AArch64 emulation. This supersedes
+older static-only descriptions; no host `dlopen`, constructors, JNI, syscalls, network, adapter or ECU
+is bridged. `native-oracle.json` records explicit file-array/libc/formatting fakes. Full-archive owner
+verification precedes every source run, and every decoded payload is checked against the complete
+manifest before any native reader sees it. The reviewed individual library identities/result hashes
+are in [`native-oracle-v1.json`](../tools/thinkdiag/schema/native-oracle-v1.json).
+
+| Executed native consumer | Compared domain | Result |
+|---|---|---|
+| FILE `GetInfoFromEnterList` | all 1,308 source entries | byte-for-byte loaded fields match |
+| FILE `GetRDtcDataFromRDTCPart` / `GetCDtcDataFromCDTCPart` | 1,186 fault blocks / 1,184 clear blocks; 1,881 / 1,208 queries; 180,316 mappings across EU/NA/JP | exact fields, offsets, mapping arrays and source round trips match |
+| COMM `GetCommFrameInfo` / `GetFuncCommFrameInfo_MultiCmd` | all 8,775 regional frame records, 34,671 default/declared-fault template lookups; 18 starting EU/function-61 joins | exact request/mask/reply bytes, frame IDs and source order match; 372 nondefault bindings are counted, not executed; not transport proof |
+| COMM `InitCommSet_Ex` / `InitKWPISOMode` / `MultiPackFunc` | 284 fast-KWP source entries, 568 configuration traces, 17,892 source packets; eight synthetic configuration branches; 2,016 shared short-packet contract vectors | Python calls/packets match native; Kotlin packet digest matches; adapter APIs are trace-only fakes, not ST/VT configuration proof |
+| Linked FILE → SYSP → COMM entry / keepalive / exit | 284 first-positive-entry, 568 keepalive-on/off and 284 exit traces with exact regional/function/full-selector source joins | native FILE loading, COMM lookup/configuration/packing and SYSP consumers execute together; positive adapter reply is synthetic; negative/retry/ISO fallback, adapter scheduling and physical semantics remain unvalidated |
+| DTCF `GetDtcStateResult` / `GetDTCCodeFromAnsP3P4` | 70,144 status/mask and 2,112 record vectors | independent Python and app Kotlin result hashes match |
+| DTCF `GetDTCCodeFromAnsP5` | 49,152 core record-projection vectors; 395 source P5 blocks share the compared header | native/Python/Kotlin hashes match; auxiliary freeze/mask side-table allocation is explicitly disabled, not validated |
+| DTCF `GetShowDtcInfo` / `InitDtcNum` / `SetDiagCodeData` | 27,035 exact TCODE pairs; 3,584 width/display vectors; 21 missing-key display calls; 196,608 exact-key byte merges | Python matches native consumer instructions; Kotlin display/merge hashes match; English IdSearch/TEXT/libc boundaries are declared shims |
+| CALC numeric evaluator / `ResultCalcFromScript` | 65,792 numeric vectors, two arithmetic forms, eight script edges | numeric results match; libc/printf is a declared shim |
+
+The new strict app `TOYOTA_P3P4` fault layout preserves the native count/presence rules, query/mode
+origin override, assembly kinds, exact 32-bit code keys and source state IDs. It rejects malformed
+partial replies atomically rather than copying native partial-success behavior. Source states are not
+assumed UDS bits, and missing selected-system labels do not fall back to global descriptions. Exact
+KWP `12`/`13` reads and the separately confirmed physical KWP `04` → `44` clear variant never become
+`18`/`14` substitutions or broadcast commands. Same-current-ECU guards are checked before consuming a
+clear confirmation; the read/write/clear policy tests are unchanged.
+
+The exact label compiler joins **179,770 distinct per-function keys** from all 180,316 mapping rows,
+with **zero missing TCODE keys** (EU 66,396; NA 56,342; JP 57,032). It preserves alternate descriptions
+with identical printed codes and every source mapping row ID. GAG extraction now retains original
+index/text offsets and encoded lengths. Source runs re-extract English records from the pinned archive,
+not mutable JSON. An optional source-defined unknown-code presentation preserves the original key;
+it is not a global P-code lookup. The app-layout compiler rejects PSA/P5/flash callers and the P3/P4
+kind-5 workflow query whose native caller deliberately skips fault decoding.
+
+The separate P5 layout/compiler preserves P5's record origin without applying P3/P4 count/origin
+rules, and requires an explicit caller-supplied availability mask. Its 395 source headers match the
+compared shape; mask discovery, auxiliary side tables and query workflows remain separate work.
+
+The separate `toyota_transport.py` projection preserves literal COMM API arguments for the 284
+native transport-1/5 entries. It retains source baud, pin-pair selection and the 9,600-baud timing
+exception. The alternate connector receives the high byte of the original four-byte timing load;
+a tempting three-byte slice produced a real native-comparison failure and now has a regression test.
+Source flags `81`/`33` packets reject payloads above 63 bytes rather than changing addressing bits or
+substituting an extended-length source variant. This is not yet an approved adapter configuration.
+
+`toyota_lifecycle.py` retains the function-specific initial/keepalive/exit packets instead of inserting
+a generic testerPresent or stopCommunication. Of the 284 fast-KWP entry joins, only **41** keepalives
+are bare `3E`: the others are `0100` (42), `2100` (174), `2102` (4), `21E1` (3), and `3E01` (20).
+Native fast keepalive passes literal `(wire, length, 3, 800)` to `SetLinkKeep`; the API units and
+MIC3313 scheduler mapping are still open. Exit requests are source `82` (236), `3E` (42), or `3E01` (6),
+using the variadic native packet-pointer API, not a pointer/length pair. Original expected-response
+bytes are retained, but SYSP exit does not enforce them. Pulse arguments are 25/25 (78) or 35/15 (206).
+The oracle now pins five library identities and links six explicitly identified SYSP cells directly
+to real COMM guest exports. None of this is same-current-ECU proof or production emission.
+
+Local checks at this checkpoint: **186 Python tests**, **122 Kotlin source files compiled**, and
+**111 standalone core scenario groups passed**, including DTCF P3/P4 and P5 core/state/display/merge
+and the short-KWP-packet digest. Standalone results are **not** Gradle/JUnit, lint, Android or physical
+results. The complete local expanded native/reference run passed in **396.26 seconds**, with English
+JSON keys reversed, on restored hash-checked inputs. It is not the original-ZIP/full-manifest CLI check.
+
+The first full-archive CI attempt at `d85c290` failed its native-reference gate. After canonicalizing
+global label keys independently of GAG/JSON iteration order (without changing original offsets or
+per-function mapping order), the corrected `b0e3e96` full-archive inspection
+[44672825656](https://github.com/sarapudheen-ops/puthus/actions/runs/44672825656) **passed**. Push Android
+[44672825723](https://github.com/sarapudheen-ops/puthus/actions/runs/44672825723) and PR Android
+[44672832977](https://github.com/sarapudheen-ops/puthus/actions/runs/44672832977) also **passed**, including
+`assembleDebug lintDebug testDebugUnitTest` and APK-index verification. The push run installed the
+actual APK on API 24: **two tests passed in 2.008 seconds**, proving index-only packaging, exact manual
+selected-path range delivery/offline cache and no automatic vehicle selection—not ECU functionality.
+The PR run deliberately skips the release-publishing emulator job. The subsequent fast-KWP head
+`156cb70` also passed [inspection 44675858188](https://github.com/sarapudheen-ops/puthus/actions/runs/44675858188),
+[push Android 44675858091](https://github.com/sarapudheen-ops/puthus/actions/runs/44675858091) and
+[PR Android 44675863827](https://github.com/sarapudheen-ops/puthus/actions/runs/44675863827): **556 JVM tests,
+zero failures/errors/skips in 67 classes**, Gradle assemble/lint and exact APK checks, plus **2 actual-APK
+API-24 tests PASS in 1.076 seconds**. Its native check **136088714661** passes the original archive/full
+manifest and fast-KWP reference. Those runs precede the separate linked-lifecycle domain above;
+expanded linked-lifecycle CI is recorded separately when available. The exact original `d85c290` log
+exception could not be retrieved from the signed log host,
+so iteration order is not asserted to be its independently confirmed cause. Failed gates now retain
+raw evidence and publish explicit failure annotations/reports. **The API-24 nonempty executable Toyota
+system acceptance criterion remains unmet**, despite delivery/UI smoke tests passing.
+
+**Still incomplete:** complete transport/init/session/timing mapping, source fault-query conditions/
+selection and multi-query workflows, general EXPRESS/control flow/signed/string helpers, ECU-info,
+coding, actuator and special-function conversion. Exact parsing and native equivalence do not fill
+these gaps. **Executable recovered definitions remain 0**; no physical test was performed.
 
 ### Current live conversion work — not counted as executable
 

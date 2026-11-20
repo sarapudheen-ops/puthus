@@ -24,7 +24,10 @@ class VehiclePackInstrumentedTest {
         assertTrue(bytes.size <= VehiclePackIndex.MAX_INDEX_BYTES)
         val index = AssetVehiclePacks.load(app).index
         assertEquals(1307, (index.summary["ecuFiles"] as Number).toInt())
-        assertEquals(4, (index.summary["normalizedVehicleChoices"] as Number).toInt())
+        assertEquals(24653, (index.summary["normalizedVehicleChoices"] as Number).toInt())
+        assertEquals(9, (index.summary["unresolvedHierarchyChoices"] as Number).toInt())
+        val sourceVerification = index.summary["sourceVerification"] as Map<*, *>
+        assertEquals(true, (sourceVerification["verification"] as Map<*, *>)["verified"])
         assertTrue(index.containerBytes > 100 * 1024 * 1024L) // external corpus, not an APK asset
     }
 
@@ -44,21 +47,22 @@ class VehiclePackInstrumentedTest {
             }))
             var page = client.root()
             val ids = mutableListOf<String>()
-            for (expected in listOf("make", "model", "generation")) {
-                val child = page.children.first()
+            for ((expected, name) in listOf("make" to "Toyota", "model" to "Kijang Innova", "generation" to "TGN · 2009.07-2017.07")) {
+                val child = page.children.single { it.name == name }
                 assertEquals(expected, child.level)
                 ids += child.id
                 page = client.open(child)
             }
-            val choice = page.children.first()
+            val choice = page.children.single { it.name == "MINI VAN · w/ VSC (Vehicle Stability Control)" }
             assertEquals("variant", choice.level)
             ids += choice.id
             val vehicle = client.vehicle(choice)
             assertTrue(vehicle.hierarchyResolved)
             assertEquals(ids.last(), vehicle.variantId)
-            assertEquals(5, requests)
-            val system = client.system(vehicle, vehicle.systems.first())
-            assertEquals(6, requests)
+            assertEquals(6, requests) // Five hierarchy objects plus exact shared source-system descriptors.
+            val selected = vehicle.systems.single { it.id == "SYSLIST_EU.BIN@0009d8f2" }
+            val system = client.system(vehicle, selected)
+            assertEquals(9, requests) // Selected system and its two shared ECU/function metadata objects.
             assertTrue(system.sourceRecords.isNotEmpty())
             if (!system.enabled) {
                 assertTrue(system.reasons.isNotEmpty())
@@ -67,8 +71,14 @@ class VehiclePackInstrumentedTest {
             }
             system.unresolvedPages.firstOrNull()?.let {
                 assertTrue(client.unresolved(it).isNotEmpty())
-                assertEquals(7, requests)
+                assertEquals(10, requests)
             }
+            val requestsBeforeCandidates = requests
+            val candidates = client.bringUpCandidates(system)
+            assertEquals(requestsBeforeCandidates + system.bringUpPages.size, requests)
+            if (system.sourceRecords.any { it.startsWith("SYSTEMENTER.BIN@") }) assertTrue(candidates.isNotEmpty())
+            assertTrue(candidates.all { !it.runnable && it.runtime == null && it.sourceRecords.isNotEmpty() })
+            assertEquals(candidates.map { it.supportCount }.sortedDescending(), candidates.map { it.supportCount })
             assertTrue("Only one selected path/system should transfer", transferred < 2 * 1024 * 1024)
             assertEquals(app.noBackupFilesDir.canonicalFile, cache.canonicalFile.parentFile)
             assertFalse(cache.listFiles().orEmpty().any { it.extension == "partial" })
@@ -77,10 +87,11 @@ class VehiclePackInstrumentedTest {
                 error("Offline reopen must not access the network")
             }))
             val cachedVehicle = offline.selectedVehicle(ids)
-            val cachedSystem = offline.system(cachedVehicle, cachedVehicle.systems.first())
+            val cachedSystem = offline.system(cachedVehicle, cachedVehicle.systems.single { it.id == selected.id })
             assertEquals(system.id, cachedSystem.id)
             assertEquals(system.counts, cachedSystem.counts)
             assertEquals(system.enabled, cachedSystem.enabled)
+            assertEquals(candidates.map { it.fingerprint }, offline.bringUpCandidates(cachedSystem).map { it.fingerprint })
             assertEquals(selectionBefore, prefs.get(CatalogRepository.KEY))
         } finally { cache.deleteRecursively() }
     }

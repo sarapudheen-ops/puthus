@@ -1,5 +1,8 @@
 package com.bod3.app.vehiclepack
 
+import com.bod3.app.bringup.BringUpCandidate
+import com.bod3.app.bringup.BringUpCodec
+import com.bod3.app.bringup.BringUpRuntime
 import com.bod3.app.catalog.CatalogCodec
 import com.bod3.app.catalog.CatalogData
 import com.bod3.app.catalog.CatalogLevel
@@ -65,7 +68,7 @@ class PackVehicle internal constructor(
 class PackSystem internal constructor(
     val id: String, val name: String, val enabled: Boolean, val reasons: List<String>,
     val counts: Map<String, FeatureCount>, val sourceRecords: List<String>, val data: CatalogData,
-    val unresolvedPages: List<PackRange>,
+    val unresolvedPages: List<PackRange>, val bringUpPages: List<PackRange> = emptyList(),
 )
 
 /** Range-by-range loading. Navigation never chooses a vehicle or sends diagnostic requests. */
@@ -118,7 +121,18 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         val resolved = m["hierarchyResolved"] as? Boolean ?: error("Missing hierarchy status")
         val why = reasons(m)
         require(!resolved || why.isEmpty()) { "Resolved vehicle still has hierarchy errors" }
-        val systems = (m["systems"] as? List<*>)?.map { raw ->
+        val systemRows = if (m["systemsSource"] == null) m["systems"] else {
+            require(m["systems"] == null) { "Ambiguous inline and referenced vehicle systems" }
+            val source = load(range(m["systemsSource"]), checkCancelled)
+            val sourceId = m.text("systemsSourceId")
+            val sourcePath = (source["selection"] as? List<*>)?.map { (it as? Map<*, *>)?.get("name") }
+            require(source["kind"] == "manual-vehicle" && source["id"] == sourceId && source["hierarchyResolved"] == true &&
+                m.strings("sourceRecords").lastOrNull() == sourceId && sourcePath == m.strings("sourceSelection")) {
+                "Vehicle systems do not belong to the exact selected source path"
+            }
+            source["systems"]
+        }
+        val systems = (systemRows as? List<*>)?.map { raw ->
             val s = raw as? Map<*, *> ?: error("Invalid vehicle system")
             val enabled = s["enabled"] as? Boolean ?: error("Missing system status")
             val disabled = reasons(s)
@@ -161,11 +175,46 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         }
         val trusted = data.copy(actuators = data.actuators.map { it.copy(verified = true) },
             coding = data.coding.map { it.copy(verified = true) }, security = data.security.map { it.copy(verified = true) })
-        val ecu = m["ecuSource"] as? Map<*, *>
-        val function = m["functionSource"] as? Map<*, *>
+        fun sourceObject(key: String, kind: String, fields: List<String>): Map<*, *>? {
+            val stub = m[key] as? Map<*, *> ?: return null
+            val ref = stub["object"] ?: return stub // Earlier pinned bundles stored inline metadata.
+            require(stub["pages"] == null && stub["livePages"] == null) { "Ambiguous inline and referenced source metadata" }
+            val source = load(range(ref), checkCancelled)
+            require(source["kind"] == kind && fields.all { stub[it] != null && source[it] == stub[it] }) {
+                "Source metadata belongs to another selected ECU/function"
+            }
+            return source
+        }
+        val ecu = sourceObject("ecuSource", "ecu-source", listOf("sourceFile", "sha256"))
+        val function = sourceObject("functionSource", "function-source", listOf("sourceRecord", "functionKey", "declaredLiveRows"))
         val entry = m["entrySource"] as? Map<*, *>
         val pages = listOfNotNull(entry?.get("pages") as? List<*>, ecu?.get("pages") as? List<*>, function?.get("livePages") as? List<*>).flatten().map(::range)
-        return PackSystem(choice.id, choice.name, choice.enabled, why, counts, sources, trusted, pages)
+        val bringUpPages = (m["bringUpPages"] as? List<*>)?.map(::range).orEmpty()
+        require(bringUpPages.size <= 2) { "Excessive bring-up candidate pages" }
+        return PackSystem(choice.id, choice.name, choice.enabled, why, counts, sources, trusted, pages, bringUpPages)
+    }
+
+    /** All alternatives from this exact source function, including explicitly blocked selectors. */
+    fun bringUpCandidates(system: PackSystem, checkCancelled: () -> Unit = {}): List<BringUpCandidate> {
+        val candidates = system.bringUpPages.flatMap { ref ->
+            val page = load(ref, checkCancelled)
+            require(page["kind"] == "bring-up-candidates")
+            val rows = page["candidates"] as? List<*> ?: error("Missing bring-up candidates")
+            require(rows.size <= 128)
+            rows.map { BringUpCodec.candidate(it, pinned = true) }
+        }
+        if (candidates.isNotEmpty() || !system.enabled) return BringUpCandidate.ranked(candidates)
+        // Backward-compatible for future fully converted pinned systems. Never synthesize reads:
+        // this candidate uses only that system's explicit identification/live/DTC definitions.
+        val ecu = system.data.ecus.singleOrNull() ?: return emptyList()
+        val id = ecu.diagnostics?.identification?.firstOrNull()?.read ?: return emptyList()
+        val pid = system.data.pids.firstOrNull() ?: return emptyList()
+        if (ecu.diagnostics.faults == null || ecu.link == null) return emptyList()
+        val runtime = BringUpRuntime(system.data, id.id, pid.id)
+        if (runtime.problems().isNotEmpty()) return emptyList()
+        return BringUpCandidate.ranked(listOf(BringUpCandidate(system.id + "#translated-entry", system.name,
+            system.sourceRecords, system.sourceRecords, mapOf("supportBasis" to "Distinct source records attached to this translated system"),
+            emptyList(), runtime, pinned = true)))
     }
 
     fun unresolved(page: PackRange, checkCancelled: () -> Unit = {}): List<Map<*, *>> {

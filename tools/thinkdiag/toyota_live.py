@@ -14,7 +14,9 @@ candidate; no defaults, familiar PID labels or similar function keys substitute.
 This module never approves an ECU address/init, vehicle hierarchy, general CALC
 language or an executable pack. Only two bounded numeric equivalences can carry
 separate SHA-pinned native CALC review evidence. Each result is still explicitly
-disabled and must NOT be copied into data.pids. Production still forbids execution.
+disabled and must NOT be copied into data.pids. The Android app never executes
+vendor code/scripts. Separate owner-authorized, bounded offline native comparisons
+are implemented by toyota_native_oracle.py; they are not ECU or full-language proof.
 """
 from dataclasses import dataclass
 from decimal import Decimal

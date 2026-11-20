@@ -12,8 +12,13 @@ manual catalog/templates/passive DTC reference. The full recovered source databa
 vendor ELFs and EXPRESS programs are **not** packaged. The old full SQLite source-library build is a
 research derivative, no longer the Android delivery mechanism.
 
-Actions downloads the pinned `assets-v1/TOYOTA.zip`, verifies its SHA-256 and all 1,410 decoded payloads,
-converts and verifies the hash tree, and stages **only** the index. The APK verifier rejects a missing
+The owner's full-archive verification is recorded in
+[`tools/thinkdiag/verification/toyota-verified.json`](../tools/thinkdiag/verification/toyota-verified.json).
+It explicitly covers nested members and authorizes inspection, decoding and sandbox execution for
+conversion work. It does not confer write authorization or physical-ECU proof. Actions checks the
+complete archive's byte length/SHA against this attestation and all 1,410 decoded payloads, converts
+and verifies the hash tree (including the exact attestation), and stages **only** the index. The
+manifest participates in the conversion cache key. The APK verifier rejects a missing
 or mismatched index, any `assets/toyota-source/` corpus, or a bundled Toyota container/vendor library.
 
 ## Manual path and system scope
@@ -30,9 +35,15 @@ a system explicitly reloads only that path/system. Ordinary manual catalog behav
 
 Each system shows converted/unresolved PID, DTC, test, coding, ECU-info and special-function counts.
 `unknown` is not zero. Disabled entries explain why and allow bounded inspection of source-record IDs.
-Currently only four literal Kijang Innova/TGN source branches have a reviewed four-level normalization;
-these do **not** establish AN40/diesel applicability. Other source paths stay in the conversion ledgers,
-not fabricated engine/fuel/transmission catalog entries.
+The manual catalog now exposes **24,653 regional vehicle paths** (EU 13,941; NA 5,762; JP 4,950),
+not just the four starting Innova choices. The source's model is preserved exactly. Its first detail
+branch is shown as a **source generation/group**, and every remaining detail, the communication menu,
+and region are preserved in the variant. Absent detail levels say “Not specified in source”; they are
+not inferred chassis generations, fuels, engines or transmissions. Exact source-node IDs prevent
+identical labels from collapsing two selections. The four reviewed Kijang Innova/TGN branches retain
+their existing IDs and month boundaries; none establishes AN40/diesel applicability. Nine short,
+non-vehicle manual tasks remain in the lossless source tree and accounting rather than being invented
+as vehicles. Hierarchy coverage is not executable diagnostic coverage.
 
 The diagnostic overlay is closed to the selected loaded system: no global PID list, another system's
 ECUs, legacy actuator template or unrelated vehicle can fill an empty downloaded scope. Per-system live
@@ -43,6 +54,36 @@ ECUs must provide an explicit definition set—even when empty—so this path ca
 UDS reads. See [the read-definition schema and safeguards](ecu-read-definitions.md). The real recovered
 DTC/ECU-info actions remain disabled while their mappings are unconverted; freeze-frame and special-function
 mappings are also unresolved. Enabling a screen is not semantic conversion.
+
+## Offline native comparison gate
+
+Both source inspection and cache-miss pack preparation now run `toyota_native_oracle.py` against the
+original owner-verified archive and the **complete hash-checked decoded manifest**. Five individually
+pinned supplied libraries execute only inside bounded AArch64 emulation. All 1,308 entry records,
+1,186 regional fault blocks / 1,184 clear blocks / 180,316 code mappings, all 8,775 regional frame
+records and 34,671 default/declared-fault template lookups, 70,144 DTC state/mask and 2,112 fault-record
+vectors, all 27,035 exact TCODE pairs, 3,584 source numeric-display vectors, 196,608 exact-key byte-merge
+calls, 49,152 P5 core record-projection vectors (not auxiliary P5 freeze/mask/query workflows), and
+65,792 numeric vectors for two CALC forms are compared. The separate fast-KWP consumer port adds
+284 source entries, 568 configuration traces, 17,892 source packets and 2,016 native/Python/Kotlin
+short-packet contract vectors, with every adapter API explicitly faked. A separate closed lifecycle
+projection additionally matches real linked FILE → SYSP → COMM execution for 284 first-positive-entry,
+568 keepalive-on/off and 284 exit traces. It preserves all six exact keepalive request variants and
+source-bound exit packets instead of substituting generic testerPresent/stop commands. This does not
+establish ST/VT timing/pin mapping, failed-entry/retry/ISO-fallback semantics or a working diagnostic
+link and is not an executable vehicle pack. All 179,770 distinct per-function
+mapping keys have exact source labels; repeated printed codes are never suffix-matched. English pairs
+are re-extracted from the pinned archive, with original GAG index/text offset provenance. The reviewed
+counts/library/result hashes live in `tools/thinkdiag/schema/native-oracle-v1.json`.
+Cached reports must match that reference before the index is staged. The report is an Actions artifact,
+not an APK object or a runtime trust grant.
+
+The Kotlin fault decoder has the same state/assembly result digests and explicit exact-key labels,
+with strict atomic rejection of malformed replies and no global-description fallback. Physical KWP
+`04` clearing and `12`/`13` reads retain their exact dialect and confirmation scope. These runtime/port
+changes do **not** finish transport/init, general expressions, source query conditions/workflows,
+ECU-info, coding, actuators or special-function conversion. The executable vehicle count remains zero.
+No native-libc/file-decryption/adapter/physical proof is inferred from declared memory/file-array shims.
 
 ## Authenticated bounded objects, not a full download
 
@@ -58,7 +99,11 @@ Objects are rehashed, fully validated and atomically installed under `noBackupFi
 cancellation or failure does not install partial data. Cached selected objects can reopen offline.
 
 Push CI publishes content-addressed containers to the `toyota-vehicle-packs-v1` prerelease without
-clobbering older hashes, then verifies real six-range hierarchy/system delivery. Android 24 smoke tests
+clobbering older hashes, then verifies scoped hierarchy/system delivery. Variant objects reference
+the exact source leaf's system list; ECU/function metadata is shared rather than duplicated across
+287,030 system records. Both Python and Kotlin reject references to a different source path, ECU or
+function. Referencing metadata does not broaden applicability. The cache maintains a bounded LRU
+inventory instead of rescanning/sorting its entire directory for every installed object. Android 24 smoke tests
 use the actual APK's index, production HTTPS loader and private cache, and then reopen with network access
 explicitly denied. Publication/network/device-test success must be checked on the current revision; a
 successful format/fixture test alone is not proof that delivery is live.
@@ -106,6 +151,7 @@ outputs stay in `.local/`, Actions cache/artifacts and release storage, never Gi
 mkdir -p .local/toyota-conversion
 gh release download assets-v1 --repo sarapudheen-ops/puthus --pattern TOYOTA.zip --dir .local/toyota-conversion
 python3 -m pip install -r tools/thinkdiag/requirements.txt
+python3 tools/thinkdiag/source_verification.py .local/toyota-conversion/TOYOTA.zip
 python3 tools/thinkdiag/decode_toyota.py .local/toyota-conversion/TOYOTA.zip \
   --output .local/toyota-conversion/decoded --report .local/toyota-conversion/report
 python3 tools/thinkdiag/extract_english.py .local/toyota-conversion/TOYOTA.zip \
@@ -113,6 +159,11 @@ python3 tools/thinkdiag/extract_english.py .local/toyota-conversion/TOYOTA.zip \
 python3 tools/thinkdiag/convert_vehicle_packs.py .local/toyota-conversion/TOYOTA.zip \
   --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
   --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_native_oracle.py run .local/toyota-conversion/TOYOTA.zip \
+  --decoded .local/toyota-conversion/decoded \
+  --manifest .local/toyota-conversion/report/decoded-manifest.json \
+  --output .local/toyota-vehicle-packs/native-oracle.json
+python3 tools/thinkdiag/toyota_native_oracle.py verify .local/toyota-vehicle-packs/native-oracle.json
 python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs
 mkdir -p .local/vehicle-pack-assets/toyota-vehicle-packs
 cp .local/toyota-vehicle-packs/index.json .local/vehicle-pack-assets/toyota-vehicle-packs/index.json
@@ -134,4 +185,6 @@ Read-only by default. Writes still require Expert mode, an operation-specific on
 known requests, a backup/diff (coding), safety checks, read-back verification, rollback where supported,
 cleanup and an audit log. KWP grants are scoped to **one ECU + one identifier per operation**. A fully
 resolved item from this source may be source-verified/default-enabled, but verification never bypasses
-those engine safeguards or provides physical-test evidence. Arbitrary vendor code/EXPRESS is not run.
+those engine safeguards or provides physical-test evidence. The app never executes vendor code or
+EXPRESS. Owner-authorized native replay inputs are confined to ignored research evidence for offline
+semantic comparison, not Android assets, runtime downloads or normal imported packs.

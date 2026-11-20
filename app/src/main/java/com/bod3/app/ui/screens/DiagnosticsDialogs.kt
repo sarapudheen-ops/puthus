@@ -109,21 +109,23 @@ fun DtcDescriptionDialog(code: String, descriptions: DtcDescriptions, onSave: (S
 
 /** A fault code with its description; tapping "Edit" edits the description. */
 @Composable
-fun DtcRow(code: String, descriptions: DtcDescriptions, detail: String? = null, onEditDescription: (String) -> Unit) {
-    val description = descriptions.describe(code)
+fun DtcRow(code: String, descriptions: DtcDescriptions, detail: String? = null,
+           sourceDescription: String? = null, exactSource: Boolean = false, onEditDescription: (String) -> Unit) {
+    val description = if (exactSource) null else descriptions.describe(code)
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
             Text(code, style = MaterialTheme.typography.titleSmall)
-            Text(description.text, style = MaterialTheme.typography.bodyMedium)
+            Text(if (exactSource) sourceDescription?.takeIf { it.isNotBlank() } ?: "No exact description in the selected source definition"
+                else requireNotNull(description).text, style = MaterialTheme.typography.bodyMedium)
             val extra = listOfNotNull(
-                descriptions.failureType(code)?.let { "Failure type: $it" },
+                if (exactSource) null else descriptions.failureType(code)?.let { "Failure type: $it" },
                 detail,
-                if (description.isUserDefined) "Your description" else "Source: ${description.source}",
+                if (exactSource) "Source: selected ECU TCODE key" else requireNotNull(description).let { if (it.isUserDefined) "Your description" else "Source: ${it.source}" },
             )
             if (extra.isNotEmpty()) {
                 Text(extra.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        TextButton(onClick = { onEditDescription(code) }) { Text("Edit") }
+        if (!exactSource) TextButton(onClick = { onEditDescription(code) }) { Text("Edit") }
     }
 }

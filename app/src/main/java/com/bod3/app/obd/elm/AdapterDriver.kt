@@ -15,11 +15,19 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /** Anything that can send one command to an adapter and return its parsed response. */
 fun interface CommandExecutor {
     suspend fun execute(command: String, timeoutMs: Long): ElmResponse
+
+    /** Physical drivers override this so a whole ECU operation excludes ALL direct adapter users. */
+    suspend fun <T> withExclusive(block: suspend () -> T): T = block()
 }
 
 suspend fun CommandExecutor.execute(command: String): ElmResponse =
@@ -50,7 +58,19 @@ class AdapterDriver(
 
     private val prompts = Channel<String>(Channel.UNLIMITED)
     private val queue = CommandQueue()
+    private val operationLock = Mutex()
+    private class Lease(val driver: AdapterDriver) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<Lease>
+    }
+
+    override suspend fun <T> withExclusive(block: suspend () -> T): T {
+        if (currentCoroutineContext()[Lease]?.driver === this) return block()
+        return operationLock.withLock { withContext(Lease(this)) { block() } }
+    }
+
     private var readerJob: Job? = null
+    private val replyLock = Any()
+    private val partialReply = StringBuilder()
 
     @Volatile
     private var resyncNeeded = false
@@ -87,7 +107,7 @@ class AdapterDriver(
      * `ATH1` (headers on) and `ATSP0` (automatic protocol) are required; the other settings only make
      * parsing easier and are tolerated if a clone rejects them, because the parser copes either way.
      */
-    suspend fun initialize(): AdapterInfo {
+    suspend fun initialize(): AdapterInfo = withExclusive {
         reset()
         for (command in listOf("ATE0", "ATL0", "ATS0", "ATH1", "ATSP0")) {
             val response = sendRaw(command, CONFIG_TIMEOUT_MS)
@@ -105,19 +125,19 @@ class AdapterDriver(
         }
 
         capabilities = readFirmwareVersions()
-        return AdapterInfo(identity = identity, description = description, capabilities = capabilities)
+        AdapterInfo(identity = identity, description = description, capabilities = capabilities)
     }
 
     /**
      * Sends [command] (AT, ST, VT or a hex request) and waits up to [timeoutMs] for the prompt. A `?`
      * reply (unknown command) is logged and returned, not thrown.
      */
-    override suspend fun execute(command: String, timeoutMs: Long): ElmResponse {
+    override suspend fun execute(command: String, timeoutMs: Long): ElmResponse = withExclusive {
         val normalized = command.trim().uppercase()
         require(normalized.isNotEmpty()) { "Empty command" }
         val response = sendRaw(normalized, timeoutMs)
         if (response.error == ElmError.UNKNOWN_COMMAND) logger("Adapter answered ? to $normalized; skipping")
-        return response
+        response
     }
 
     /** Closes the link. Safe to call more than once. */
@@ -154,10 +174,18 @@ class AdapterDriver(
     }
 
     private suspend fun sendRaw(command: String, timeoutMs: Long): ElmResponse = queue.submit {
+        connectionError?.let { throw it }
         if (resyncNeeded) {
             // The previous command timed out; give its late reply a moment to arrive so it is not
             // mistaken for the answer to this command.
-            withTimeoutOrNull(RESYNC_WAIT_MS) { receivePrompt() }
+            val prompt = withTimeoutOrNull(RESYNC_WAIT_MS) { receivePrompt() }
+            if (prompt == null && command != "ATZ") {
+                // Never attribute a previous candidate's late ECU reply to a new setup. ATZ is
+                // the existing adapter-reset-only recovery exception; no ECU request is replayed.
+                val error = TransportException("Adapter did not return a prompt after a timed-out/cancelled command; reconnect before sending another request")
+                markLost(error)
+                throw error
+            }
             resyncNeeded = false
         }
         drainStalePrompts()
@@ -166,17 +194,21 @@ class AdapterDriver(
         logger("> $command")
         try {
             transport.write("$command\r".toByteArray(Charsets.US_ASCII))
+        } catch (e: CancellationException) {
+            resyncNeeded = true
+            throw e
         } catch (e: Exception) {
             val error = e as? TransportException ?: TransportException("Write to adapter failed", e)
             markLost(error)
             throw error
         }
 
-        val raw = withTimeoutOrNull(timeoutMs) { receivePrompt() }
+        val raw = try { withTimeoutOrNull(timeoutMs) { receivePrompt() } }
+        catch (e: CancellationException) { resyncNeeded = true; throw e }
         if (raw == null) {
             resyncNeeded = true
             logger("! no reply to $command after $timeoutMs ms")
-            throw CommandTimeoutException(command, timeoutMs)
+            throw CommandTimeoutException(command, timeoutMs, synchronized(replyLock) { partialReply.toString() })
         }
         val response = ElmResponseParser.parse(command, raw)
         logger("< " + response.lines.joinToString(" | ").ifEmpty { "(empty)" })
@@ -198,19 +230,21 @@ class AdapterDriver(
 
     private suspend fun readLoop() {
         val buffer = ByteArray(READ_BUFFER_SIZE)
-        val pending = StringBuilder()
         try {
             while (currentCoroutineContext().isActive) {
                 val count = transport.read(buffer)
                 if (count < 0) throw TransportException("Adapter closed the connection")
                 for (i in 0 until count) {
                     val char = (buffer[i].toInt() and 0xFF).toChar()
-                    if (char == '>') {
-                        prompts.send(pending.toString())
-                        pending.setLength(0)
-                    } else {
-                        pending.append(char)
+                    val completed = synchronized(replyLock) {
+                        if (char == '>') partialReply.toString().also { partialReply.setLength(0) }
+                        else {
+                            if (partialReply.length >= MAX_RESPONSE_CHARS) throw TransportException("Adapter response exceeded its bounded input budget")
+                            partialReply.append(char)
+                            null
+                        }
                     }
+                    if (completed != null) prompts.send(completed)
                 }
             }
         } catch (e: CancellationException) {
@@ -236,6 +270,7 @@ class AdapterDriver(
         const val PROBE_TIMEOUT_MS = 1_500L
         private const val RESYNC_WAIT_MS = 500L
         private const val READ_BUFFER_SIZE = 512
+        private const val MAX_RESPONSE_CHARS = 2 * 1024 * 1024
         private val REQUIRED_SETTINGS = setOf("ATH1", "ATSP0")
     }
 }

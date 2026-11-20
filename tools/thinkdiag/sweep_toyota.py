@@ -45,11 +45,15 @@ FOCUSED_READERS = {
         "PackToTrueSendCmd", "DecodeRecvDataFromPackData", "SendSingleCmdShowDsData_NoSbuItem", "SendAllCmdShowDsData_NoSubItem"],
     "libTOYOTA_SYSP.so": ["SystemEnterPart", "SystemEnterAndExit", "FastKWPEnterMode", "ISOEnterMode", "CANBUSEnterMode", "SystemSetLinkKeepFunc"],
     "libTOYOTA_DTCF.so": ["ReadDtcModeP3P4", "SendCmdAndGetDtcP3P4", "SendCmdInitialDtc", "GetDTCCodeFromAnsP3P4", "GetDTCAskCmdResult"],
-    "libCOMM_ABSTRACT_LAYER.so": ["SetEcuCommTimeInterval", "SetCommunicationMaximumWaitTime", "SetCommunicationParameter", "SetCommunicationLineVoltage", "ToyotaKwpSendDataToEcuGetMultiFrameAnswer"],
+    "libCOMM_ABSTRACT_LAYER.so": ["SetEcuCommTimeInterval", "SetCommunicationMaximumWaitTime", "SetCommunicationParameter", "SetCommunicationLineVoltage", "ToyotaKwpSendDataToEcuGetMultiFrameAnswer",
+        "CanSetParameterNormal", "CanSetParameter", "CanSetEnterFrame", "SetCanBitRate", "SetCanFilterId"],
+    "libTOYOTA_ACTF.so": ["InitCmdStartAct", "ActTestProcess_P4", "ActTestProcess_P5", "GetRoutinActInfo", "P5_GetActInfoFromLineData"],
+    "libTOYOTA_SCUST.so": ["CustomizeFuncProcess", "SetCustItemNormal", "SendCustItemCmdNormal", "SetCustItemProcess"],
+    "libTOYOTA_ECUF.so": ["GetEcuCalitrationID", "GetEcuCalitrationID_P321", "GetEcuCalitrationID_P39C", "GetEcuCalitrationID_CAN"],
     "libTOYOTA_COMM.so": ["GetCmdDataInfo", "GetCommFrameInfo", "GetFuncCommFrameInfo", "GetFuncCommFrameInfo_MultiCmd", "InitCommSet_Ex", "InitSetEnterFrame", "SendCmdAndGetReceive", "SendCmdAndGetReceive_EX", "SendCmdAndGetReceive_GN", "InitKWPISOMode", "InitCanBusMode", "MenuEnterCommunicationSet", "GetKwpRecDataWithFrame", "GetKwpRecData", "GetBaseCanBusRecData",
         "MultiPackFunc", "SetCanComPara", "SetCanComParaFilterId", "InitExtendCanbusMode", "ConvertUint4ToBuffer",
         "My_KwpSendDataToEcuGetAnswer", "My_IsoSendDataToEcuGetAnswer", "MyCanSendOneFrameReceiveDatas",
-        "CHK_ADDR_CODE", "InitAddressMode", "InitCommSet", "MultSetLinkKeepFunc", "MultSetMoreLinkKeepFunc"],
+        "CHK_ADDR_CODE", "CHK_CAN_BUS_iProtect", "InitCanCommSet_MPT", "SetCan15765", "InitAddressMode", "InitCommSet", "MultSetLinkKeepFunc", "MultSetMoreLinkKeepFunc"],
     "libTOYOTA_CALC.so": ["ResultCalcFromCalcID", "ResultCalcFromScript", "Calc_C", "CaculateBit", "@0x1032c:0x1ab8", "@0x11de4:0x830"],
     "libDIAG.so": ["InitMenuTree", "MenuTreeDispose_Ex", "GetMenuSubItemTextID_Ex",
         "GetMenuSubItemSaveData_Ex", "GetMenuSubItemFirstAddr_Ex", "GetCurrentMenuTitleID",
@@ -159,6 +163,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                     "Opaque fields stay named by source offset; pattern matches are not diagnostic definitions."]}
     all_files = []
     native_census = []
+    replay_inputs = []
     calc_evidence = None
     opaque_natives, top_level_data = [], []
     with zipfile.ZipFile(archive_path) as archive:
@@ -174,6 +179,11 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
             if name.endswith(".so") and not data.startswith(b"\x7fELF"):
                 opaque_natives.append({"file": info.filename, "bytes": len(data), "prefixHex": data[:32].hex(" ")})
             if name.endswith(".so") and data.startswith(b"\x7fELF"):
+                # The owner authorizes offline sandbox execution for semantic comparison.
+                # Preserve hashed replay inputs in ignored research evidence ONLY, never
+                # in the app/range packs or Git. This step does not execute them.
+                replay_inputs.append({"file": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                    "compression": "zlib", "base64": base64.b64encode(zlib.compress(data, 9)).decode("ascii")})
                 native = native_info(data, name)
                 exports = [f for f in native["functions"] if f["defined"]]
                 native_census.append({"library": name, "bytes": len(data), "machine": native["machine"],
@@ -193,6 +203,8 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
                         if not member.is_dir():
                             all_files.append({"path": info.filename + "!/" + member.filename, "bytes": member.file_size,
                                               "type": "nested BIN" if member.filename.endswith(".BIN") else "nested other"})
+    emit_report("native-replay-inputs", "Owner-authorized native semantic replay inputs (research only; never app assets)",
+                json_text({"sourceSha256": source_hash, "executed": False, "inputs": replay_inputs}))
     (output / "archive-inventory.json").write_text(json_text(all_files))
     (output / "native-exports.json").write_text(json_text(native_census))
     findings["archiveEntriesIncludingNestedFiles"] = len(all_files)
@@ -456,7 +468,7 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # evidence path when release-asset downloads are inaccessible. Never native library bytes.
     applicability = []
     for name, source in sorted(paths.items()):
-        if name == "MENU.BIN" or re.fullmatch(r"(?:SYSLIST|FUNCDATA)_(?:EU|JP|NA)\.BIN", name):
+        if name in ("MENU.BIN", "SPECFUNC.BIN", "OBD2_SYS_DATA.BIN", "FUNCH_CFG.BIN") or re.fullmatch(r"(?:SYSLIST|FUNCDATA)_(?:EU|JP|NA)\.BIN", name):
             raw = source.read_bytes()
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                   "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})
@@ -464,9 +476,9 @@ def sweep(archive_path: Path, decoded: Path, english: Path, manifest_path: Path,
     # The complete corpus is still converted in Actions, not shipped in Git or the APK.
     ecu_samples = {"0006", "000b", "0024", "0028", "002d", "006e", "0070", "0081", "0085", "00c1", "00c2", "00d4"}
     for name, source in sorted(paths.items()):
-        if name == "SYSTEMENTER.BIN" or (name.startswith("EU/") and (
-                re.fullmatch(r"EU/(?:Toyota|Viewer)_bin_[0-9a-fA-F]+\.BIN", name)
-                or any(name.casefold() == f"eu/ecu_data_{identity}.bin" for identity in ecu_samples))):
+        if (name == "SYSTEMENTER.BIN" or re.fullmatch(r"(?:EU|JP|NA)/(?:Toyota|Viewer)_bin_[0-9a-fA-F]+\.BIN", name)
+                or any(name.casefold() == f"eu/ecu_data_{identity}.bin" for identity in ecu_samples)
+                or re.fullmatch(r"(?:JP|NA)/Ecu_Data_(?:0001|0081)\.BIN", name)):
             raw = source.read_bytes()
             applicability.append({"file": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
                                   "compression": "zlib", "base64": base64.b64encode(zlib.compress(raw, 9)).decode("ascii")})

@@ -5,6 +5,9 @@ import com.bod3.app.obd.transport.TransportException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
@@ -159,6 +162,52 @@ class AdapterDriverTest {
     }
 
     @Test
+    fun cancelledExchangeMustDrainItsPromptBeforeAnotherCandidate() = runBlocking<Unit> {
+        val sent = CompletableDeferred<Unit>()
+        val transport = FakeAdapterTransport { command -> if (command == "0100") { sent.complete(Unit); null } else "12.6V" }
+        val driver = openDriver(transport)
+        val job = async { driver.execute("0100", 5000) }
+        sent.await(); job.cancelAndJoin()
+        transport.inject("7E8 06 41 00 BE 3E A8 13\r>")
+        assertEquals("12.6V", driver.execute("ATRV", 1000).text)
+        assertEquals(listOf("0100", "ATRV"), transport.written)
+        driver.close()
+    }
+
+    @Test
+    fun missingPromptAfterCancellationRefusesTheNextCommandInsteadOfMisattributingAReply() = runBlocking<Unit> {
+        val sent = CompletableDeferred<Unit>()
+        val transport = FakeAdapterTransport { sent.complete(Unit); null }
+        val driver = openDriver(transport)
+        val job = async { driver.execute("0100", 5000) }
+        sent.await(); job.cancelAndJoin()
+        assertThrows(TransportException::class.java) { runBlocking { driver.execute("ATRV", 1000) } }
+        assertEquals(listOf("0100"), transport.written)
+        assertTrue(driver.linkLost.value != null)
+        driver.close()
+    }
+
+    @Test
+    fun timeoutEvidenceKeepsThePartialUnterminatedResponse() = runBlocking<Unit> {
+        val sent = CompletableDeferred<Unit>()
+        val transport = FakeAdapterTransport { sent.complete(Unit); null }
+        val driver = openDriver(transport)
+        val recorder = RecordingExecutor(driver)
+        val evidence = mutableListOf<ObservedExchange>()
+        val remove = recorder.observe(object : ExchangeObserver {
+            override fun before(command: String, timeoutMs: Long) = Unit
+            override fun after(exchange: ObservedExchange) { evidence += exchange }
+        })
+        val job = async { runCatching { recorder.execute("1A90", 300) }.exceptionOrNull() }
+        sent.await(); transport.inject("83 F1 10 5A")
+        val error = job.await() as CommandTimeoutException
+        assertEquals("83 F1 10 5A", error.partialResponse)
+        assertEquals(error.partialResponse, evidence.single().rawResponse)
+        assertTrue(evidence.single().error!!.contains("within 300 ms"))
+        remove(); driver.close()
+    }
+
+    @Test
     fun concurrentCommandsAreSerialised() = runBlocking<Unit> {
         val transport = FakeAdapterTransport { command -> "R:$command" }
         val driver = openDriver(transport)
@@ -169,6 +218,38 @@ class AdapterDriverTest {
         for ((command, reply) in commands.zip(replies)) {
             assertEquals("R:$command", reply.text)
         }
+        driver.close()
+    }
+
+    @Test
+    fun sessionLeaseAlsoExcludesDirectAdapterCommandsAndTheirEvidence() = runBlocking<Unit> {
+        val transport = FakeAdapterTransport { "OK" }
+        val driver = openDriver(transport)
+        val recorder = RecordingExecutor(driver)
+        val session = com.bod3.app.obd.session.Session(recorder, com.bod3.app.obd.protocol.ObdProtocol.ISO_15765_4_CAN_11_500)
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val evidence = mutableListOf<ObservedExchange>()
+        val operation = async {
+            session.withReadOnlyBringUp {
+                val remove = recorder.observe(object : ExchangeObserver {
+                    override fun before(command: String, timeoutMs: Long) = Unit
+                    override fun after(exchange: ObservedExchange) { evidence += exchange }
+                })
+                try {
+                    recorder.execute("ATH1", 1000)
+                    entered.complete(Unit); release.await()
+                    recorder.execute("ATCAF1", 1000)
+                } finally { remove() }
+            }
+        }
+        entered.await()
+        val terminal = async(start = CoroutineStart.UNDISPATCHED) { driver.execute("ATZ", 1000) }
+        val voltage = async(start = CoroutineStart.UNDISPATCHED) { recorder.execute("ATRV", 1000) }
+        assertEquals(listOf("ATH1"), transport.written)
+        release.complete(Unit); operation.await(); terminal.await(); voltage.await()
+        assertEquals(listOf("ATH1", "ATCAF1"), transport.written.take(2))
+        assertEquals(setOf("ATZ", "ATRV"), transport.written.drop(2).toSet())
+        assertEquals(listOf("ATH1", "ATCAF1"), evidence.map { it.command })
         driver.close()
     }
 
