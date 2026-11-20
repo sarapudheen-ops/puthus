@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.bod3.app.catalog.CatalogCoverage
 import com.bod3.app.catalog.CatalogLevel
 import com.bod3.app.catalog.CatalogNode
 import com.bod3.app.datapack.EcuDefinition
@@ -81,6 +82,15 @@ fun VehiclesScreen(state: UiState, actions: CatalogActions) {
             item {
                 SectionCard("Manual selection") {
                     Text(active?.title ?: "No vehicle selected", style = MaterialTheme.typography.titleSmall)
+                    if (active != null) {
+                        val downloaded = catalog.downloadedSelection
+                        Text(
+                            if (downloaded) "Name/year catalog path. Its ECUs come from the loaded on-demand vehicle pack, not from this path."
+                            else active.coverage.label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (downloaded || active.coverage.executable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
                     Text("Make → Model → Generation → Variant. Browsing, importing and reading a VIN never select a vehicle. No generic vehicle fallback.", style = MaterialTheme.typography.bodySmall)
                     if (!state.offline) Text("Disconnect before changing vehicle or editing catalog configuration. ECU reads still use the current connection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                     if (active != null) TextButton(onClick = { actions.onSelect(null) }, enabled = state.offline) { Text("Clear manual selection") }
@@ -126,7 +136,16 @@ fun VehiclesScreen(state: UiState, actions: CatalogActions) {
                 } else {
                     item {
                         SectionCard("${focused.level.label} · ${focused.label}") {
-                            Text(resolved?.data?.summary.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                            if (resolved != null) {
+                                val coverage = resolved.coverage
+                                Text(
+                                    if (coverage.executable) "This level and its ancestors supply ${coverage.counts}."
+                                    else CatalogCoverage.NO_ENHANCED_DATA,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (coverage.executable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
+                                )
+                                if (resolved.data.count > 0) Text("Resolved definitions: ${resolved.data.summary}", style = MaterialTheme.typography.bodySmall)
+                            }
                             Text("Local: ${focused.data.summary}", style = MaterialTheme.typography.bodySmall)
                             focused.notes?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                             if (focused.platformIds.isNotEmpty()) Text("Platforms: " + focused.platformIds.mapNotNull { id -> catalog.pack.platforms.firstOrNull { it.id == id }?.name }.joinToString(), style = MaterialTheme.typography.bodySmall)

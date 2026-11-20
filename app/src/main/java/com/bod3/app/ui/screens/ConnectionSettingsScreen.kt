@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.bod3.app.catalog.CatalogCoverage
 import com.bod3.app.obd.connection.ConnectionProfile
 import com.bod3.app.obd.protocol.ObdProtocol
 import com.bod3.app.ui.ConnectionSettingsState
@@ -53,6 +54,10 @@ fun ConnectionSettingsScreen(
     onExpertMode: (enabled: Boolean, acknowledged: Boolean) -> Unit,
     catalogTitle: String? = null,
     catalogConnection: Map<String, Any?> = emptyMap(),
+    /** Executable coverage of a manual selection; null when nothing is selected or a pack supplies it. */
+    catalogCoverage: CatalogCoverage? = null,
+    /** Downloaded vehicle-pack selections supply ECUs outside the catalog path, not through it. */
+    catalogDownloaded: Boolean = false,
 ) {
     var showRiskDialog by rememberSaveable { mutableStateOf(false) }
     Scaffold(
@@ -69,9 +74,24 @@ fun ConnectionSettingsScreen(
         ) {
             SectionCard("Manual catalog selection") {
                 Text(catalogTitle ?: "No vehicle selected")
-                Text("The profiles below configure the adapter transport, not a fallback vehicle. A manually selected catalog adds these inherited overrides on the next connection:", style = MaterialTheme.typography.bodySmall)
-                if (catalogConnection.isEmpty()) Text("No catalog connection overrides", style = MaterialTheme.typography.bodySmall)
-                catalogConnection.forEach { (key, value) -> InfoRow(key, value?.toString() ?: "clear / automatic") }
+                Text("The profiles below configure the adapter transport, not a fallback vehicle. A manually selected catalog level can add connection overrides on the next connection.", style = MaterialTheme.typography.bodySmall)
+                when {
+                    catalogTitle == null -> Unit
+                    catalogDownloaded -> Text(
+                        "This selection's ECUs come from the loaded on-demand vehicle pack. The catalog path itself declares names and years only.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    catalogCoverage != null && catalogCoverage.executable ->
+                        Text("On the next connection this level supplies ${catalogCoverage.counts}.", style = MaterialTheme.typography.bodySmall)
+                    else -> Text(CatalogCoverage.NO_ENHANCED_DATA, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                }
+                if (catalogConnection.isEmpty()) {
+                    Text("No catalog connection overrides" + if (catalogTitle == null) "." else " — the adapter profile below is used unchanged.",
+                        style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text("Applied after the adapter profile on the next connection (${catalogConnection.size} catalog connection ${if (catalogConnection.size == 1) "override" else "overrides"}):", style = MaterialTheme.typography.bodySmall)
+                    catalogConnection.forEach { (key, value) -> InfoRow(key, value?.toString() ?: "clear / automatic") }
+                }
             }
             SectionCard("Adapter connection profile") {
                 if (connected) {

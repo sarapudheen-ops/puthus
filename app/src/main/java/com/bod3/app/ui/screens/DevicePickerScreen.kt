@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import com.bod3.app.R
 import com.bod3.app.bluetooth.BluetoothPermissions
 import com.bod3.app.bluetooth.PairedAdapter
+import com.bod3.app.catalog.CatalogCoverage
 import com.bod3.app.ui.ConnectionState
 import com.bod3.app.ui.UiState
 
@@ -164,10 +165,19 @@ private fun DeviceList(state: UiState, onConnect: (PairedAdapter) -> Unit) {
         }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(state.catalog.selected?.title ?: "No vehicle selected manually", style = MaterialTheme.typography.titleSmall)
-                Text(if (state.catalog.selectedId == null) "Standard OBD reads are available, without a fallback ECU list or vehicle connection settings. Choose a vehicle in Catalog to apply its definitions."
-                    else "This explicit selection supplies the ECU list and inherited connection overrides. Reading a VIN never changes it.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val selected = state.catalog.selected
+                // A downloaded pack supplies ECUs at run time; the catalog path itself stays names/years only.
+                val manualCoverage = selected?.coverage?.takeIf { !state.catalog.downloadedSelection }
+                Text(selected?.title ?: "No vehicle selected manually", style = MaterialTheme.typography.titleSmall)
+                Text(when {
+                    selected == null ->
+                        "Standard OBD reads are available, without a fallback ECU list or vehicle connection settings. Choose a vehicle in Catalog to apply its definitions."
+                    manualCoverage == null ->
+                        "This explicit selection supplies the ECU list and inherited connection overrides. Reading a VIN never changes it."
+                    manualCoverage.executable ->
+                        "This explicit selection supplies ${manualCoverage.counts}. Reading a VIN never changes it."
+                    else -> "${CatalogCoverage.NO_ENHANCED_DATA} Reading a VIN never changes it."
+                }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 state.catalog.errors.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
         }
