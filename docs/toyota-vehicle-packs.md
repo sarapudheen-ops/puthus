@@ -221,3 +221,23 @@ regressions: 284 actual entry plans, 2,272 fast and 2,272 ISO traces, six keepal
 exact C1 checks and bounded same-entry DTC reentry. The driver in these tests is scripted;
 there is **no approved MIC3313 mapping or enabled production definition**. See the latest
 [conversion evidence and remaining acceptance gates](conversion-report.md#portable-lifecycle-and-session-integration-scripted-source-api-not-mic3313-approval).
+
+### Supplemental native/firmware result boundary
+
+A separate pinned public Mini image now consumes the real abstract-layer timing records and queued
+pulse/PRIMARY transaction in bounded offline emulation. This is not MIC3313 firmware identification or
+physical adapter approval. The source's `CommSubFunc_00000003` cell resolves to export `CommSubFunc0003`
+(6402), whose firmware dispatch alias is 6109. Both native API paths preserve positive copied-byte
+counts for partial/corrupt/wrong-ECU replies; the new bounded Kotlin answer-record codec and lifecycle
+tests require independent complete C1 proof, never an ACK/count alone. Keepalive callback timing also shows
+why a nominal 800-ms AT period cannot simply replace the source API. See the
+[reproducible timing experiment](../tools/thinkdiag/README.md#supplemental-native-to-firmware-timing-and-result-experiment).
+The saved report is test evidence only, not an APK asset or an enabled system.
+
+The preceding lifecycle revision `d02481d` now has successful
+[push Android 44720562551](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562551),
+[PR Android 44720576573](https://github.com/sarapudheen-ops/puthus/actions/runs/44720576573) and
+[inspection 44720562676](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562676).
+It reports 591 JVM tests without failures and five Android 24 tests: two actual delivery/cache and three
+synthetic consent-UI callbacks. This is **not** the outstanding manual-selection-to-executable-live/DTC/ECU
+acceptance. Zero production executable definitions remain enabled.

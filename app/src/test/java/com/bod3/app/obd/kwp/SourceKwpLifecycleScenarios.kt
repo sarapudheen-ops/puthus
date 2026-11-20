@@ -160,6 +160,59 @@ object SourceKwpLifecycleScenarios {
         check(queuedFailure.calls.none { it.api == SourceKwpApi.ALTERNATE })
     }
 
+    suspend fun actualNativeQueuedEndAndFirmwareResultsNeverTreatCopiedByteCountsAsEcuProof() {
+        val file = File(requireNotNull(System.getProperty("toyota.firmware.results.file")))
+        val raw = file.readBytes()
+        check(MessageDigest.getInstance("SHA-256").digest(raw).joinToString("") { "%02x".format(it) } ==
+            "824e4cb8eb7cd56b5a900e0ef792e91f4256e79cac500acdbc0fa1eb22042e48")
+        val root = map(MiniJson.parse(raw.toString(Charsets.UTF_8)))
+        check(root["physicalValidation"] == false && root["provesMic3313Equivalence"] == false &&
+            long(root["productionExecutableDefinitions"]) == 0L)
+        val p = mandatory()
+        val rows = list(root["nativeCombinedResults"]).map(::map) + list(root["nativePrimaryResults"]).map(::map)
+        check(rows.size == 12 && rows.map { it["case"] }.toSet() == setOf("completeC1", "noData", "corruptChecksum", "partialReply", "wrongEcu", "negativeService"))
+        for (row in rows) {
+            val name = row["case"] as String
+            val records = (row["outputHex"] as String).takeIf(String::isNotEmpty)?.let(Hex::parse).orEmpty()
+            val reply = SourceKwpNativeResultCodec.endCombination(long(row["endLowWord"]), records)
+            check(reply.signedWord.toLong() == long(row["endSignedLowWord"]))
+            check(p.completeC1(reply) == (name == "completeC1")) { name }
+            check(long(row["queuedWord"]) == 0L)
+            if (name == "noData") check(reply.signedWord == -70 && reply.elm == null)
+            else check(reply.signedWord == records.size && reply.signedWord > 0)
+            val port = Port(p, List(if (name == "noData") 4 else if (name == "negativeService") 2 else 1) { reply })
+                .also { it.queuedWord = 0 }
+            val entry = SourceKwpLifecycle(p, port).enter()
+            check(entry.initialized == (name == "completeC1") && !entry.isoFallback) { "$name: $entry" }
+            if (name == "noData") check(entry.nativeStatus == -1 && port.calls.count { it.api == SourceKwpApi.ALTERNATE } == 2)
+            else if (name == "negativeService") check(entry.nativeStatus == -2)
+            else check(entry.nativeStatus == 0)
+            port.exhausted()
+        }
+    }
+
+    fun nativeAnswerRecordCodecRejectsWrongCountsTruncationOverflowIgnoredTailsAndMutableInputs() = runBlocking {
+        val p = mandatory()
+        val wire = KLineFrames.encode(listOf(0x80, 0xF0, 0x13), listOf(0xC1, 0xE9, 0x8F))
+        val records = listOf(1, wire.size) + wire
+        val malformed = listOf(listOf(0), listOf(1), listOf(1, 0),
+            listOf(1, 255) + wire, listOf(2, wire.size) + wire, records + 0, records + 256,
+            listOf(-1, wire.size) + wire, records.dropLast(1), List(256) { 1 })
+        for (value in malformed) rejects { SourceKwpNativeResultCodec.endCombination(value.size.toLong(), value) }
+        for (word in listOf(0L, -1L, 8L, 10L, 65466L, Long.MIN_VALUE, Long.MAX_VALUE, 0x100000000L))
+            rejects { SourceKwpNativeResultCodec.endCombination(word, records) }
+        for (word in listOf(0L, -1L, 65466L, 0xFFFFFFFFL, Int.MIN_VALUE.toLong()))
+            check(!p.completeC1(SourceKwpNativeResultCodec.endCombination(word, emptyList())))
+        val mutable = records.toMutableList()
+        val frozen = SourceKwpNativeResultCodec.endCombination(9, mutable)
+        mutable.fill(0)
+        check(p.completeC1(frozen))
+        val duplicate = listOf(2, wire.size) + wire + wire.size + wire
+        val multi = SourceKwpNativeResultCodec.endCombination(duplicate.size.toLong(), duplicate)
+        check(multi.elm!!.lines.size == 2 && !p.completeC1(multi))
+        check(p.completeC1(SourceKwpNativeResultCodec.endCombination(0x80000009, records))) // source consumes the LOW word
+    }
+
     suspend fun onlyTransport5ExhaustedAdapterFailureDispatchesSameEntryIsoAndNeverReplays105F() {
         val p = entries().map(::plan).first { it.nativeTransport == 5 }
         val fail = SourceKwpReply(0xFFFFFFFFL)

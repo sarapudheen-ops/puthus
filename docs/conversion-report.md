@@ -412,3 +412,70 @@ whole-source accounting.** Exact native → MIC3313 timing/pin/electrical mappin
 mandatory target's blocker. Android 24 must still install the actual app and perform explicit
 manual Toyota selection into nonempty executable live/DTC definitions, followed by complete
 source feature/vehicle coverage. Draft PR14 is not ready to merge.
+
+## Supplemental timing, primary transaction and native result boundary
+
+The independent `tools/thinkdiag/toyota_firmware_timing.py` CLI now executes the pinned supplied
+abstract layer and a pinned supplemental public Mini Cortex-M firmware image. The Toyota archive
+remains authoritative; this auxiliary image is **not identified as MIC3313 firmware**. Raw inputs
+remain outside Git/APK. No host native loader, syscall, network or device is exposed; unknown MMIO
+aborts. GPIO/clock/timer/UART configuration, byte I/O, delay completion and IRQ arrival are explicitly
+synthetic leaves, not silently modeled electrical behavior.
+
+The local CLI was run twice with byte-identical results: **8 interval / 3 UART exchange / 6 keepalive /
+6 native KWP-result / 6 native PRIMARY-result vectors plus 1 unequal-pulse component probe**.
+The canonical saved report is 31,466 bytes, SHA-256
+`824e4cb8eb7cd56b5a900e0ef792e91f4256e79cac500acdbc0fa1eb22042e48`;
+its comparison digest is `c8780bc9d1092560c6b4cb77cb0516c7bcaa80150b58fbf27f8b4f60dbcec646`.
+The exact input pins, public provenance, bounded reproduction command and fake boundaries are
+in the [tool guide](../tools/thinkdiag/README.md#supplemental-native-to-firmware-timing-and-result-experiment).
+
+Important distinctions established by executed instructions:
+
+- `OpenAbstractCommDll@0001e860..0001e884` resolves source cell `CommSubFunc_00000003`
+  to the **`CommSubFunc0003`** export. That real primary serializer emits `6402`, and the
+  firmware's real dispatcher/alias table maps it to the `6109` consumer. The queued source
+  pulse+PRIMARY transaction is **`60070000196007ff00196402ff01058113f08105`**, emitted only
+  at EndCombination. This is not the same claim as merely calling the separate KWP/6109 API.
+- Native `(5,60,600)` encodes `6003003206003c`. The consumer uses 5,000-us TX gaps,
+  a 60-ms repeated-request delay and 600 normal RX polls, not three guessed generic P2/P3 values.
+  Literal 10416 reaches UART-settings RAM as **10416**, without 10400 normalization.
+- Pulse 25/25 reaches two 25,000-us delay-arm leaves; the unequal 35/15 component reaches
+  35,000/15,000 us with other settings deliberately fixed. Neither GPIO-bit trace proves OBD
+  pin mapping, transceiver polarity or physical timing. Complete native configuration/lifecycle
+  routing and MIC3313 equivalence remain unfinished.
+- Real 6004 setup, callback and disable execute for all six source keepalive payloads.
+  Third argument **3 is an RX-byte drain bound in this supplemental image**, not retries.
+  With synthetic 5-ms IRQ ticks, first TX is tick **161 / 805 declared-clock ms**, then one byte
+  per tick and three 1,000-tick drains. Firmware clock declarations are not an oscillator/clock-tree
+  measurement. `ATSW28` must not be approved simply because its nominal period is 800 ms.
+- The real native queue/EndCombination/result parser—not a fake internal ACK—maps a complete
+  synthetic C1 to count **9**, records `010783f013c1e98fbf`; no RX gives firmware `ff02` and
+  signed-low-word **−70**. Corrupt checksum, partial packet, wrong ECU and negative service also
+  yield **positive copied-byte counts**. Positive native return alone cannot establish ECU proof.
+
+`SourceKwpNativeResultCodec` ports only the bounded answer-record envelope. It rejects mismatched
+counts, truncated records, overflow, ignored tails and data attached to a failed return. It preserves
+raw packets for independent exact ECU/header/checksum/service/C1 verification. The app regressions
+consume both six-case native domains and require that only complete selected-ECU C1 initializes the
+lifecycle. Saved-result checking is not rerunning guest code; normal CI has no supplemental firmware
+input. These changes do not add a physical adapter implementation or enable a production pack.
+
+Refreshed local evidence: **238 Python tests PASS** (0.432 s), **115 standalone Kotlin scenario
+groups PASS** (real generated artifacts, synthetic I/O), compile PASS, catalog-seed check PASS,
+`git diff --check` PASS. The nine timing unit tests verify encodings/pins/saved results, while the
+separate explicitly invoked CLI performed guest execution.
+
+The preceding lifecycle head **`d02481d`** has now completed all three observed parent runs:
+[inspection 44720562676](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562676),
+[push Android 44720562551](https://github.com/sarapudheen-ops/puthus/actions/runs/44720562551),
+and [PR Android 44720576573](https://github.com/sarapudheen-ops/puthus/actions/runs/44720576573)
+are **success**. Push build check `136235018008` reports **591 JVM tests / 0 failures / 0 errors /
+0 skipped / 71 classes**. Android 24 check `136248033562` reports **5 tests PASS / 3.673 s**:
+two real APK range/cache tests and three synthetic callback-only consent UI tests. The documented
+disposable-emulator CA augmentation still applies. This proves neither untouched-2016 trust nor
+manual selected-system executable diagnostics, and does not certify later local edits.
+
+**Production remains 0 executable definitions / 1,055,750 unresolved records at last whole-source
+accounting.** Mandatory enabled-system loading, native-to-MIC3313 mapping, selected-system Android
+24 live/DTC/ECU acceptance and every-source executable feature coverage are still outstanding.

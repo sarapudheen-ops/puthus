@@ -8,6 +8,8 @@ class SourceKwpLifecycleTest {
     @Test fun allSourceFastRetryAndIsoContracts() = runBlocking { SourceKwpLifecycleScenarios.actual284EntryFastRetryAndIsoContractsMatchPinnedNativeDomains() }
     @Test fun allSourceKeepaliveAndExitBindings() = runBlocking { SourceKwpLifecycleScenarios.actual284KeepaliveAndExitBindingsNeverUseUniversalTesterPresentOrP3Defaults() }
     @Test fun initializationRequiresExactCompleteC1() = runBlocking { SourceKwpLifecycleScenarios.completeC1ProofRejectsAckZeroPartialDuplicateWrongEcuChecksumServiceAndMixedEvidence() }
+    @Test fun actualNativeEndResultNeverSubstitutesForEcuProof() = runBlocking { SourceKwpLifecycleScenarios.actualNativeQueuedEndAndFirmwareResultsNeverTreatCopiedByteCountsAsEcuProof() }
+    @Test fun strictNativeAnswerRecordBoundary() = SourceKwpLifecycleScenarios.nativeAnswerRecordCodecRejectsWrongCountsTruncationOverflowIgnoredTailsAndMutableInputs()
     @Test fun onlyExactTransport5FailureDispatchesIso() = runBlocking { SourceKwpLifecycleScenarios.onlyTransport5ExhaustedAdapterFailureDispatchesSameEntryIsoAndNeverReplays105F() }
     @Test fun explicitPinsAbiAndImmutableOperationSnapshot() = runBlocking { SourceKwpLifecycleScenarios.syntheticMultiplePinsAlternateConnectorAndInputMutationRetainExactAbiAndBounds() }
     @Test fun reentryRequiresInitializationAndRestoresContext() = runBlocking { SourceKwpLifecycleScenarios.failedReentryCannotRetryAReadAndRestoresContextWithoutEnteringDiagnosticSession() }

@@ -243,3 +243,56 @@ Configuration rejection, failed/partial/wrong-ECU C1, cancellation, bus interlea
 classification and same-entry reinitialization are covered. The native→MIC3313 mapping remains
 unimplemented, with **zero** enabled production executable definitions; passing contracts
 are not physical validation or Android executable-selection acceptance.
+
+### Supplemental native-to-firmware timing and result experiment
+
+`toyota_firmware_timing.py` executes the supplied abstract-layer serializer/queue/result parser
+and selected consumers in a separately pinned **public ThinkDiag Mini V1.23.004** Cortex-M image.
+This image supplements the Toyota specification; it is **not MIC3313 firmware or hardware proof**.
+The CLI refuses any other binary identity and exposes no network, device, host loader, syscall or
+mapped peripheral to guest instructions. IAR SRAM initialization runs in the guest. GPIO, clock,
+UART configuration/byte I/O, timer control, SysTick completion and IRQ arrival are explicit synthetic
+boundaries. Reaching a configuration leaf does not prove its electrical effects or oscillator rate.
+
+With the two inputs kept outside Git (exact hashes and public provenance are in the script/report):
+
+```sh
+"$PY" tools/thinkdiag/toyota_firmware_timing.py \
+  --abstract .local/thinkdiag/libCOMM_ABSTRACT_LAYER.so \
+  --firmware .local/thinkdiag/thinkdiag-mini-firmware.bin \
+  --output .local/thinkdiag/report/mini-firmware-timing.json
+cmp .local/thinkdiag/report/mini-firmware-timing.json tools/thinkdiag/verification/mini-firmware-timing.json
+```
+
+The saved, canonical **31,466-byte** report has full-file SHA-256
+`824e4cb8eb7cd56b5a900e0ef792e91f4256e79cac500acdbc0fa1eb22042e48` and result digest
+`c8780bc9d1092560c6b4cb77cb0516c7bcaa80150b58fbf27f8b4f60dbcec646`.
+Nine Python tests check bounded encodings, float32 rounding, binary identity and saved-result integrity.
+Gradle passes that saved file to two additional Kotlin lifecycle/result-record regressions. Normal CI
+**does not execute the supplemental firmware**: it checks the saved comparison, not guest execution.
+The CLI was executed twice locally and produced byte-identical output.
+
+Observed component domains: eight unequal/rounding interval vectors, three UART exchanges, all six
+source keepalive payloads/disable, six native KWP/6109 result cases, six native PRIMARY/pulse/6402 cases,
+and one unequal-pulse component probe. `OpenAbstractCommDll@0001e860..0001e884` explicitly resolves
+`CommSubFunc_00000003` to the real export **`CommSubFunc0003`**; the Mini's real dispatcher maps
+`6402` to `6109`. The complete native queued pulse+PRIMARY bytes are
+`60070000196007ff00196402ff01058113f08105`. No pulse or send I/O happens before EndCombination.
+The separate unequal 35/15 probe deliberately holds baud/timing fixed; it is not a complete 9600-baud
+source entry. These are component comparisons, not complete entry/retry/exit/ISO/pin equivalence.
+
+Literal 10416 reaches the firmware's UART-settings RAM as **10416**, never 10400. Native 5/60/600
+encodes `6003003206003c`: 5,000-us inter-byte TX delay, 60-ms repeated-request delay, and 600 normal
+receive polls (1,000 us each at the firmware's *declared*, unmeasured clock). Pulse 25/25 reaches two
+25,000-us delay-arm leaves; GPIO-bit writes are logged but cannot establish transceiver polarity or
+OBD pin routing. The native SetLinkKeep third argument 3 is consumed as an RX-byte drain bound in
+this image, not a retry count. Its 800/5 callback comparison is strict: first TX on synthetic tick 161,
+**805 declared-clock ms**, then one byte per tick and three 1,000-tick drains. `ATSW28` equivalence
+must not be assumed from the number 800.
+
+A synthetic complete C1 produces native copied-byte count 9 / records `010783f013c1e98fbf`; no data
+produces `ff02` then signed-low-word **−70**. Corrupt checksum, partial, wrong-ECU and negative-service
+bytes also produce **positive counts**. `SourceKwpNativeResultCodec` bounds/count-checks the raw
+record envelope and leaves all ECU framing/address/checksum/C1 verification to `SourceKwpPlan`.
+Tests require that only the complete addressed C1 initializes a link. This is still **zero production
+executable definitions**; no raw firmware/library or saved research report is staged into APK assets.

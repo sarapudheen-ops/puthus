@@ -69,6 +69,8 @@ tasks.withType<Test>().configureEach {
     systemProperty("toyota.diagnostics.file", rootProject.file(".local/toyota-vehicle-packs/mandatory-ecmect-diagnostics.json").absolutePath)
     systemProperty("toyota.source.review.file", rootProject.file(".local/toyota-vehicle-packs/mandatory-ecmect-source-reads.json").absolutePath)
     systemProperty("toyota.lifecycle.contracts.file", rootProject.file(".local/toyota-vehicle-packs/source-kwp-contracts.json").absolutePath)
+    // Supplemental saved native/firmware experiment is test evidence only, never an APK asset.
+    systemProperty("toyota.firmware.results.file", rootProject.file("tools/thinkdiag/verification/mini-firmware-timing.json").absolutePath)
 }
 
 dependencies {
