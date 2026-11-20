@@ -22,6 +22,7 @@ on:
     branches: ['arena/**']
     paths:
       - '.github/workflows/brand-recon.yml'
+      - 'tools/thinkdiag/trace_comm.py'
 
 permissions:
   contents: write # Publish the built DTC packs as release assets the app can import.
