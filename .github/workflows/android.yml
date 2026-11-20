@@ -113,6 +113,7 @@ jobs:
             build/reports/
             .local/toyota-vehicle-packs/native-oracle.json
             .local/toyota-vehicle-packs/native-oracle.md
+            .local/toyota-vehicle-packs/compiled-source-read-validation.json
           if-no-files-found: warn
 
   selected-vehicle-device:

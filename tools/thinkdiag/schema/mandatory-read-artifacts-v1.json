@@ -1,0 +1,21 @@
+{
+  "counts": {
+    "compiledLiveReads": 30,
+    "faultLabels": 1414,
+    "identificationReads": 1,
+    "productionExecutableDefinitions": 0,
+    "sourceFaultQueries": 4
+  },
+  "diagnostics": {
+    "bytes": 427738,
+    "sha256": "6837fd0336fa652c66cfd5c28b99c404005fae8ce37390da2060b1d9358cb624"
+  },
+  "formatVersion": 1,
+  "kind": "compiled-source-read-artifact-pin",
+  "note": "Deterministic compiler regression pin, not production/adapter/vehicle approval. Inputs are decoded source arrays and canonical decoded text records.",
+  "review": {
+    "bytes": 484874,
+    "sha256": "42a36177967069b590749b3144f095544e9ce63cc883411ecd0e31f1dfdb550b"
+  },
+  "sourceSha256": "26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a"
+}

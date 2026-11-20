@@ -199,3 +199,27 @@ This full SQLite build is a legacy/research derivative, **not a current Gradle p
 The application now migrates the unchanged passive `dtcGroups` reference into a reusable catalog platform, retaining the original make restrictions and source once rather than copying 11,989 meanings into every generation. Catalog JSON exports preserve that platform and its restrictions; ECU CSV intentionally does not carry DTC text. A known profile make wins over a conflicting saved link or manual catalog choice for passive fault wording, but no reference lookup selects a vehicle, ECU list or connection profile. See the [catalog format/migration guide](../../docs/vehicle-catalog.md) and the catalog JVM migration/integration tests. This integration does not change the converter or bundled derivative's bytes/hash, and introduces no recovered diagnostic requests.
 
 Tests establish format handling, reproducibility and application isolation, **not** correctness of vendor descriptions for every vehicle. No real-car/adapter validation has been performed.
+
+### Mandatory compiled-read artifact regression checks
+
+```sh
+"$PY" tools/thinkdiag/toyota_runtime_compile.py compile .local/thinkdiag/TOYOTA.zip \
+  --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+  --output .local/thinkdiag/vehicle-packs
+"$PY" tools/thinkdiag/toyota_runtime_compile.py verify .local/thinkdiag/vehicle-packs
+"$PY" tools/thinkdiag/toyota_runtime_compile.py test-artifacts .local/thinkdiag/vehicle-packs
+```
+
+Compilation is performed twice over the archive-verified decoded inputs, and canonical output
+must match exactly. The reviewed compiler pin covers the complete typed read/diagnostics review,
+input hashes (including detail table and decoded text record dictionaries), and exact source
+transport metadata. The 48 real-artifact negative vectors reject even a canonical but changed
+formula/unit/window/scope/baud/pin/pulse/label/identity/query/counter, plus damaged split payloads.
+This is not adapter approval: the sidecars report zero production executable definitions and
+are never copied into the APK. Inspection publishes their computed counts as a separate check.
+
+The lifecycle oracle now also compares 2,272 fast-entry retry/negative/zero/ISO-dispatch vectors,
+2,272 direct ISO-consumer vectors and 1,032 DTC read-reentry vectors. Every fake boundary and
+native zero-result/ignored-failure hardening is explicit in the report. There is no MIC3313
+native-API equivalence, physical vehicle, enabled production-system or Android executable
+acceptance claim from a passing offline oracle.

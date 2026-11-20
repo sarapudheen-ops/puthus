@@ -243,3 +243,80 @@ def compare_support_predicates(libraries):
             'GetSendCmdSearchIndex selects an explicit successful immutable cached post-service reply; no sender/device access'],
         'hardening': 'Port rejects short mask windows instead of native out-of-bounds byte loads',
         'notCovered': ['native support-cache invalidation', 'physical ECU support', 'adapter or transport behavior']}
+
+
+def compare_dtc_read_reentry(libraries, sources):
+    """Execute DTCF's exact failed-read re-entry caller, not an adapter driver.
+
+    The actual source kind-5/template-165 query deliberately bypasses the fault
+    decoder. This isolates the sender/re-entry/sentinel control flow. Native
+    Exit/Enter are explicit observed boundaries; their return values are NOT
+    claimed as initialization proof, and no 105F or write is sent by this test.
+    """
+    from toyota_entry_runtime import reentry_is_selected, signed16
+    name = 'libTOYOTA_DTCF.so'; n = _sandbox(libraries, name, DTCF_SHA256)
+    plan = compile_dtc_workflow(sources, region='EU', function=61)
+    queries = [q for q in plan.queries if q.kind == 5 and q.template == 165]
+    if len(queries) != 1 or len(queries[0].frames) != 1:
+        raise ReplayError('Read re-entry oracle needs the exact source single-frame non-decoded query')
+    frame = queries[0].frames[0]
+    token = n.allocate(4096); context = n.allocate(0x18000); native_block = n.allocate(4096)
+    count = n.allocate(4); codes = n.allocate(8)
+    n.write(n.symbol(name, 'g_MToken'), struct.pack('<Q', token))
+    n.write(context, struct.pack('<I', 61)); n.write(context + 0x10829, b'\x81')
+    events = []; returns = []; attempts = 0; lifecycle_status = 0
+    def lookup(template, indexes, function, table, runtime, *_):
+        if (template, function, runtime) != (165, 61, context): raise ReplayError('Read re-entry crossed source scope')
+        n.write(indexes, b'\0\0')
+        n.write(context + 0x1083b, bytes([len(frame.request)]) + frame.request)
+        return 1
+    def send(out, capacity, runtime, request, size, flags, extra, *_):
+        nonlocal attempts
+        raw = n.read(request, size)
+        if runtime != context or capacity != 4096 or flags != 0x81 or raw != frame.request or attempts >= len(returns):
+            raise ReplayError('Read re-entry changed the exact sender/capacity/request/reply budget')
+        events.append(['read', raw.hex(), n.read(context + 0x174d1, 1)[0]])
+        value = returns[attempts]; attempts += 1
+        # Kind 5 never reads the response buffer. Do not fabricate/pad a buffer
+        # whose size is implied by an arbitrary synthetic return-word test.
+        return value
+    def exit_(function, runtime, *_):
+        if (function, runtime) != (61, context): raise ReplayError('Read re-entry exit crossed ECU')
+        events.append(['exit', n.read(context + 0x174d1, 1)[0]])
+        return lifecycle_status
+    def enter(function, runtime, *_):
+        if (function, runtime) != (61, context): raise ReplayError('Read re-entry enter crossed ECU')
+        events.append(['enter', n.read(context + 0x174d1, 1)[0]])
+        return lifecycle_status
+    for symbol, callback in (('GetFuncCommFrameInfo_MultiCmd', lookup), ('SendCmdAndGetReceive', send),
+                             ('SystemExitPart', exit_), ('SystemEnterPart', enter)):
+        n.bind(symbol, callback, indirect=True, library=name)
+    digest = hashlib.sha256(); vectors = 0; reentries = 0
+    statuses = (-32768, -2, -1, 0, 1, 9, 0x7ffe, 0x7fff, 0x8000, 0xffff, 0x10000)
+    for transport in range(12):
+        n.write(context + 0x10828, bytes([transport]))
+        for original in (0, 1, 11, 255):
+            for first in statuses:
+                eligible = reentry_is_selected(transport, first)
+                for second in (-1, 0, 3, 0x7fff) if eligible else (0,):
+                    for lifecycle_status in (0, -1) if eligible else (0,):
+                        events.clear(); attempts = 0; returns = [first] + ([second] if eligible else [])
+                        n.write(context + 0x174d1, bytes([original]))
+                        value = n.call(name, 'SendCmdAndGetDtcP3P4', 165, 5, count, codes, 0, native_block, context) & 65535
+                        wanted = [['read', frame.request.hex(), original]]
+                        if eligible: wanted += [['exit', 255], ['enter', 255], ['read', frame.request.hex(), original]]
+                        final = second if eligible else first
+                        wanted_status = 65535 if signed16(final) < 0 or final & 65535 == 0x7fff else 0
+                        if events != wanted or value != wanted_status or attempts != len(returns) or n.read(context + 0x174d1, 1) != bytes([original]):
+                            raise AssertionError(f'Native read re-entry differs at {transport}/{original}/{first}/{second}/{lifecycle_status}: {events}/{value}')
+                        digest.update(canonical({'transport': transport, 'savedContextByte': original, 'first': first,
+                            'second': second if eligible else None, 'lifecycleReturn': lifecycle_status,
+                            'events': events, 'nativeResult': value}))
+                        reentries += int(eligible); vectors += 1
+    return {'nativeInstructionsExecuted': True, 'librarySha256': DTCF_SHA256,
+        'sourceSystem': 'SYSLIST_EU.BIN@0009d8f2', 'functionKey': 61, 'template': 165, 'request': frame.request.hex(),
+        'vectors': vectors, 'reentries': reentries, 'resultsSha256': digest.hexdigest(),
+        'fakeBoundaries': ['Exact source frame copied into one declared native slot; independent COMM oracle covers lookup',
+            'Synthetic sender results only; kind 5 skips the fault decoder exactly as in the source caller',
+            'Exit/Enter callbacks inspect temporary FF context and return scripted 0 or -1; no physical init or session control'],
+        'hardening': 'App must reject malformed/ambiguous replies and require successful exact reinitialization; native lifecycle return values are ignored'}

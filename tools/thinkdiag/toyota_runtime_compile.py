@@ -124,7 +124,7 @@ def compile_mandatory_source_reads(sources, libraries, *, calc_evidence):
     from toyota_lifecycle import selected_fast_kwp_lifecycle
     from toyota_live import review_direct21
     from toyota_structure import system_lists
-    from vehicle_bundle import SOURCE_SHA256
+    from vehicle_bundle import SOURCE_SHA256, canonical
     raw_systems = sources['SYSLIST_EU.BIN']
     _, blocks = system_lists(raw_systems)
     matching = [raw for start, rows in blocks.items() for i, raw in enumerate(rows)
@@ -150,7 +150,8 @@ def compile_mandatory_source_reads(sources, libraries, *, calc_evidence):
         if (request not in by_request or by_request[request]['formula'] != formula or
                 not any(r.startswith('FUNCDATA_EU.BIN@' + offset) for r in by_request[request]['sourceRecords'])):
             raise ValueError('Mandatory exact coolant/RPM signal/window/formula/unit/applicability compilation changed')
-    names = sorted({r['file'] for r in review['inputs']} | {'SYSLIST_EU.BIN', 'SYSTEMENTER.BIN', 'ECUPROGRAM.BIN'})
+    names = sorted({r['file'] for r in review['inputs']} |
+                   {'SYSLIST_EU.BIN', 'SYSTEMENTER.BIN', 'ECUPROGRAM.BIN', 'EU/Toyota_bin_1B.BIN'})
     return {'kind': 'compiled-source-read-review', 'formatVersion': 1, 'sourceSha256': SOURCE_SHA256,
         'systemId': MANDATORY_SYSTEM, 'functionKey': 61, 'entrySelector': 0x11, 'ecuFile': MANDATORY_ECU,
         'rawSystemHex': raw.hex(), 'transportPlan': lifecycle.report(),
@@ -160,7 +161,13 @@ def compile_mandatory_source_reads(sources, libraries, *, calc_evidence):
         'sourceLiveRows': review['sourceRows'], 'numericReviewedCandidates': review['disabledReviewCandidates'],
         'compiledLiveReads': len(live), 'uncompiledLiveRows': review['sourceRows'] - len(live),
         'productionExecutableDefinitions': 0,
-        'inputs': [{'file': name, 'bytes': len(sources[name]), 'sha256': hashlib.sha256(sources[name]).hexdigest()} for name in names]}
+        'inputs': [{'file': name, 'bytes': len(sources[name]), 'sha256': hashlib.sha256(sources[name]).hexdigest()} for name in names],
+        # These are decoded record dictionaries, not the encrypted GAG members.
+        # Keep that boundary explicit rather than giving them an archive-member hash.
+        'decodedTextInputs': [{'file': name, 'records': len(libraries[name]),
+            'canonicalRecordsSha256': hashlib.sha256(canonical(libraries[name])).hexdigest()}
+            for name in ('DSTREAM_EN.GAG', 'EXPRESS.GAG', 'TCODE_EN.GAG', 'TEXT_EN.GAG')],
+        'calcEvidenceLibrarySha256': calc_evidence['librarySha256']}
 
 
 def verify_source_read_review(review):
@@ -201,8 +208,21 @@ def verify_source_read_review(review):
         bound(pid, f'liveReads[{i}]')
         require(formula_bytes(pid['formula']) > 0 and pid['supportChecks'] and
                 any(r.startswith(MANDATORY_ECU + '@') for r in pid['sourceRecords']), 'Missing exact live formula/applicability/ECU source')
-    return {'compiledLiveReads': len(live), 'faultLabels': count, 'sourceFaultQueries': len(faults['workflow']['queries']),
-            'identificationReads': len(ids), 'productionExecutableDefinitions': 0}
+    counts = {'compiledLiveReads': len(live), 'faultLabels': count, 'sourceFaultQueries': len(faults['workflow']['queries']),
+              'identificationReads': len(ids), 'productionExecutableDefinitions': 0}
+    # This pin is a reviewed COMPILER-output regression contract. It never
+    # approves an adapter mapping or an enabled production vehicle-system.
+    import hashlib
+    from pathlib import Path
+    from vehicle_bundle import canonical
+    pin = strict_json((Path(__file__).parent / 'schema' / 'mandatory-read-artifacts-v1.json').read_bytes())
+    payload = canonical({k: v for k, v in review.items() if k != 'diagnosticsFile'}) + b'\n'
+    diagnostic = canonical(review['diagnostics']) + b'\n'
+    require(pin['sourceSha256'] == SOURCE_SHA256 and pin['counts'] == counts and
+            pin['review'] == {'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()} and
+            pin['diagnostics'] == {'bytes': len(diagnostic), 'sha256': hashlib.sha256(diagnostic).hexdigest()},
+            'Compiled source-read artifact differs from the reviewed deterministic source pin')
+    return counts
 
 
 def write_source_read_review(review, output):
@@ -215,6 +235,114 @@ def write_source_read_review(review, output):
     (output / pin['file']).write_bytes(diagnosis)
     (output / 'mandatory-ecmect-source-reads.json').write_bytes(canonical({**review, 'diagnosticsFile': pin}) + b'\n')
     return counts
+
+
+def strict_json(raw, *, maximum_bytes=2 * 1024 * 1024):
+    """Canonical artifact input: no duplicate keys, nonfinite numbers or huge input."""
+    import json
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= maximum_bytes:
+        raise ValueError('Missing or oversized compiled source-read artifact')
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result: raise ValueError('Duplicate compiled-artifact key: ' + key)
+            result[key] = value
+        return result
+    def nonfinite(value): raise ValueError('Nonfinite compiled-artifact number: ' + value)
+    try:
+        return json.loads(raw, object_pairs_hook=pairs, parse_constant=nonfinite)
+    except (UnicodeError, RecursionError) as error:
+        raise ValueError('Malformed compiled-artifact JSON') from error
+
+
+def verify_source_read_files(directory):
+    """Verify the whole review and exact split payload, not just claimed file hashes."""
+    import hashlib
+    from vehicle_bundle import canonical
+    raw_review = (directory / 'mandatory-ecmect-source-reads.json').read_bytes()
+    review = strict_json(raw_review)
+    counts = verify_source_read_review(review)
+    if raw_review != canonical(review) + b'\n': raise ValueError('Noncanonical compiled source-read review')
+    pin = review['diagnosticsFile']
+    raw = (directory / 'mandatory-ecmect-diagnostics.json').read_bytes()
+    diagnostic = strict_json(raw)
+    if (set(pin) != {'file', 'bytes', 'sha256'} or pin.get('file') != 'mandatory-ecmect-diagnostics.json'
+            or type(pin.get('bytes')) is not int or pin['bytes'] != len(raw)
+            or pin.get('sha256') != hashlib.sha256(raw).hexdigest()
+            or raw != canonical(review['diagnostics']) + b'\n' or raw != canonical(diagnostic) + b'\n'):
+        raise ValueError('Compiled source-diagnostics file was truncated/corrupted or differs from its exact review')
+    return counts
+
+
+def check_source_read_artifacts(directory):
+    """Exercise ACTUAL generated artifacts, corruption/truncation/scope isolation.
+
+    Production definitions remain zero: passing these tests approves neither
+    vehicle communication nor an electrical/timing mapping to a MIC3313.
+    The compile CLI separately recompiles all source definitions twice.
+    """
+    import copy
+    from pathlib import Path
+    import tempfile
+    from vehicle_bundle import canonical
+    expected = verify_source_read_files(directory)
+    names = ('mandatory-ecmect-source-reads.json', 'mandatory-ecmect-diagnostics.json')
+    original = {name: (directory / name).read_bytes() for name in names}
+    vectors = 0
+    def reject(files):
+        nonlocal vectors
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            for name, data in files.items(): (out / name).write_bytes(data)
+            try: verify_source_read_files(out)
+            except (ValueError, KeyError, TypeError, FileNotFoundError): vectors += 1; return
+            raise AssertionError('Damaged/out-of-scope source artifact passed independent verification')
+    for name in names:
+        raw = original[name]
+        # Edges, midpoint, just before checksum-bearing closing objects, and
+        # a nonempty valid JSON prefix cannot pass by ignoring a trailing tail.
+        for length in sorted({0, 1, 2, len(raw) // 2, len(raw) - 2, len(raw) - 1}):
+            reject({**original, name: raw[:length]})
+        for at in (0, len(raw) // 2, len(raw) - 2):
+            changed = raw[:at] + bytes([raw[at] ^ 1]) + raw[at + 1:]
+            reject({**original, name: changed})
+        reject({**original, name: raw + b'{}'})
+        reject({**original, name: b' ' + raw})
+        reject({key: value for key, value in original.items() if key != name})
+    review = strict_json(original[names[0]])
+    # Recomputed hashes/canonical JSON cannot bless a changed plan, scope, byte
+    # window, unit, formula, label, identity, counter or hidden extra field.
+    mutations = (
+        lambda v: v.update(entrySelector=81), lambda v: v.update(functionKey=65597),
+        lambda v: v.update(systemId='SYSLIST_NA.BIN@0009d8f2'), lambda v: v.update(ecuFile='EU/Ecu_Data_0082.BIN'),
+        lambda v: v.update(productionExecutableDefinitions=1), lambda v: v.update(transportGaps=[]),
+        lambda v: v['transportPlan']['entry'].update(baud=10400),
+        lambda v: v['transportPlan']['entry'].update(sourceTimingHex='053c001818'),
+        lambda v: v['transportPlan']['entry'].update(pinPairs=[[15, 15]]),
+        lambda v: v['transportPlan']['entry'].update(sourceRecord='SYSTEMENTER.BIN@00002f7e'),
+        lambda v: v['liveReads'][0].update(formula='(A+40)'),
+        lambda v: v['liveReads'][0].update(unit='unreviewed-unit'),
+        lambda v: v['liveReads'][0].update(dataOffset=1),
+        lambda v: v['liveReads'][0].update(sourceRecords=['FUNCDATA_NA.BIN@000005e9']),
+        lambda v: v['liveReads'][0]['supportChecks'][0].update(request='2101'),
+        lambda v: v['diagnostics']['faults']['layout']['labels'][0].update(description='Changed label'),
+        lambda v: v['diagnostics']['faults']['workflow']['queries'].pop(),
+        lambda v: v['diagnostics']['identification'][0]['read'].update(request='21C1'),
+        lambda v: v['inputs'][0].update(sha256='0' * 64),
+        lambda v: v['decodedTextInputs'][0].update(records=0),
+        lambda v: v.update(compiledLiveReads=True), lambda v: v.update(ignored='Do not silently skip this'),
+        lambda v: v['diagnosticsFile'].update(file='../outside.json'),
+    )
+    for change in mutations:
+        changed = copy.deepcopy(review); change(changed)
+        reject({**original, names[0]: canonical(changed) + b'\n'})
+    reject({**original, names[0]: original[names[0]][:1] + b'"kind":"duplicate",' + original[names[0]][1:]})
+    # Actual write/read round-trip is canonical and byte-for-byte repeatable.
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp); write_source_read_review({k: v for k, v in review.items() if k != 'diagnosticsFile'}, out)
+        if verify_source_read_files(out) != expected or any((out / name).read_bytes() != data for name, data in original.items()):
+            raise AssertionError('Source-read artifact canonical round-trip differs')
+    return {**expected, 'actualArtifactNegativeVectors': vectors, 'canonicalRoundTrip': True}
 
 
 def main():
@@ -233,6 +361,8 @@ def main():
     compile_.add_argument('--output', type=Path, required=True)
     verify = sub.add_parser('verify')
     verify.add_argument('directory', type=Path)
+    tests = sub.add_parser('test-artifacts')
+    tests.add_argument('directory', type=Path)
     args = parser.parse_args()
     if args.command == 'compile':
         from analyze_toyota import checked_infos
@@ -246,14 +376,16 @@ def main():
             matching = [info for info in checked_infos(archive) if PurePosixPath(info.filename).name == 'libTOYOTA_CALC.so']
             if len(matching) != 1: raise ValueError('Missing/ambiguous original CALC evidence')
             evidence = json.loads(data_report(archive.read(matching[0]), 'libTOYOTA_CALC.so', list(OBJECTS)))
-        result = write_source_read_review(compile_mandatory_source_reads(sources, {k: v[0] for k, v in texts.items()}, calc_evidence=evidence), args.output)
+        libraries = {k: v[0] for k, v in texts.items()}
+        first = compile_mandatory_source_reads(sources, libraries, calc_evidence=evidence)
+        second = compile_mandatory_source_reads(sources, libraries, calc_evidence=evidence)
+        if canonical(first) != canonical(second): raise ValueError('Nondeterministic mandatory source-read regeneration')
+        result = {**write_source_read_review(first, args.output), 'deterministicRegeneration': True}
+        verify_source_read_files(args.output)
+    elif args.command == 'test-artifacts':
+        result = check_source_read_artifacts(args.directory)
     else:
-        review = json.loads((args.directory / 'mandatory-ecmect-source-reads.json').read_bytes())
-        result = verify_source_read_review(review)
-        pin = review['diagnosticsFile']; raw = (args.directory / 'mandatory-ecmect-diagnostics.json').read_bytes()
-        if (pin.get('file') != 'mandatory-ecmect-diagnostics.json' or pin.get('bytes') != len(raw) or
-                pin.get('sha256') != hashlib.sha256(raw).hexdigest() or raw != canonical(review['diagnostics']) + b'\n'):
-            raise ValueError('Compiled source-diagnostics file was truncated/corrupted or differs from its exact review')
+        result = verify_source_read_files(args.directory)
     print(json.dumps(result, sort_keys=True))
 
 

@@ -281,14 +281,80 @@ status schemas display raw metadata. Saved/imported results grant no authority.
 Latest local commands/results:
 
 - `PYTHONPATH=.local/python:tools/thinkdiag python -m unittest discover -s tools/thinkdiag -p 'test_*.py' -q`
-  (rerun before commit; all tests must pass).
+  **226 tests PASS** (0.359 s on the final pre-commit run).
 - Complete decoded source-read compilation and
   `python tools/thinkdiag/toyota_runtime_compile.py verify .local/toyota-complete/vehicle-packs`:
   **30 live reads / 1,414 labels / four source queries / one ID / zero production definitions**.
-- Standalone Kotlin 2.2.21 / JDK 17 harness: **101 scenario groups PASS**, including
+- Standalone Kotlin 2.2.21 / JDK 17 harness: **102 scenario groups PASS**, including
   actual generated definitions, queued-intent expiry/reset/cancellation, source
   lease non-escalation and saved metadata. This is not Gradle/Compose/Android
   acceptance; the project uses its own Kotlin/Android toolchain in CI.
 - Protected `ReadOnlyPolicyTest`, `WritePolicyTest` and `ClearConfirmationTest`
   remain unchanged. Android 24 still tests index/range/cache delivery only, not
   nonempty executable Toyota live/DTC screens. No physical validation is claimed.
+
+
+## Extended native lifecycle and artifact regressions (still not enabled coverage)
+
+The complete decoded-input seven-library comparison (all **1,410** manifest/hash-checked
+BIN arrays) passed in **363.546 s**, including all the new negative-entry domains below
+and the existing reviewed domains. This local run did not read `TOYOTA.zip`; it must not
+be called original-ZIP verification. Inspection CI independently loads the original archive
+and verifies its owner-attested SHA.
+
+New bounded source control-flow ports and independent native comparisons add:
+
+- **2,272** fast-entry vectors over all **284** transport-1/5 source entries. They preserve
+  EndCombination's signed-16 result, the alternate Toyota sender on negative combined
+  returns only, the second pulse attempt and 500-microsecond native delay. A negative ECU
+  service produces `FFFE`, not the `FFFF` that selects ISO fallback. All **17** source
+  transport-5 entries select that same-entry fallback on exhausted adapter failures.
+- **2,272** direct ISO-consumer vectors over those same source entry contexts. These test
+  zero-low-word handshake success, two attempts per exact pin pair, unchanged address byte,
+  exact initial-template lookup, and failure on a negative initial sender result. Direct
+  ISO-consumer tests on transport-1 contexts are component vectors, **not** a claim that
+  native transport 1 dispatches an ISO fallback. The high-level slow-init sender remains an
+  explicit fake boundary; it does not establish a MIC3313 electrical implementation.
+- **1,032** exact ECMECT kind-5/template-165 read-reentry vectors, including **576**
+  exit/enter/restore/read-once sequences. These inspect context `+174d1 = FF` at Exit/Enter,
+  restoration before the identical read, signed-negative/`7FFF` trigger conditions, and
+  native transport 1/2/5 restriction. Native ignores lifecycle failure; the app must not
+  treat that behavior as proof or replay `105F`. The production Session callback remains
+  unconnected pending the exact adapter lifecycle mapping.
+
+Android's custom fast initializer now always requires **one complete selected-ECU C1
+reply with its two keyword bytes**, even outside bring-up. Plain adapter `OK`, empty
+native-style success, short/long/partial replies, wrong ECU, duplicate replies and mixed
+positive/negative/error evidence do not initialize a link. The standalone Kotlin run
+passed **102 scenario groups**, including the actual compiled read definitions and this
+new rejection matrix. This is simulation, not a physical vehicle validation.
+
+`mandatory-read-artifacts-v1.json` is a **compiler-output regression pin**, not a source
+attestation or executable-system approval. The compile CLI recompiles the exact source
+twice and compares canonical bytes. The source-read review now includes the previously
+omitted `EU/Toyota_bin_1B.BIN` input hash, all four canonical decoded text dictionary hashes
+(explicitly not encrypted GAG hashes), and the CALC evidence library hash. The generated
+files are independently checked against the reviewed canonical hash and round-tripped.
+`test-artifacts` runs **48** real-output negative vectors: corrupt/truncated/missing files,
+noncanonical/duplicate JSON, changed function/full-selector/ECU/region, 10416-to-10400
+substitution, pin/pulse changes, formula/unit/offset/applicability changes, changed labels,
+partial queries, changed ID, forged counts/input hashes and path traversal. Both prepare
+and inspection workflows run these tests, including on cache hits; no sidecar enters the APK.
+
+Inspected evidence for the preceding `09e59bf` push (not an acceptance claim for this patch):
+
+- [Inspection run 44708729866](https://github.com/sarapudheen-ops/puthus/actions/runs/44708729866): success.
+- [Android run 44708730041](https://github.com/sarapudheen-ops/puthus/actions/runs/44708730041):
+  assemble/lint/tests success; job `136194736850` reports **579 tests, 0 failures, 0 errors,
+  0 skipped in 70 classes**. This includes actual Android/Compose compilation of the session UI.
+- Android 24 job `136204801894` and evidence check `136205546508`: **2 tests PASS, 2.254 s**,
+  actual APK installation, index/range/private-cache/offline delivery only. This is **not**
+  manual-selection-to-executable-live/DTC acceptance. Disposable emulator CA augmentation
+  remains documented; the APK has no TLS/hostname bypass or test CA.
+
+**Remaining acceptance failures are unchanged:** zero enabled production systems; missing
+native-to-MIC3313 timing/pin/line equivalence and operational retry/reentry/ISO integration;
+mandatory nonempty live/DTC/ECU selection on Android 24; complete remaining live language,
+identity/transport/workflow classes, coding/actuators/special functions and whole-source
+coverage. No new pull request or merge is claimed here, and source completeness is not
+being blamed for these implementation gaps.

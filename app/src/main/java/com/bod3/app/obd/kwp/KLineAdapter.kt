@@ -54,12 +54,19 @@ object KLineAdapter {
         } else 15000)
         // A rejected custom physical init must never fall back to functional address 33.
         if (!response.isSuccess) throw ObdRequestException(response.error ?: ElmError.BUS_INIT_ERROR, response)
-        if ((!response.isOk || strictBringUp) && init != "ATSI") {
+        if (init != "ATSI") {
             val rx = requireNotNull(Hex.parse(target.responseHeader.orEmpty()))
             val iso = target.link?.protocol == ObdProtocol.ISO_9141_2
             val payloads = response.lines.mapNotNull { KLineFrames.decode(it, rx, iso)?.payload }
-            require(if (strictBringUp) payloads.size == 1 && payloads.size == response.lines.size && payloads.single().firstOrNull() == 0xC1
-                else payloads.any { it.firstOrNull() == 0xC1 }) { "No complete valid startCommunication reply from the selected ECU" }
+            // An adapter OK is configuration acknowledgement, never an ECU
+            // startCommunication reply. Native code's zero/empty-success path
+            // cannot establish proof here, including outside bring-up. Require
+            // exactly one complete addressed C1 + two keyword bytes; no mixed
+            // valid/invalid, duplicate, partial, wrong-ECU or checksum evidence.
+            require(payloads.size == 1 && payloads.size == response.lines.size &&
+                payloads.single().size == 3 && payloads.single()[0] == 0xC1) {
+                "No complete valid startCommunication reply from the selected ECU"
+            }
         }
     }
 }

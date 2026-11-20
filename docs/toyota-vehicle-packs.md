@@ -70,8 +70,13 @@ short-packet contract vectors, with every adapter API explicitly faked. A separa
 projection additionally matches real linked FILE → SYSP → COMM execution for 284 first-positive-entry,
 568 keepalive-on/off and 284 exit traces. It preserves all six exact keepalive request variants and
 source-bound exit packets instead of substituting generic testerPresent/stop commands. This does not
-establish ST/VT timing/pin mapping, failed-entry/retry/ISO-fallback semantics or a working diagnostic
-link and is not an executable vehicle pack. All 179,770 distinct per-function
+establish ST/VT timing/pin mapping or a working diagnostic link and is not an executable vehicle pack.
+The extended suite additionally pins 2,272 fast-entry negative/zero/retry/ISO-dispatch vectors,
+2,272 direct ISO-consumer component vectors, and 1,032 failed-read reentry vectors. The latter
+observe temporary FF context, Exit/Enter, restoration and one identical retry; the slow sender
+and adapter remain explicit fake boundaries. Native zero-result success and ignored lifecycle
+failures are not accepted as initialization/vehicle proof. These source control-flow comparisons
+are not the missing MIC3313 lifecycle integration. All 179,770 distinct per-function
 mapping keys have exact source labels; repeated printed codes are never suffix-matched. English pairs
 are re-extracted from the pinned archive, with original GAG index/text offset provenance. The reviewed
 counts/library/result hashes live in `tools/thinkdiag/schema/native-oracle-v1.json`.
@@ -188,3 +193,14 @@ resolved item from this source may be source-verified/default-enabled, but verif
 those engine safeguards or provides physical-test evidence. The app never executes vendor code or
 EXPRESS. Owner-authorized native replay inputs are confined to ignored research evidence for offline
 semantic comparison, not Android assets, runtime downloads or normal imported packs.
+
+## Exact compiled read artifacts (not vehicle-system data)
+
+The mandatory ECMECT source-read sidecars are separate from the range-container executable
+counts. They contain 30 live reads, 1,414 exact fault labels, four ordered source queries and
+one 0904 calibration-ID definition, with `productionExecutableDefinitions: 0`. The compiler
+regenerates twice and verifies a reviewed output pin. `test-artifacts` checks canonical round-trip
+and 48 corrupt/truncated/out-of-scope cases on the actual generated files, also for caches.
+The source review records all input hashes, including the detail table and canonical decoded
+English dictionaries. No raw EXPRESS or vendor library executes on Android. A passing artifact
+test cannot enable a system, grant writes, or turn calibration IDs into unique ECU serial proof.

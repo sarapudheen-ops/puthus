@@ -93,6 +93,23 @@
     "resultsSha256": "90f4814bfbf9a93cfb96d79ca16e96ca20dfec25da62add273fdb15c336b0599",
     "vectors": 128
   },
+  "dtcReadReentryComparison": {
+    "fakeBoundaries": [
+      "Exact source frame copied into one declared native slot; independent COMM oracle covers lookup",
+      "Synthetic sender results only; kind 5 skips the fault decoder exactly as in the source caller",
+      "Exit/Enter callbacks inspect temporary FF context and return scripted 0 or -1; no physical init or session control"
+    ],
+    "functionKey": 61,
+    "hardening": "App must reject malformed/ambiguous replies and require successful exact reinitialization; native lifecycle return values are ignored",
+    "librarySha256": "686dc71e111d2a82205df75ddfa9d2a873ae4d7eea5de7aef81abcde295c39b7",
+    "nativeInstructionsExecuted": true,
+    "reentries": 576,
+    "request": "0a",
+    "resultsSha256": "2b14501fc9ce793cd0cbe0ea95b4da0aeb0b053d2c95f60da115cce1657fbfe8",
+    "sourceSystem": "SYSLIST_EU.BIN@0009d8f2",
+    "template": 165,
+    "vectors": 1032
+  },
   "dtcSetupComparison": {
     "fakeBoundaries": [
       "one explicitly populated communication frame slot; byte-array replies, no I/O"
@@ -289,6 +306,39 @@
       "faultsQueries": 562
     }
   },
+  "isoEntryComparison": {
+    "consumerCallsSha256": "56ec6d8c99904be5a923c94c0671f5ae5656095fc8e542203fc0432cdbe9a42f",
+    "fakeBoundaries": [
+      "Real FILE source-entry lookup and SYSP -> COMM configuration/frame lookup; adapter calls are trace-only fakes",
+      "SendCmdAndGetReceive is an observed source ABI boundary returning explicit address-init and initial-frame results",
+      "No live slow initialization, auto-selected address, serial clock, adapter timing or electrical behavior"
+    ],
+    "hardening": "A zero native initial-frame return is not a positive C1 reply and grants no runtime proof",
+    "inMemoryReadCalls": 7198,
+    "librarySha256": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432",
+    "linkedLibrariesSha256": {
+      "libTOYOTA_COMM.so": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+      "libTOYOTA_FILE.so": "dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0",
+      "libTOYOTA_SYSP.so": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432"
+    },
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "COMM address-init sender and slow electrical handshake",
+      "MIC3313 API equivalence and physical validation"
+    ],
+    "sourceBindingsSha256": "91ead1d7cc8e7ad1062b7b6273473497f6280ed4846bad616c6ed53aaccadff1",
+    "sourceEntries": 284,
+    "vectors": {
+      "addressFailuresExhausted": 284,
+      "addressFirstZero": 284,
+      "addressLowWordZero": 284,
+      "addressNonzeroExhausted": 284,
+      "addressRetryNegative": 284,
+      "addressRetryPositive": 284,
+      "initialNegative": 284,
+      "initialZeroNotReplyProof": 284
+    }
+  },
   "kind": "offline-native-differential",
   "kwpLifecycleComparison": {
     "consumerCallsSha256": "d14837717846cacb7bcdb476a581e3cd5d477c8fcd6758010466ea32f2704736",
@@ -335,6 +385,48 @@
       "fastPositiveEntry": 284,
       "keepaliveOff": 284,
       "keepaliveOn": 284
+    }
+  },
+  "kwpRetryComparison": {
+    "consumerCallsSha256": "c6ca612e8f42ff82f712c38ce7f0a865125da5138ebc58c74fa2124af9ea88b5",
+    "fakeBoundaries": [
+      "FILE fseekEx/freadEx over exact supplied decoded arrays; no source decryption or host I/O",
+      "Real FILE -> SYSP -> COMM linkage; every adapter API is an explicit trace-only fake",
+      "EndCombination returns scripted negative/zero/positive results with synthetic C1/7F framed replies",
+      "ISOEnterMode hook returns 1234 only to prove dispatch selection, NOT slow-init behavior",
+      "No-wait usleep shim records the exact source 500-microsecond argument"
+    ],
+    "hardening": "Native zero-result success is not positive initialization evidence; app requires exact C1 framing/checksum/ECU",
+    "inMemoryReadCalls": 7198,
+    "librarySha256": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432",
+    "linkedLibrariesSha256": {
+      "libTOYOTA_COMM.so": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+      "libTOYOTA_FILE.so": "dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0",
+      "libTOYOTA_SYSP.so": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432"
+    },
+    "nativeInstructionsExecuted": true,
+    "nativeStatusCounts": {
+      "-1": 284,
+      "-2": 284,
+      "0": 1704
+    },
+    "nativeZeroResultsNotInitializationProof": 284,
+    "notCovered": [
+      "Actual ISO fallback electrical/init sequence",
+      "MIC3313 API equivalence and physical validation"
+    ],
+    "sourceBindingsSha256": "91ead1d7cc8e7ad1062b7b6273473497f6280ed4846bad616c6ed53aaccadff1",
+    "sourceEntries": 284,
+    "transport5IsoDispatches": 17,
+    "vectors": {
+      "adapterFailuresExhausted": 284,
+      "alternateFailureThenPrimaryPositive": 284,
+      "alternatePositive": 284,
+      "firstPositive": 284,
+      "nativeZeroIsNotPositiveProof": 284,
+      "negativeServiceThenPositive": 284,
+      "negativeServiceTwice": 284,
+      "zeroThenPositive": 284
     }
   },
   "kwpTransportComparison": {

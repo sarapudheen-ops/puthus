@@ -26,11 +26,12 @@ from source_verification import verify_archive
 from toyota_entries import EntryIndex
 from toyota_frames import SourceFrames
 from toyota_lifecycle import SYSP_SHA256, selected_fast_kwp_lifecycle
+from toyota_entry_runtime import CombinedReply, fast_entry_trace, iso_entry_trace, signed16
 from toyota_transport import COMM_SHA256, ConsumerCall
 from toyota_faults import NativeFaultLayout, NativeP5FaultLayout, state_ids
 from toyota_functions import FunctionBlocks
 from toyota_native_workflow import (compare_setup_predicates, compare_ecmect_query_selection,
-                                    compare_ecmect_detail_loading, compare_support_predicates)
+                                    compare_ecmect_detail_loading, compare_support_predicates, compare_dtc_read_reentry)
 from toyota_native_identity import compare_ecu_programs, compare_calibration_14
 from vehicle_bundle import SOURCE_SHA256, canonical
 
@@ -143,14 +144,16 @@ def compare_entries(libraries, source):
             'fakeBoundaries': ['fseekEx/freadEx over decoded byte arrays; not libDEVICEID file decryption']}
 
 
-def compare_fast_kwp_lifecycle(libraries, sources):
+def compare_fast_kwp_lifecycle(libraries, sources, *, failure_paths=False, iso_paths=False):
     """Real FILE -> SYSP -> COMM linkage; only adapter/file/libc edges are fakes.
 
     The supplied frame-lookup, configuration, packet, keepalive and exit
-    consumers execute together. This removes the earlier Python frame/packing
-    substitutions in the first-ECU SYSP experiment, but still proves only the
-    first-success fast-entry branch with a synthetic positive adapter reply.
+    consumers execute together. Positive, fast-retry/ISO-dispatch, and ISO-entry
+    control-flow domains are separate calls with separately pinned reports.
+    The ISO domain explicitly stubs the high-level sender, not its electrical
+    handshake. None of these adapter fakes is MIC3313 equivalence or ECU proof.
     """
+    if failure_paths and iso_paths: raise ValueError('Choose one explicit lifecycle domain')
     file, comm, sysp = 'libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_SYSP.so'
     identities = {file: 'dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0',
                   comm: COMM_SHA256, sysp: SYSP_SHA256}
@@ -175,6 +178,9 @@ def compare_fast_kwp_lifecycle(libraries, sources):
         native.link_function_pointer(sysp, function, comm, function)
 
     trace = []
+    adapter_script = None
+    script_at = 0
+    pending_combined_result = None
     for name in (comm, sysp):
         for function, count in (
                 ('BeginCombination', 0), ('EnableLLine', 1), ('SelectPIN', 5),
@@ -186,8 +192,11 @@ def compare_fast_kwp_lifecycle(libraries, sources):
                 return 1
             native.bind(function, callback, indirect=True, library=name)
         def end(*_):
+            nonlocal pending_combined_result
             trace.append(ConsumerCall('EndCombination', ()))
-            return 9  # Explicit synthetic adapter positive, not a device result.
+            value = pending_combined_result
+            pending_combined_result = None
+            return 9 if value is None else value  # Explicit fake adapter return, never hardware proof.
         native.bind('EndCombination', end, indirect=True, library=name)
     def baud(*_):
         trace.append(ConsumerCall('SetEcuBaudRate', (native.f32(),)))
@@ -197,18 +206,39 @@ def compare_fast_kwp_lifecycle(libraries, sources):
         return 1
     native.bind('SetEcuBaudRate', baud, indirect=True, library=comm)
     native.bind('SetEcuCommTimeInterval', timing, indirect=True, library=comm)
-    def exchange(out, capacity, a, b, tx, *_):
+    def synthetic_reply(out, tx):
+        nonlocal script_at, pending_combined_result
         header = native.read(tx, 1)[0]
         size = (header & 63) + 4
         if header & 0xc0 != 0x80 or not 5 <= size <= 50:
             raise AssertionError('Unexpected native lifecycle packet class/size')
         wire = native.read(tx, size)
-        trace.append(ConsumerCall('CommSubFunc_00000003', (capacity, a, b, wire.hex())))
-        reply = bytes([0x83, wire[2], wire[1], 0xc1, 0xe9, 0x8f])
+        if adapter_script is None:
+            value = CombinedReply(9, 0xc1)
+        else:
+            if script_at >= len(adapter_script): raise AssertionError('Native consumed an undeclared adapter reply')
+            value = adapter_script[script_at]; script_at += 1
+        service = 0xc1 if value.service is None else value.service
+        reply = bytes([0x83, wire[2], wire[1], service, 0xe9, 0x8f])
         reply += bytes([sum(reply) & 255])
         native.write(out, bytes([1, len(reply)]) + reply)
-        return len(reply) + 2
+        pending_combined_result = value.result
+        return wire
+    def exchange(out, capacity, a, b, tx, *_):
+        wire = synthetic_reply(out, tx)
+        trace.append(ConsumerCall('CommSubFunc_00000003', (capacity, a, b, wire.hex())))
+        return 9  # Queued send return is NOT the EndCombination result.
     native.bind('CommSubFunc_00000003', exchange, indirect=True, library=sysp)
+    if failure_paths:
+        def alternate(wait, tx, out, capacity, limit, *_):
+            wire = synthetic_reply(out, tx)
+            trace.append(ConsumerCall('ToyotaKwpSendDataToEcuGetMultiFrameAnswer', (wait, wire.hex(), capacity, limit)))
+            return 9
+        native.bind('ToyotaKwpSendDataToEcuGetMultiFrameAnswer', alternate, indirect=True, library=sysp)
+        def iso_fallback(function, _context, *_):
+            trace.append(ConsumerCall('ISOEnterModeBoundary', (function,)))
+            return 0x1234  # Explicit dispatch-only sentinel, not an ISO handshake.
+        native.bind('ISOEnterMode', iso_fallback, library=sysp)
     def link_keep(tx, size, a, b, *_):
         if not 0 <= size <= 20: raise AssertionError('Unbounded native keepalive packet')
         trace.append(ConsumerCall('SetLinkKeep', (native.read(tx, size).hex(), size, a, b)))
@@ -227,8 +257,23 @@ def compare_fast_kwp_lifecycle(libraries, sources):
     native.bind('KwpSendDataToEcuGetAnswer', exit_exchange, indirect=True, library=comm)
     native.bind('usleep', lambda n, *_: trace.append(ConsumerCall('usleep', (n,))) or 0)
 
+    iso_script = (); iso_at = 0; iso_initial_result = 1
+    if iso_paths:
+        def iso_send(out, capacity, runtime, request, size, flags, extra, *_):
+            nonlocal iso_at
+            if runtime != context or extra != 0: raise AssertionError('ISO sender crossed declared source context')
+            if flags == 0x55:
+                if out or capacity or size or request != context + 0x107e4 or iso_at >= len(iso_script):
+                    raise AssertionError('ISO sender changed the source address-init ABI')
+                trace.append(ConsumerCall('SendCmdAndGetReceiveAddressInit', (native.read(request, 1)[0], capacity, size, flags, extra)))
+                value = iso_script[iso_at]; iso_at += 1
+                return value
+            trace.append(ConsumerCall('SendCmdAndGetReceiveInitial', (capacity, native.read(request, size).hex(), flags, extra)))
+            return iso_initial_result
+        native.bind('SendCmdAndGetReceive', iso_send, indirect=True, library=sysp)
     result_digest = hashlib.sha256(); binding_digest = hashlib.sha256()
     counts = Counter(); keepalive_requests = Counter(); exit_requests = Counter(); pulses = Counter()
+    native_status_counts = Counter(); fallback_count = 0; zero_not_positive = 0
     def compare(stage, result, expected, identity):
         actual = canonical([call.report() for call in trace])
         wanted = canonical([call.report() for call in expected])
@@ -253,6 +298,52 @@ def compare_fast_kwp_lifecycle(libraries, sources):
                 native.write(context, struct.pack('<I', function))
                 native.write(global_state + 0x9e, b'\x10')
                 binding_digest.update(canonical(lifecycle.report()) + b'\n')
+                if iso_paths:
+                    cases = {'addressFirstZero': ((0,), 1), 'addressLowWordZero': ((0x10000,), 1),
+                        'addressRetryNegative': ((-1, 0), 1), 'addressRetryPositive': ((1, 0), 1),
+                        'addressFailuresExhausted': ((-1, -1), 1), 'addressNonzeroExhausted': ((1, 0x7fff), 1),
+                        'initialNegative': ((0,), -1), 'initialZeroNotReplyProof': ((0,), 0)}
+                    for stage, (words, initial_status) in cases.items():
+                        iso_script = words; iso_at = 0; iso_initial_result = initial_status
+                        native.write(context + 0x10836, b'\0' * (0x17400 - 0x10836)); trace.clear()
+                        wanted = iso_entry_trace(lifecycle, words, initial_result=initial_status)
+                        actual = signed16(native.call(sysp, 'ISOEnterMode', function, context))
+                        encoded = canonical([c.report() for c in trace])
+                        if actual != wanted.native_status or tuple(trace) != wanted.calls or iso_at != wanted.consumed_handshakes:
+                            raise AssertionError(f'Native ISO-entry control flow differs for {identity}/{stage}: '
+                                f'{actual}/{wanted.native_status}, {encoded!r}, wanted={wanted.calls!r}')
+                        result_digest.update(identity.encode() + b':' + stage.encode() + b':' + encoded + struct.pack('<i', actual) + b'\n')
+                        counts[stage] += 1
+                    continue
+                if failure_paths:
+                    cases = {
+                        'firstPositive': (CombinedReply(9, 0xc1),),
+                        'zeroThenPositive': (CombinedReply(0), CombinedReply(9, 0xc1)),
+                        'negativeServiceThenPositive': (CombinedReply(9, 0x7f), CombinedReply(9, 0xc1)),
+                        'negativeServiceTwice': (CombinedReply(9, 0x7f), CombinedReply(9, 0x7f)),
+                        'alternatePositive': (CombinedReply(-1), CombinedReply(9, 0xc1)),
+                        'alternateFailureThenPrimaryPositive': (CombinedReply(-1), CombinedReply(-1), CombinedReply(9, 0xc1)),
+                        'adapterFailuresExhausted': (CombinedReply(-1),) * 4,
+                        'nativeZeroIsNotPositiveProof': (CombinedReply(0), CombinedReply(0)),
+                    }
+                    for stage, values in cases.items():
+                        adapter_script = values; script_at = 0; pending_combined_result = None
+                        native.write(context + 0x10836, b'\0' * (0x17400 - 0x10836))
+                        trace.clear()
+                        wanted = fast_entry_trace(lifecycle, values)
+                        fallback = wanted.wants_iso_fallback(entry.transport)
+                        expected = (*wanted.calls, *((ConsumerCall('ISOEnterModeBoundary', (function,)),) if fallback else ()))
+                        actual = signed16(native.call(sysp, 'SystemEnterPart', function, context))
+                        expected_status = 0x1234 if fallback else wanted.native_status
+                        encoded = canonical([call.report() for call in trace])
+                        if actual != expected_status or tuple(trace) != expected or script_at != wanted.consumed_replies:
+                            raise AssertionError(f'Native fast-entry retry/dispatch differs for {identity}/{stage}: status={actual}/{expected_status}, '
+                                f'replies={script_at}/{wanted.consumed_replies}, calls={encoded!r}, wanted={expected!r}')
+                        result_digest.update(identity.encode() + b':' + stage.encode() + b':' + encoded + struct.pack('<i', actual) + b'\n')
+                        counts[stage] += 1; native_status_counts[str(wanted.native_status)] += 1
+                        fallback_count += int(fallback)
+                        zero_not_positive += int(wanted.native_status == 0 and not wanted.has_positive_reply)
+                    continue
                 trace.clear()
                 compare('fastPositiveEntry', native.call(sysp, 'SystemEnterPart', function, context),
                     lifecycle.fast_success_calls(connector=16, pin_pair_index=0), identity)
@@ -269,6 +360,32 @@ def compare_fast_kwp_lifecycle(libraries, sources):
                 keepalive_requests[lifecycle.keepalive.request.hex()] += 1
                 exit_requests[lifecycle.exit.request.hex()] += 1
                 pulses[lifecycle.entry.timing[3:].hex()] += 1
+    if iso_paths:
+        if not counts: raise ValueError('No source KWP/ISO entry was compared')
+        return {'nativeInstructionsExecuted': True, 'librarySha256': SYSP_SHA256,
+            'linkedLibrariesSha256': identities, 'sourceEntries': counts['addressFirstZero'],
+            'vectors': dict(counts), 'consumerCallsSha256': result_digest.hexdigest(),
+            'sourceBindingsSha256': binding_digest.hexdigest(), 'inMemoryReadCalls': files.reads,
+            'fakeBoundaries': ['Real FILE source-entry lookup and SYSP -> COMM configuration/frame lookup; adapter calls are trace-only fakes',
+                'SendCmdAndGetReceive is an observed source ABI boundary returning explicit address-init and initial-frame results',
+                'No live slow initialization, auto-selected address, serial clock, adapter timing or electrical behavior'],
+            'hardening': 'A zero native initial-frame return is not a positive C1 reply and grants no runtime proof',
+            'notCovered': ['COMM address-init sender and slow electrical handshake', 'MIC3313 API equivalence and physical validation']}
+    if failure_paths:
+        if not counts: raise ValueError('No source fast-KWP retry/dispatch lifecycle was compared')
+        return {'nativeInstructionsExecuted': True, 'librarySha256': SYSP_SHA256,
+            'linkedLibrariesSha256': identities, 'sourceEntries': counts['firstPositive'],
+            'vectors': dict(counts), 'consumerCallsSha256': result_digest.hexdigest(),
+            'sourceBindingsSha256': binding_digest.hexdigest(), 'inMemoryReadCalls': files.reads,
+            'nativeStatusCounts': dict(sorted(native_status_counts.items())),
+            'transport5IsoDispatches': fallback_count, 'nativeZeroResultsNotInitializationProof': zero_not_positive,
+            'fakeBoundaries': ['FILE fseekEx/freadEx over exact supplied decoded arrays; no source decryption or host I/O',
+                'Real FILE -> SYSP -> COMM linkage; every adapter API is an explicit trace-only fake',
+                'EndCombination returns scripted negative/zero/positive results with synthetic C1/7F framed replies',
+                'ISOEnterMode hook returns 1234 only to prove dispatch selection, NOT slow-init behavior',
+                'No-wait usleep shim records the exact source 500-microsecond argument'],
+            'hardening': 'Native zero-result success is not positive initialization evidence; app requires exact C1 framing/checksum/ECU',
+            'notCovered': ['Actual ISO fallback electrical/init sequence', 'MIC3313 API equivalence and physical validation']}
     if not counts['fastPositiveEntry']:
         raise ValueError('No source fast-KWP lifecycle was compared')
     return {'nativeInstructionsExecuted': True, 'librarySha256': SYSP_SHA256,
@@ -741,6 +858,8 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
         'entryComparison': compare_entries(libraries, sources['SYSTEMENTER.BIN']),
         'kwpTransportComparison': compare_fast_kwp(libraries, sources['SYSTEMENTER.BIN']),
         'kwpLifecycleComparison': compare_fast_kwp_lifecycle(libraries, sources),
+        'kwpRetryComparison': compare_fast_kwp_lifecycle(libraries, sources, failure_paths=True),
+        'isoEntryComparison': compare_fast_kwp_lifecycle(libraries, sources, iso_paths=True),
         'frameComparison': compare_frames(libraries, sources, 'EU', 61,
             (1, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 102, 103, 104, 127, 160)),
         'functionRoundTrips': counts,
@@ -749,6 +868,7 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
         'faultDecoderComparison': compare_fault_decoder(libraries),
         'dtcSetupComparison': compare_setup_predicates(libraries),
         'dtcWorkflowComparison': compare_ecmect_query_selection(libraries, sources),
+        'dtcReadReentryComparison': compare_dtc_read_reentry(libraries, sources),
         'detailLoadingComparison': compare_ecmect_detail_loading(libraries, sources),
         'supportPredicateComparison': compare_support_predicates(libraries),
         'ecuProgramComparison': compare_ecu_programs(libraries, sources, MemoryFiles),
@@ -804,7 +924,16 @@ def summary(result):
         f"{result['kwpLifecycleComparison']['vectors']['fastPositiveEntry']:,} first-positive-entry, "
         f"{result['kwpLifecycleComparison']['vectors']['keepaliveOn'] + result['kwpLifecycleComparison']['vectors']['keepaliveOff']:,} keepalive-on/off and "
         f"{result['kwpLifecycleComparison']['vectors']['exit']:,} exit traces. Real native frame lookup, configuration and packing; "
-        'synthetic adapter/C1 reply only. Negative/retry/ISO fallback and physical behavior remain unresolved.\n'
+        'synthetic adapter/C1 reply only. The following comparisons cover source failure control flow, not adapter/physical integration.\n'
+        f"- Linked fast-entry retry/ISO dispatch: {sum(result['kwpRetryComparison']['vectors'].values()):,} vectors, "
+        f"{result['kwpRetryComparison']['transport5IsoDispatches']} exact transport-5 ISO dispatches; adapter results are scripted. "
+        f"{result['kwpRetryComparison']['nativeZeroResultsNotInitializationProof']} native zero successes do NOT establish init proof.\n"
+        f"- ISO entry control flow: {sum(result['isoEntryComparison']['vectors'].values()):,} vectors over the same "
+        f"{result['isoEntryComparison']['sourceEntries']} source entries. Exact source address/pin/template selection; "
+        'the high-level sender/slow electrical handshake is an explicit fake boundary, not adapter proof.\n'
+        f"- DTCF failed-read re-entry: {result['dtcReadReentryComparison']['vectors']:,} vectors including "
+        f"{result['dtcReadReentryComparison']['reentries']:,} exit/enter/restore/same-read-once sequences. "
+        'Lifecycle result words are observed fakes; native ignores failure, while the portable app must reject failed reinitialization.\n'
         f"- DTCF: {result['faultLabelComparison']['exactLabelVectors']:,} exact TCODE pairs, "
         f"{result['faultLabelComparison']['fallbackVectors']:,} source numeric-display vectors, "
         f"{result['faultLabelComparison']['mergeVectors']:,} exact-key byte-merge calls. "
