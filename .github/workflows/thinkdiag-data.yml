@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   inspect:
-    name: Inspect Toyota archive (no vendor code execution)
+    name: Inspect owner-verified Toyota specification
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -27,6 +27,8 @@ jobs:
         run: |
           mkdir -p .local/thinkdiag
           gh release download assets-v1 --pattern TOYOTA.zip --dir .local/thinkdiag
+      - name: Verify the complete archive against the owner's attestation
+        run: python3 tools/thinkdiag/source_verification.py .local/thinkdiag/TOYOTA.zip
       - name: Install offline analysis dependencies
         run: python3 -m pip install -r tools/thinkdiag/requirements.txt
       - name: Test inspection tools

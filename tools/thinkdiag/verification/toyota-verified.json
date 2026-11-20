@@ -1,0 +1,27 @@
+{
+  "format": "bod3-source-verification",
+  "formatVersion": 1,
+  "make": "Toyota",
+  "source": {
+    "repository": "sarapudheen-ops/puthus",
+    "release": "assets-v1",
+    "asset": "TOYOTA.zip",
+    "bytes": 71755650,
+    "sha256": "26c77a39070e751cb58a86db970e8f14991e21611eb4fb0dfffa2cd2cddfe05a"
+  },
+  "verification": {
+    "verified": true,
+    "assertedBy": "repository-owner",
+    "scope": "entire-archive-including-nested-members",
+    "authoritativeSpecification": true,
+    "completeSource": true,
+    "sandboxInspectionDecodingAndExecutionAuthorized": true
+  },
+  "runtimeAuthority": {
+    "automaticVehicleSelection": false,
+    "crossSystemFallback": false,
+    "physicalEcuVerification": false,
+    "writeAuthorization": false
+  },
+  "note": "The owner confirms the complete archive is legitimate, complete, verified and authoritative, and authorizes inspection, decoding and execution in the CI sandbox as needed. This attestation covers every archive and nested member, not only reviewed sample vehicles. Source verification does not assert that conversion is complete, grant writes, select a vehicle, or replace fresh same-ECU bring-up evidence."
+}
