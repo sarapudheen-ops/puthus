@@ -4,10 +4,18 @@ import com.bod3.app.obd.kwp.DiagnosticDialect
 import com.bod3.app.obd.kwp.KLineAdapter
 import com.bod3.app.obd.kwp.KLineFrames
 import com.bod3.app.obd.kwp.KwpServices
+import com.bod3.app.obd.kwp.SourceKwpApi
+import com.bod3.app.obd.kwp.SourceKwpCall
+import com.bod3.app.obd.kwp.SourceKwpIo
+import com.bod3.app.obd.kwp.SourceKwpLifecycle
+import com.bod3.app.obd.kwp.SourceKwpPlan
+import com.bod3.app.obd.kwp.SourceKwpInitializationException
 import com.bod3.app.recipe.Hex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import java.io.IOException
@@ -154,6 +162,124 @@ class Session(
         companion object Key : CoroutineContext.Key<SourceReadSession>
     }
 
+    private class SourceKwpOperation(
+        val session: Session, val target: EcuTarget.Physical, val plan: SourceKwpPlan,
+        val io: SourceKwpIo, val lifecycle: SourceKwpLifecycle, val contextByte: Int,
+    ) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<SourceKwpOperation>
+    }
+    private var activeSourceKwp: SourceKwpOperation? = null
+    private val sourceKwpOnlyAddresses = mutableSetOf<Pair<String, String?>>()
+
+    /**
+     * One exact selected source-entry transport lease. The I/O implementation
+     * is trusted app code, NEVER loaded from a catalog/script/import. No MIC3313
+     * implementation is approved yet; production definitions remain disabled.
+     *
+     * Legacy KLineConfig P1/P2/P3/defaults are NOT used for this lease's bus
+     * configuration, pacing, init, timeout or keepalive. The source API port
+     * owns those; timeoutMs below is only the host's observation budget. We
+     * reject a later ordinary request rather than silently substitute the
+     * generic K-line implementation for an address used through this API.
+     *
+     * Even a C1 here is only link evidence, NOT calibration/serial/write proof.
+     * Only reads and the separately confirmed source-session capability are
+     * allowed; clear/write/actuator/coding grants cannot escalate this lease.
+     */
+    internal suspend fun <T> withSourceKwpTransport(
+        target: EcuTarget.Physical, source: SourceKwpPlan, io: SourceKwpIo,
+        sourceContextByte: Int, entryBudgetMs: Long = 60_000,
+        block: suspend () -> T,
+    ): T = withDiagnosticOperation {
+        require(sourceContextByte in 0..255 && entryBudgetMs in 1..60_000)
+        val plan = source.snapshot()
+        val link = requireNotNull(target.link)
+        val k = requireNotNull(link.kLine)
+        require(link.dialect == DiagnosticDialect.KWP2000 && link.protocol == ObdProtocol.ISO_14230_4_KWP_FAST &&
+            k.init == com.bod3.app.obd.kwp.KLineInit.FAST && k.baud == plan.baud &&
+            k.fastLowMs == plan.timing[3] && k.fastHighMs == plan.timing[4] && link.testerPresent == plan.keepalive.request &&
+            target.responseMask == null && Hex.parse(target.requestHeader) == listOf(0x80, plan.sendAddress[1], plan.sendAddress[0]) &&
+            Hex.parse(target.responseHeader.orEmpty()) == listOf(0x80, plan.sendAddress[0], plan.sendAddress[1])) {
+            "Source transport scope/baud/pulses/keepalive/addresses differ from the exact selected target"
+        }
+        require(!options.extendedAddressing && !options.customFlowControl && options.flowControlData == "300000" && options.canBaudKbps == null) {
+            "Connection-profile overrides cannot change the source transport"
+        }
+        val lease = currentCoroutineContext()[Lease]
+        require(lease?.target == null || lease.target == target) { "Source transport cannot switch an operation's ECU" }
+        val enclosing = currentCoroutineContext()[SourceKwpOperation]
+        if (enclosing != null) {
+            require(enclosing.session === this && enclosing.target == target && enclosing.plan == plan && enclosing.io === io && enclosing.contextByte == sourceContextByte) {
+                "Nested source transport differs from its exact selected entry/driver/context"
+            }
+            return@withDiagnosticOperation block()
+        }
+        val frozenTarget = target.copy(link = link.copy(testerPresent = link.testerPresent.toList(),
+            kLine = k.copy(slowInitTimingsMs = k.slowInitTimingsMs.toList())))
+        val lifecycle = SourceKwpLifecycle(plan, io)
+        val operation = SourceKwpOperation(this, frozenTarget, plan, io, lifecycle, sourceContextByte)
+        sourceKwpOnlyAddresses += frozenTarget.requestHeader.uppercase() to frozenTarget.responseHeader?.uppercase()
+        var initialized = false
+        var failure: Throwable? = null
+        try {
+            lock.withLock {
+                invalidateRouting()
+                withTimeout(entryBudgetMs) {
+                    if (!lifecycle.enter().initialized) throw SourceKwpInitializationException("No complete source-entry C1 from the selected ECU")
+                    initialized = true
+                    protocol = link.protocol; appliedTarget = frozenTarget; activeSourceKwp = operation; lastExchangeAtMs = clock()
+                    lifecycle.keepalive(true)
+                }
+            }
+            withContext(Lease(this, frozenTarget) + operation) { block() }
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            try {
+                withContext(NonCancellable) {
+                    lock.withLock {
+                        try {
+                            // Host cleanup budget, not a newly inferred ECU timing value.
+                            if (initialized) withTimeout(DEFAULT_REQUEST_TIMEOUT_MS) {
+                                lifecycle.keepalive(false)
+                                // Never reconnect or replay an exit after a transport exception/reset.
+                                if (appliedTarget == frozenTarget && activeSourceKwp === operation) lifecycle.exit()
+                            }
+                        } finally { invalidateRouting() }
+                    }
+                }
+            } catch (cleanup: Throwable) {
+                if (failure != null) failure.addSuppressed(cleanup) else throw cleanup
+            }
+        }
+    }
+
+    /** Exact DTC failed-read continuation, never a generic init or a 105F/write replay. */
+    internal suspend fun reenterSourceKwpRead(target: EcuTarget.Physical, function: Long, nativeTransport: Int): Boolean {
+        val source = currentCoroutineContext()[SourceKwpOperation] ?: return false
+        require(source.session === this && source.target == target && source.plan.function == function && source.plan.nativeTransport == nativeTransport) {
+            "Read re-entry differs from this selected source function/transport/ECU"
+        }
+        val lease = currentCoroutineContext()[Lease]
+        require(lease?.session === this && lease.target == target &&
+            (currentCoroutineContext()[ReadOnlyAccess]?.session === this || currentCoroutineContext()[SourceReadSession]?.session === this)) {
+            "Source read re-entry needs the existing exact-ECU read lease"
+        }
+        lock.withLock {
+            check(appliedTarget == target && activeSourceKwp === source) { "Source link was invalidated; never reconnect/replay behind a read" }
+            invalidateRouting()
+            try {
+                withTimeout(60_000) { source.lifecycle.reenterRead(source.contextByte) }
+                appliedTarget = target; activeSourceKwp = source; lastExchangeAtMs = clock()
+            } catch (error: Throwable) {
+                invalidateRouting()
+                throw error
+            }
+        }
+        return true
+    }
+
     /** An exact-ECU read lease cannot consume a grant or escalate into an active operation. */
     suspend fun <T> withReadOnlyEcuOperation(target: EcuTarget.Physical, block: suspend () -> T): T = withDiagnosticOperation {
         val lease = currentCoroutineContext()[Lease]
@@ -168,6 +294,7 @@ class Session(
 
     suspend fun prepareBringUp(target: EcuTarget.Physical) {
         require(currentCoroutineContext()[BringUpReadOnly]?.session === this) { "Bring-up preparation needs a read-only lease" }
+        require(currentCoroutineContext()[SourceKwpOperation]?.session !== this) { "Generic bring-up cannot replace the active source transport" }
         require(!options.extendedAddressing && !options.customFlowControl && options.flowControlData == "300000" && options.canBaudKbps == null) {
             "Bring-up needs a standard addressing profile; custom addressing/flow-control/baud settings would change the candidate"
         }
@@ -191,6 +318,7 @@ class Session(
     /** Restore the candidate's documented normal timeout before activating it or issuing any grant. */
     suspend fun restoreBringUpTiming(target: EcuTarget.Physical) {
         require(currentCoroutineContext()[BringUpReadOnly]?.session === this)
+        require(currentCoroutineContext()[SourceKwpOperation]?.session !== this) { "Generic timing cannot replace source API timing" }
         val k = target.link?.kLine ?: return
         lock.withLock {
             require(appliedTarget == target) { "Bring-up target is no longer current" }
@@ -246,8 +374,9 @@ class Session(
     private suspend fun ensureOperationGuard(target: EcuTarget.Physical) {
         val lease = currentCoroutineContext()[Lease] ?: error("Missing diagnostic operation lease")
         if (lease.guardedTarget == target) return
-        require(currentCoroutineContext()[ReadOnlyAccess]?.session !== this && currentCoroutineContext()[SourceReadSession]?.session !== this) {
-            "A read/source-session lease cannot escalate into an active operation"
+        require(currentCoroutineContext()[ReadOnlyAccess]?.session !== this && currentCoroutineContext()[SourceReadSession]?.session !== this &&
+            currentCoroutineContext()[SourceKwpOperation]?.session !== this) {
+            "A read/source-session/source-transport lease cannot escalate into an active operation"
         }
         ecuOperationGuard(this, target)
         lease.guardedTarget = target
@@ -304,7 +433,7 @@ class Session(
     internal fun currentLinkEpoch(target: EcuTarget.Physical): Long? {
         if (appliedTarget != target) return null
         val k = target.link?.kLine
-        if (k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true) return null
+        if (activeSourceKwp?.target != target && k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true) return null
         return linkEpoch
     }
 
@@ -323,7 +452,7 @@ class Session(
             if (currentCoroutineContext()[BringUpReadOnly]?.session === this || currentCoroutineContext()[ReadOnlyAccess]?.session === this) {
                 require(confirmation == null && grant == null && diagnosticSession == null && isRead(target, request)) { "A read-only lease cannot consume a write/clear grant" }
             }
-            if (currentCoroutineContext()[SourceReadSession]?.session === this) {
+            if (currentCoroutineContext()[SourceReadSession]?.session === this || currentCoroutineContext()[SourceKwpOperation]?.session === this) {
                 require(confirmation == null && grant == null && (isRead(target, request) || diagnosticSession != null)) {
                     "A source read-session lease cannot clear, code, actuate or consume a write grant"
                 }
@@ -352,6 +481,9 @@ class Session(
             else request == listOf(0x3E, 0x00)) { "Unsupported keepalive for the selected dialect" }
         return routedOperation(target) { lock.withLock {
             val k = target.link?.kLine
+            // This lease's keepalive is source/driver-owned, not a P3-derived
+            // Android scheduler and not an opportunity to send a duplicate.
+            if (activeSourceKwp?.target == target) return@withLock false
             if (appliedTarget != target || (k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true)) return@withLock false
             val response = exchange(target, request, k?.p2StarMs?.toLong() ?: DEFAULT_REQUEST_TIMEOUT_MS, false)
             response.complete && response.negativeResponses.isEmpty() && response.messages.size == 1
@@ -370,6 +502,21 @@ class Session(
     private suspend fun exchangeCurrent(target: EcuTarget, request: List<Int>, timeoutMs: Long, writing: Boolean): ObdResponse {
         val physical = target as? EcuTarget.Physical
         val k = physical?.link?.kLine
+        val source = currentCoroutineContext()[SourceKwpOperation]
+        if (source != null) {
+            require(source.session === this && target == source.target && appliedTarget == target && activeSourceKwp === source) {
+                "Source transport is no longer current; no generic initialization is substituted"
+            }
+            if (writing || ReadOnlyPolicy.isClearRequest(request) || request == listOf(0x81)) linkEpoch++
+            val result = source.io.invoke(SourceKwpCall(SourceKwpApi.READ_PACKET,
+                listOf(Hex.format(source.plan.packet(request), "").lowercase(), timeoutMs)))
+            val elm = requireNotNull(result.elm) { "Source driver returned no explicit read result" }
+            lastExchangeAtMs = clock()
+            return interpret(target, request, elm)
+        }
+        require(physical == null || (physical.requestHeader.uppercase() to physical.responseHeader?.uppercase()) !in sourceKwpOnlyAddresses) {
+            "This source ECU requires its exact source transport lease; generic K-line fallback is forbidden"
+        }
         val expired = k != null && lastExchangeAtMs?.let { clock() - it >= k.p3MaxMs } == true
         if (writing && k != null && (expired || appliedTarget != target)) {
             throw IOException("K-line session is no longer current; re-read and confirm the operation again")
@@ -431,6 +578,7 @@ class Session(
         appliedFilter = null
         appliedFlowControl = null
         appliedTarget = null
+        activeSourceKwp = null
     }
 
     private fun resetToDefaultRouting() {
@@ -485,7 +633,8 @@ class Session(
 
     private fun interpret(target: EcuTarget, request: List<Int>, elm: ElmResponse): ObdResponse {
         if (elm.error != null && elm.error != ElmError.NO_DATA) throw ObdRequestException(elm.error, elm)
-        if (elm.error != null) return ObdResponse(request, elm, emptyList(), emptyList())
+        if (elm.error != null) return ObdResponse(request, elm, emptyList(), emptyList(),
+            complete = elm.lines.size == 1 && com.bod3.app.obd.elm.ElmResponseParser.classifyError(elm.lines.single()) == ElmError.NO_DATA)
 
         val physical = target as? EcuTarget.Physical
         val link = physical?.link

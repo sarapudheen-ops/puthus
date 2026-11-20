@@ -319,8 +319,8 @@ New bounded source control-flow ports and independent native comparisons add:
   exit/enter/restore/read-once sequences. These inspect context `+174d1 = FF` at Exit/Enter,
   restoration before the identical read, signed-negative/`7FFF` trigger conditions, and
   native transport 1/2/5 restriction. Native ignores lifecycle failure; the app must not
-  treat that behavior as proof or replay `105F`. The production Session callback remains
-  unconnected pending the exact adapter lifecycle mapping.
+  treat that behavior as proof or replay `105F`. The later source-API Session integration
+  below connects this callback under an exact source transport lease; no adapter mapping is implied.
 
 Android's custom fast initializer now always requires **one complete selected-ECU C1
 reply with its two keyword bytes**, even outside bring-up. Plain adapter `OK`, empty
@@ -353,8 +353,62 @@ Inspected evidence for the preceding `09e59bf` push (not an acceptance claim for
   remains documented; the APK has no TLS/hostname bypass or test CA.
 
 **Remaining acceptance failures are unchanged:** zero enabled production systems; missing
-native-to-MIC3313 timing/pin/line equivalence and operational retry/reentry/ISO integration;
+native-to-MIC3313 timing/pin/line equivalence and production routing of retry/reentry/ISO;
 mandatory nonempty live/DTC/ECU selection on Android 24; complete remaining live language,
 identity/transport/workflow classes, coding/actuators/special functions and whole-source
-coverage. No new pull request or merge is claimed here, and source completeness is not
-being blamed for these implementation gaps.
+coverage. PR14 is draft, with no merge authorization for this new work; source completeness
+is not being blamed for these implementation gaps.
+
+
+## Portable lifecycle and Session integration (scripted source API, not MIC3313 approval)
+
+`SourceKwpLifecycle` now ports the bounded native API control flow and exact source argument
+positions into Kotlin. `SourceKwpPlanCodec` reads a closed projection, snapshots it before
+callbacks, and rejects changed classes, cross-region frame provenance, incomplete byte fields,
+unknown keys, integer overflow and session/write smuggling. This is deliberately **not** an
+adapter command or enabled vehicle-pack codec. Native configuration failures are hardened to
+abort, and native zero/adapter ACK cannot replace one complete, checksum-valid, exact-ECU C1.
+
+`Session.withSourceKwpTransport` holds the existing executor/operation lease across configuration,
+entry, reads, function-specific keepalive and bounded noncancellable cleanup. It does not use
+legacy KLineConfig default timing/pacing or generic AT/ST/VT initialization. It rejects profile
+addressing overrides, scope switches, write/clear/coding/actuator escalation and later generic
+K-line substitution for a source-used address. An I/O error/reset invalidates current-target and
+epoch evidence; cleanup does not reconnect to send an exit. C1 is link evidence only, never a
+reviewed ECU serial or write proof.
+
+The actual workbench now invokes the source reentry callback when this exact source transport
+lease exists: only an unambiguous missing read, exact function/transport/ECU, exit → same-entry
+initialization with C1 → context restoration → one identical read. It never retries `105F`,
+setup/discovery, malformed/mixed replies or a disconnected exchange. No-data plus a data frame
+is explicitly incomplete, not a trigger for reconnect/retry. Context restoration runs on cancellation.
+
+`source-kwp-contracts.json` is a **4,956,450-byte test-only artifact**, SHA-256
+`b26df7cb4cc791e66363bfaac1cd9b09603e68ec83a4c1e1395624584c296004`. The generator's
+**double regeneration PASS** checked all 1,410 recovered decoded input lengths/hashes and
+matched the independently pinned native binding/fast/ISO domains: **284 entries, 2,272 fast
+vectors, 2,272 ISO vectors, zero production executable definitions**. The local run did not
+verify the original ZIP. Prepare/inspection workflows now compile it from the original archive
+and verify the complete pinned artifact on cache hits too. Only the existing small index is staged
+for the APK; this sidecar remains outside assets.
+
+Local results after Session integration: **229 Python tests PASS** and **113 standalone Kotlin
+scenario groups PASS** (real generated definitions, scripted API I/O and synthetic ECU replies).
+The Kotlin scenarios include the actual 30-live/four-query/1,414-label/0904 definition artifacts,
+all 284 lifecycle bindings, six keepalive variants, rejected configuration, invalid C1, cancellation,
+exclusive bus ownership and actual workbench reentry failure/success. The production driver
+is still unimplemented: these tests are not MIC3313/physical proof or enabled manual-selection
+acceptance. Protected policy test files remain unchanged.
+
+Observed CI failure: `c1129eb` Android run **44716990874** failed
+`:app:compileDebugAndroidTestKotlin` on an invalid top-level `assertDoesNotExist` import;
+that API is a node member in this Compose version. Its JVM result was **580 tests, zero
+failures/errors/skips, 70 classes**. Commit `770ef89` removed the import; the new build was
+not complete when this note was written. Inspection run **44715073185** succeeded for the
+preceding `f2b96ed` baseline. None of these observations certifies this lifecycle patch.
+
+**Still zero enabled production definitions and 1,055,750 unresolved records in the last
+whole-source accounting.** Exact native → MIC3313 timing/pin/electrical mapping remains the
+mandatory target's blocker. Android 24 must still install the actual app and perform explicit
+manual Toyota selection into nonempty executable live/DTC definitions, followed by complete
+source feature/vehicle coverage. Draft PR14 is not ready to merge.

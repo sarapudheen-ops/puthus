@@ -114,6 +114,7 @@ jobs:
             .local/toyota-vehicle-packs/native-oracle.json
             .local/toyota-vehicle-packs/native-oracle.md
             .local/toyota-vehicle-packs/compiled-source-read-validation.json
+            .local/toyota-vehicle-packs/source-kwp-contracts.json
           if-no-files-found: warn
 
   selected-vehicle-device:

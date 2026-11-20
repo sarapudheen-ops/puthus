@@ -36,6 +36,10 @@ runs:
           --decoded .local/toyota-conversion/decoded \
           --manifest .local/toyota-conversion/report/decoded-manifest.json \
           --output .local/toyota-vehicle-packs
+        python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/toyota-conversion/TOYOTA.zip \
+          --decoded .local/toyota-conversion/decoded \
+          --manifest .local/toyota-conversion/report/decoded-manifest.json \
+          --output .local/toyota-vehicle-packs
         python3 tools/thinkdiag/toyota_native_oracle.py run .local/toyota-conversion/TOYOTA.zip \
           --decoded .local/toyota-conversion/decoded \
           --manifest .local/toyota-conversion/report/decoded-manifest.json \
@@ -47,6 +51,7 @@ runs:
         python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs
         python3 tools/thinkdiag/toyota_native_oracle.py verify .local/toyota-vehicle-packs/native-oracle.json
         python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/toyota-vehicle-packs
+        python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/toyota-vehicle-packs
         python3 tools/thinkdiag/toyota_runtime_compile.py test-artifacts .local/toyota-vehicle-packs > .local/toyota-vehicle-packs/compiled-source-read-validation.json
         cat .local/toyota-vehicle-packs/compiled-source-read-validation.json
         mkdir -p .local/vehicle-pack-assets/toyota-vehicle-packs

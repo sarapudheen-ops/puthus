@@ -164,6 +164,13 @@ python3 tools/thinkdiag/extract_english.py .local/toyota-conversion/TOYOTA.zip \
 python3 tools/thinkdiag/convert_vehicle_packs.py .local/toyota-conversion/TOYOTA.zip \
   --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
   --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/toyota-conversion/TOYOTA.zip \
+  --decoded .local/toyota-conversion/decoded \
+  --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/toyota-conversion/TOYOTA.zip \
+  --decoded .local/toyota-conversion/decoded \
+  --manifest .local/toyota-conversion/report/decoded-manifest.json --output .local/toyota-vehicle-packs
+python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/toyota-vehicle-packs
 python3 tools/thinkdiag/toyota_native_oracle.py run .local/toyota-conversion/TOYOTA.zip \
   --decoded .local/toyota-conversion/decoded \
   --manifest .local/toyota-conversion/report/decoded-manifest.json \
@@ -204,3 +211,13 @@ and 48 corrupt/truncated/out-of-scope cases on the actual generated files, also 
 The source review records all input hashes, including the detail table and canonical decoded
 English dictionaries. No raw EXPRESS or vendor library executes on Android. A passing artifact
 test cannot enable a system, grant writes, or turn calibration IDs into unique ECU serial proof.
+
+
+### Source lifecycle regression artifact
+
+Prepare now generates and fully pins `source-kwp-contracts.json` outside APK assets. Gradle
+passes `toyota.lifecycle.contracts.file` to the JUnit source-API lifecycle/Session/workbench
+regressions: 284 actual entry plans, 2,272 fast and 2,272 ISO traces, six keepalive bindings,
+exact C1 checks and bounded same-entry DTC reentry. The driver in these tests is scripted;
+there is **no approved MIC3313 mapping or enabled production definition**. See the latest
+[conversion evidence and remaining acceptance gates](conversion-report.md#portable-lifecycle-and-session-integration-scripted-source-api-not-mic3313-approval).

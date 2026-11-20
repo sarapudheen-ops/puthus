@@ -68,6 +68,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("toyota.pack.directory", rootProject.file(".local/toyota-vehicle-packs").absolutePath)
     systemProperty("toyota.diagnostics.file", rootProject.file(".local/toyota-vehicle-packs/mandatory-ecmect-diagnostics.json").absolutePath)
     systemProperty("toyota.source.review.file", rootProject.file(".local/toyota-vehicle-packs/mandatory-ecmect-source-reads.json").absolutePath)
+    systemProperty("toyota.lifecycle.contracts.file", rootProject.file(".local/toyota-vehicle-packs/source-kwp-contracts.json").absolutePath)
 }
 
 dependencies {

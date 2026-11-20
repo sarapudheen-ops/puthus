@@ -210,8 +210,10 @@ class ToyotaFaultWorkflowReader(private val session: Session) {
                 var payload: List<Int>? = null
                 for (frame in query.frames) {
                     payload = exchange(frame)
-                    if (payload == null && retryableReadFailure && reenter != null && workflow.nativeTransport in setOf(1, 2, 5)) {
-                        reenter(); payload = exchange(frame)
+                    if (payload == null && retryableReadFailure && workflow.nativeTransport in setOf(1, 2, 5)) {
+                        val entered = if (reenter != null) { reenter(); true }
+                            else session.reenterSourceKwpRead(ecu.target, workflow.functionKey, workflow.nativeTransport)
+                        if (entered) payload = exchange(frame)
                     }
                     if (payload != null) break
                 }
@@ -231,6 +233,8 @@ class ToyotaFaultWorkflowReader(private val session: Session) {
             else session.withReadOnlyEcuOperation(ecu.target) { execute() }
         } catch (e: InvalidExchange) {
             DtcReadResult.Failed(e.message ?: "Invalid source reply")
+        } catch (e: java.io.IOException) {
+            DtcReadResult.Failed(e.message ?: "Source transport failed; no partial fault list accepted")
         } finally { confirmation?.revoke() }
     }
 }

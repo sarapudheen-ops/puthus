@@ -223,3 +223,23 @@ The lifecycle oracle now also compares 2,272 fast-entry retry/negative/zero/ISO-
 native zero-result/ignored-failure hardening is explicit in the report. There is no MIC3313
 native-API equivalence, physical vehicle, enabled production-system or Android executable
 acceptance claim from a passing offline oracle.
+
+
+### Kotlin source-API lifecycle contracts
+
+```sh
+"$PY" tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/thinkdiag/TOYOTA.zip \
+  --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+  --output .local/thinkdiag/vehicle-packs
+"$PY" tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/thinkdiag/vehicle-packs
+```
+
+The two regenerations must match each other, the complete canonical-output regression pin
+and the independently pinned native binding/fast/ISO comparison hashes. The 4,956,450-byte
+artifact is test-only, never an APK asset. Its 284 source entries/2,272 fast/2,272 ISO vectors
+now also exercise Kotlin Session transport leases and actual mandatory diagnostic workbench
+reentry using scripted I/O. Legacy P1/P2/P3 defaults are not substituted for native API values.
+Configuration rejection, failed/partial/wrong-ECU C1, cancellation, bus interleaving, missing-read
+classification and same-entry reinitialization are covered. The native→MIC3313 mapping remains
+unimplemented, with **zero** enabled production executable definitions; passing contracts
+are not physical validation or Android executable-selection acceptance.
