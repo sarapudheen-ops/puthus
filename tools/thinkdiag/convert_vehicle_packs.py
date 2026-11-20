@@ -88,6 +88,7 @@ class Converter:
         self.entry_pages = {}
         self.bring_up_pages = {}
         self.entry_support = {}
+        self.unclaimed_entry_pages = []
 
     def record(self, item):
         self.ledger.write(canonical(item) + b"\n")
@@ -124,8 +125,9 @@ class Converter:
         # Markers/padding stay explicit; they are not silently decoded as zero
         # features, guessed requests or a second ECU's configuration.
         for span in self.entries.unclaimed:
-            self.disabled(source_id("SYSTEMENTER.BIN", span["offset"], "#unclaimed"), "unclassified-entry-span",
-                          bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
+            item = self.disabled(source_id("SYSTEMENTER.BIN", span["offset"], "#unclaimed"), "unclassified-entry-span",
+                                 bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
+            self.unclaimed_entry_pages.extend(self.pages([item]))
         (self.output / "entry-index.json").write_bytes(canonical(self.entries.report()) + b"\n")
 
     def bring_up_candidates(self, region, function, selector, flash=False):
@@ -367,6 +369,21 @@ class Converter:
         self.census["unresolvedHierarchyChoices"] = len(self.hierarchy_issues)
         return write(tree)["object"]
 
+    def convert_inventory(self):
+        # The source has SYSLIST blocks not reached by ordinary manual MENU paths.
+        # Keep ALL source systems/ECUs/functions in a separate audit root. They are
+        # never attached to another vehicle, selected as fallback, or hidden from
+        # computed coverage merely because navigation cannot currently reach them.
+        systems = sorted(self.systems.items())
+        pages = [self.writer.add({"kind": "source-inventory-page", "systems": [
+            {"id": identity, "object": ref} for identity, ref in systems[i:i + 256]]})
+            for i in range(0, len(systems), 256)]
+        return self.writer.add({"kind": "source-inventory", "systemPages": pages,
+            "ecuSources": [value["object"] for _, value in sorted(self.ecus.items())],
+            "functionSources": [value["object"] for _, value in sorted(self.functions.items())],
+            "entryPages": [ref for _, values in sorted(self.entry_pages.items()) for ref in values],
+            "unclaimedEntryPages": self.unclaimed_entry_pages})
+
     def finish(self):
         self.convert_entries()
         self.convert_ecus()
@@ -374,6 +391,7 @@ class Converter:
         self.convert_systems()
         root = self.convert_menu()
         catalog_root = self.convert_catalog()
+        source_inventory = self.convert_inventory()
         self.ledger.close(); self._ledger_stream.close()
         categories = ("pids", "dtcs", "tests", "coding", "specialFunctions", "ecuInfo")
         converted = {kind: sum(s["counts"][kind]["converted"] for s in self.system_report) for kind in categories}
@@ -388,7 +406,7 @@ class Converter:
                    "enabledSystems": enabled, "converted": converted,
                    "unresolvedLedger": {"file": self.ledger_path.name, "bytes": len(ledger), "sha256": sha(ledger)},
                    "sourceVerification": load_verification(), "physicalValidation": False, "reasons": REASONS}
-        index = self.writer.finish(root["object"], summary, catalog_root)
+        index = self.writer.finish(root["object"], summary, catalog_root, source_inventory)
         for name, records in (("vehicles", self.vehicle_report), ("systems", self.system_report)):
             with (self.output / f"{name}.jsonl.gz").open("wb") as file:
                 with gzip.GzipFile(filename="", mode="wb", fileobj=file, mtime=0) as dest:

@@ -237,8 +237,9 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
         computed_counts = {"systems": len(systems), "enabledSystems": sum(systems.values()), "manualLeaves": len(manual_leaves),
             "manualLeavesWithSystemJoin": len(joined_leaves), "normalizedVehicleChoices": len(normalized_leaves),
             "unresolvedHierarchyChoices": unresolved_choices}
-        require(all(summary.get(field) == count for field, count in computed_counts.items()),
-                "Summary system/manual hierarchy counts differ from the actual object graph")
+        mismatches = {field: {"summary": summary.get(field), "actual": count}
+                      for field, count in computed_counts.items() if summary.get(field) != count}
+        require(not mismatches, "Summary system/manual hierarchy counts differ from the actual object graph: " + str(mismatches))
         complete = (executable > 0 and bool(systems) and not incomplete and not ledger and
                     unresolved_choices == 0 and len(joined_leaves) == len(manual_leaves) == len(normalized_leaves) and bool(manual_leaves))
         require(summary["complete"] is complete, "Summary complete differs from computed source/feature coverage")
@@ -261,5 +262,13 @@ if __name__ == "__main__":
     parser.add_argument("--apk", type=Path)
     parser.add_argument("--require-executable", action="store_true", help="Reject index-only/zero-definition acceptance")
     args = parser.parse_args()
-    print(json.dumps(verify(args.directory, index_only=args.index_only, apk=args.apk,
-                            require_executable=args.require_executable), sort_keys=True))
+    try:
+        print(json.dumps(verify(args.directory, index_only=args.index_only, apk=args.apk,
+                                require_executable=args.require_executable), sort_keys=True))
+    except ValueError as error:
+        # GitHub job-log storage redirects are not always reachable by an agent.
+        # Surface the exact bounded validation failure in the ordinary annotations
+        # API as well; preserve the exception/nonzero exit and never mask a failure.
+        message = str(error)[:4096].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::error title=Toyota compiled bundle validation::" + message, flush=True)
+        raise
