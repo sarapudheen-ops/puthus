@@ -49,14 +49,23 @@ jobs:
             --output .local/thinkdiag/english --report .local/thinkdiag/report
       - name: Derive ECU request headers for every system entry
         run: |
+          set +e
           python3 tools/thinkdiag/verify_entries.py --decoded .local/thinkdiag/decoded \
             --output .local/thinkdiag/report/entry-frames.md \
-            --json .local/thinkdiag/report/entry-frames.json
+            --json .local/thinkdiag/report/entry-frames.json \
+            2> .local/thinkdiag/report/entry-frames.err
+          status=$?
+          if [ $status -ne 0 ] || [ ! -f .local/thinkdiag/report/entry-frames.md ]; then
+            { echo "## Entry framing failed (exit $status)"; echo '```';
+              tail -40 .local/thinkdiag/report/entry-frames.err; echo '```'; } \
+              > .local/thinkdiag/report/entry-frames.md
+          fi
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota ECU framing' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion=success \
             -f 'output[title]=Headers derived from the traced frame builder' \
             -F 'output[summary]=@.local/thinkdiag/report/entry-frames.md'
+          exit $status
 
       - name: Sweep every diagnostic-table family and native reader
         run: |
