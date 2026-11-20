@@ -259,7 +259,9 @@ object BringUpScenarios {
     suspend fun controllerSameEcu(nonUnique: Boolean = false) = temporary { folder -> coroutineScope {
         val adapter = SimulatedBringUpAdapter(); val recorder = RecordingExecutor(adapter)
         lateinit var controller: BringUpController
-        val session = Session(recorder, ObdProtocol.ISO_15765_4_CAN_11_500, ecuOperationGuard = { current, target -> controller.requireSameEcu(current, target) })
+        val session = Session(recorder, ObdProtocol.ISO_15765_4_CAN_11_500,
+            ecuOperationGuard = { current, target -> controller.requireSameEcu(current, target) },
+            diagnosticSessionGuard = { current, target -> controller.requireSourceReadSession(current, target) })
         val c = candidate(runtimeChange = { r -> if (nonUnique) {
             val d = r.ecu.diagnostics!!
             r.copy(identityKind = EcuIdentityKind.NON_UNIQUE, data = r.data.copy(ecus = listOf(r.ecu.copy(diagnostics = d.copy(
@@ -277,6 +279,13 @@ object BringUpScenarios {
         check(controller.state.value.verifiedHere && controller.data(session)?.pids?.size == 1)
         if (nonUnique) {
             check(controller.data(session)!!.actuators.isEmpty() && controller.data(session)!!.ecus.single().diagnostics!!.faults!!.clear == null)
+            val before = adapter.requests.size
+            session.withSourceReadSessionOperation(target) {
+                // A fresh nonunique read ID permits only source-session/read setup,
+                // never a coding grant or clear, even in a nested write lease.
+                rejects { session.withEcuOperation(target) { session.request(target, listOf(0x3B, 0x20, 1), grant = grant) } }
+            }
+            check(adapter.requests.size == before + 1 && adapter.requests.last().bytes.first() == 0x1A)
             rejects { session.request(target, listOf(0x3B, 0x20, 1), grant = grant) }
             check(adapter.requests.none { it.bytes.first() == 0x3B })
         } else {
@@ -288,6 +297,8 @@ object BringUpScenarios {
         }
         check(store.all().single().transferred.not())
     } }
+    suspend fun controllerSourceReadSessionKeepsWriteIsolation() = controllerSameEcu(nonUnique = true)
+
     suspend fun controllerDoesNotReuseAcrossCarsOrPhones() = temporary { folder -> coroutineScope {
         val b = Bench(); val report = b.engine().run(selected, listOf(candidate())); val store = VerifiedSetupStore(folder)
         store.importPack(BringUpCodec.packText(listOf(report)))

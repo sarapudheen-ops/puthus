@@ -31,7 +31,7 @@ data class DataPackResult(val pack: DataPack?, val errors: List<String>) {
  */
 object DataPackCodec {
     const val FORMAT = "bod3-datapack"
-    const val FORMAT_VERSION = 5
+    const val FORMAT_VERSION = 6
 
     private fun extendedReads(pack: DataPack): Boolean = pack.pids.any { it.link?.needsExtendedKeepAliveSchema == true } ||
         pack.vehicles.any { v -> v.ecus.any { it.link?.needsExtendedKeepAliveSchema == true || it.diagnostics?.needsExtendedReadSchema == true } }
@@ -40,6 +40,7 @@ object DataPackCodec {
         linkedMapOf(
             "format" to FORMAT,
             "formatVersion" to when {
+                pack.vehicles.any { v -> v.ecus.any { it.diagnostics?.faults?.workflow != null } } -> 6
                 extendedReads(pack) -> 5
                 pack.pids.any { it.supportChecks.isNotEmpty() || it.link?.testerPresent == listOf(0x3E) } ||
                     pack.vehicles.any { v -> v.ecus.any { it.link?.testerPresent == listOf(0x3E) } } -> 4
@@ -128,6 +129,8 @@ object DataPackCodec {
         )
         if (formatVersion < 5 && extendedReads(pack))
             errors += "diagnostics/keepalive: requires formatVersion 5 so older apps cannot discard support reads, enum/width decoding or the selected keepalive"
+        if (formatVersion < 6 && pack.vehicles.any { v -> v.ecus.any { it.diagnostics?.faults?.workflow != null } })
+            errors += "faults.workflow: requires formatVersion 6 so an older app cannot skip source session/setup/discovery/multi-query semantics"
         errors += pack.problems()
         return DataPackResult(if (errors.isEmpty()) pack else null, errors.distinct())
     }

@@ -66,6 +66,8 @@ tasks.named("preBuild").configure { dependsOn(verifyToyotaVehicleIndex) }
 // Validate the real Actions conversion with the same Kotlin codecs used on the phone.
 tasks.withType<Test>().configureEach {
     systemProperty("toyota.pack.directory", rootProject.file(".local/toyota-vehicle-packs").absolutePath)
+    systemProperty("toyota.diagnostics.file", rootProject.file(".local/toyota-vehicle-packs/mandatory-ecmect-diagnostics.json").absolutePath)
+    systemProperty("toyota.source.review.file", rootProject.file(".local/toyota-vehicle-packs/mandatory-ecmect-source-reads.json").absolutePath)
 }
 
 dependencies {

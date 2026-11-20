@@ -133,11 +133,14 @@ class Session(
     private val logger: (String) -> Unit = {},
     /** Recovered systems additionally require a same-ECU read-only bring-up, checked inside the lease. */
     private val ecuOperationGuard: suspend (Session, EcuTarget.Physical) -> Unit = { _, _ -> },
+    /** Source 105F reads have a separate guard; success here MUST NOT establish write authority. */
+    private val diagnosticSessionGuard: suspend (Session, EcuTarget.Physical) -> Unit = ecuOperationGuard,
 ) {
     private val lock = Mutex()
     private val operationLock = Mutex()
     private class Lease(val session: Session, val target: EcuTarget.Physical?) : AbstractCoroutineContextElement(Key) {
         var guardedTarget: EcuTarget.Physical? = null
+        var sourceSessionTarget: EcuTarget.Physical? = null
         companion object Key : CoroutineContext.Key<Lease>
     }
     private class BringUpReadOnly(val session: Session) : AbstractCoroutineContextElement(Key) {
@@ -145,6 +148,10 @@ class Session(
     }
     private class ReadOnlyAccess(val session: Session) : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<ReadOnlyAccess>
+    }
+
+    private class SourceReadSession(val session: Session) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<SourceReadSession>
     }
 
     /** An exact-ECU read lease cannot consume a grant or escalate into an active operation. */
@@ -207,10 +214,41 @@ class Session(
         }
     }
 
+    /**
+     * Narrow source DTC lease: exact reads plus one separately confirmed 105F.
+     * No clear/WriteGrant/session-security/coding/actuator escalation, even if
+     * this source has only a nonunique calibration ID. The active-operation
+     * guard/ECU_SERIAL requirement remains a different authority entirely.
+     */
+    suspend fun <T> withSourceReadSessionOperation(target: EcuTarget.Physical, block: suspend () -> T): T = withDiagnosticOperation {
+        require(currentCoroutineContext()[BringUpReadOnly]?.session !== this && currentCoroutineContext()[ReadOnlyAccess]?.session !== this) {
+            "Read-only bring-up/access cannot enter a source diagnostic session"
+        }
+        val lease = currentCoroutineContext()[Lease]
+        require(lease?.target == null || lease.target == target) { "Source diagnostic operation cannot change its ECU" }
+        if (currentCoroutineContext()[SourceReadSession]?.session === this) {
+            ensureSourceSessionGuard(target); block()
+        } else withContext(Lease(this, target) + SourceReadSession(this)) {
+            ensureSourceSessionGuard(target); block()
+        }
+    }
+
+    private suspend fun ensureSourceSessionGuard(target: EcuTarget.Physical) {
+        val lease = currentCoroutineContext()[Lease] ?: error("Missing diagnostic operation lease")
+        require(currentCoroutineContext()[BringUpReadOnly]?.session !== this && currentCoroutineContext()[ReadOnlyAccess]?.session !== this) {
+            "A read-only lease cannot change the diagnostic session"
+        }
+        if (lease.sourceSessionTarget == target) return
+        diagnosticSessionGuard(this, target)
+        lease.sourceSessionTarget = target
+    }
+
     private suspend fun ensureOperationGuard(target: EcuTarget.Physical) {
         val lease = currentCoroutineContext()[Lease] ?: error("Missing diagnostic operation lease")
         if (lease.guardedTarget == target) return
-        require(currentCoroutineContext()[ReadOnlyAccess]?.session !== this) { "A read-only lease cannot escalate into an active operation" }
+        require(currentCoroutineContext()[ReadOnlyAccess]?.session !== this && currentCoroutineContext()[SourceReadSession]?.session !== this) {
+            "A read/source-session lease cannot escalate into an active operation"
+        }
         ecuOperationGuard(this, target)
         lease.guardedTarget = target
     }
@@ -259,6 +297,9 @@ class Session(
 
     private var linkEpoch = 0L
 
+    /** UI intent generation only; not proof, a permission, or a serializable connection ID. */
+    internal fun diagnosticPromptEpoch(): Long = linkEpoch
+
     /** Prerequisite snapshots must not survive routing resets, ECU switches or expired K-line init. */
     internal fun currentLinkEpoch(target: EcuTarget.Physical): Long? {
         if (appliedTarget != target) return null
@@ -273,21 +314,34 @@ class Session(
         timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
         confirmation: ClearConfirmation? = null,
         grant: WriteGrant? = null,
+        diagnosticSession: DiagnosticSessionConfirmation? = null,
     ): ObdResponse {
         require(request.isNotEmpty() && request.all { it in 0..0xFF }) { "Request must contain bytes in 0..255" }
         require(timeoutMs > 0) { "Request timeout must be positive" }
+        require(listOfNotNull(confirmation, grant, diagnosticSession).size <= 1) { "An exchange cannot combine operation permissions" }
         return routedOperation(target) {
             if (currentCoroutineContext()[BringUpReadOnly]?.session === this || currentCoroutineContext()[ReadOnlyAccess]?.session === this) {
-                require(confirmation == null && grant == null && isRead(target, request)) { "A read-only lease cannot consume a write/clear grant" }
+                require(confirmation == null && grant == null && diagnosticSession == null && isRead(target, request)) { "A read-only lease cannot consume a write/clear grant" }
             }
-            if (!isRead(target, request) && target is EcuTarget.Physical) ensureOperationGuard(target)
+            if (currentCoroutineContext()[SourceReadSession]?.session === this) {
+                require(confirmation == null && grant == null && (isRead(target, request) || diagnosticSession != null)) {
+                    "A source read-session lease cannot clear, code, actuate or consume a write grant"
+                }
+            }
+            if (!isRead(target, request) && target is EcuTarget.Physical) {
+                if (diagnosticSession != null) ensureSourceSessionGuard(target) else ensureOperationGuard(target)
+            }
             when {
+                diagnosticSession != null -> Unit // Epoch and single use checked INSIDE the exchange lock.
                 confirmation != null && ReadOnlyPolicy.isClearRequest(request) -> confirmation.consume(request, target)
                 grant != null && !isRead(target, request) -> grant.check(request, target)
                 isRead(target, request) -> Unit
                 else -> throw ReadOnlyViolationException(request.first())
             }
-            lock.withLock { exchange(target, request, timeoutMs, grant != null && !isRead(target, request)) }
+            lock.withLock {
+                diagnosticSession?.consume(this, request, target)
+                exchange(target, request, timeoutMs, (grant != null || diagnosticSession != null) && !isRead(target, request))
+            }
         }
     }
 

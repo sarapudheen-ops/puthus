@@ -140,10 +140,22 @@ class BringUpController(
     }
 
     /** Runs INSIDE Session's exclusive ECU/write lease, before session/security/write/clear bytes. */
-    suspend fun requireSameEcu(session: Session, target: EcuTarget.Physical) {
-        val p = currentProof(session) ?: error("Complete read-only bring-up on this vehicle/system and connection before active tests, coding or clearing")
+    suspend fun requireSameEcu(session: Session, target: EcuTarget.Physical) = recheckCurrentEcu(session, target, forWrite = true)
+
+    /**
+     * Only the separately confirmed source DTC setup. A calibration ID is usable
+     * as read-setup evidence, NOT as a unique hardware identity or write proof.
+     * Session's narrow source-read lease independently forbids every WriteGrant,
+     * clear, actuator and coding operation, including calls nested inside it.
+     */
+    suspend fun requireSourceReadSession(session: Session, target: EcuTarget.Physical) = recheckCurrentEcu(session, target, forWrite = false)
+
+    private suspend fun recheckCurrentEcu(session: Session, target: EcuTarget.Physical, forWrite: Boolean) {
+        val p = currentProof(session) ?: error("Complete read-only bring-up on this vehicle/system and connection before a confirmed source session, active test, coding or clear")
         require(p.candidate.target == target) { "Bring-up was verified for a different ECU/link" }
-        require(p.candidate.runtime?.identityKind == EcuIdentityKind.ECU_SERIAL) { "Identification is not a reviewed unique ECU serial; read-only verification cannot unlock writes" }
+        if (forWrite) require(p.candidate.runtime?.identityKind == EcuIdentityKind.ECU_SERIAL) {
+            "Identification is not a reviewed unique ECU serial; read-only verification cannot unlock writes"
+        }
         val identification = try {
             withTimeoutOrNull(BringUpEngine.CANDIDATE_TIMEOUT_MS) {
                 session.withReadOnlyBringUp {

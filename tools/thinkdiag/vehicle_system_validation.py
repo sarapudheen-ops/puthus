@@ -213,10 +213,11 @@ def validate_system(system):
             'No exact source function/entry join')
     integer(system.get('functionKey'), 'functionKey', maximum=0xffffffff); integer(system.get('entrySelector'), 'entrySelector', maximum=255)
     require(function.get('functionKey') == system['functionKey'] and entry.get('selector') == system['entrySelector'], 'Source selector/function boundary mismatch')
+    raw_system = None
     if 'rawHex' in system:
         # rawHex is lossless source bytes, unlike compiled requests which are canonical uppercase.
         raw = system['rawHex']; require(isinstance(raw, str) and re.fullmatch(r'[0-9a-fA-F]{74}', raw), 'Invalid exact SYSLIST bytes')
-        raw = bytes.fromhex(raw)
+        raw = raw_system = bytes.fromhex(raw)
         require(int.from_bytes(raw[:4], 'little') == system['functionKey'] and raw[27] == system['entrySelector'], 'SYSLIST bytes differ from declared selector/function')
     obj(data, 'data', ('ecus', 'pids', 'dtcs', 'dtcGroups', 'actuators', 'coding'))
     ecus = sequence(data.get('ecus'), 'ecus', 1); require(len(ecus) == 1, 'Enabled system must have exactly one ECU')
@@ -268,10 +269,14 @@ def validate_system(system):
             require(ident['read'].get('dataBytes') is None and ident['read']['minBytes'] % width == 0 and
                     ident['read'].get('maxBytes', 4096) % width == 0, p + ': invalid whole-record identity window')
         else: require('recordBytes' not in ident, p + ': recordBytes requires ASCII_RECORDS')
-    faults = obj(diagnostics.get('faults'), 'faults', ('read', 'layout', 'clear'))
+    faults = obj(diagnostics.get('faults'), 'faults', ('read', 'layout', 'clear', 'workflow'))
     req = read_definition(faults.get('read'), 'faults.read', ecu['protocol'], bound)
     require(req[0] in ((0x12, 0x13, 0x18, 0x19) if ecu['protocol'] == 'KWP' else (0x18, 0x19)), 'Not a selected-dialect fault-read service')
     fault_layout(faults.get('layout'), bound)
+    if 'workflow' in faults:
+        from vehicle_workflow_validation import validate_workflow
+        validate_workflow(faults['workflow'], function=system['functionKey'], raw_system=raw_system,
+                          dialect=ecu['protocol'], primary=faults['read'], layout=faults['layout'], bound=bound)
     if faults.get('clear') is not None:
         clear = obj(faults['clear'], 'faults.clear', ('request', 'responsePrefix', 'sourceRecords')); bound(clear, 'faults.clear')
         cr = byte_string(clear.get('request'), 'clear.request', maximum=4); cp = byte_string(clear.get('responsePrefix'), 'clear.responsePrefix', maximum=4)

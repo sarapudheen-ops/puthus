@@ -38,6 +38,8 @@ data class EcuDetailState(
     val dtcs: Readout<DtcReadResult> = Readout.NotRead,
     val records: Map<String, Readout<DtcRecords>> = emptyMap(),
     val clear: ClearState? = null,
+    /** A live, nonpersisted prompt; no session capability is stored in UI state. */
+    val sourceSessionPrompt: Boolean = false,
 )
 
 /** Vehicle and ECU definitions, custom PIDs and DTC descriptions from data packs (bundled + user). */

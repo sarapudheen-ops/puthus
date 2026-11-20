@@ -18,7 +18,7 @@ data class CatalogResult(val pack: CatalogPack?, val errors: List<String>) {
 /** One invalid object rejects the entire document. There is no forgiving/partial catalog decoder. */
 object CatalogCodec {
     const val FORMAT = "bod3-vehicle-catalog"
-    const val VERSION = 4
+    const val VERSION = 5
     const val MAX_BYTES = 16 * 1024 * 1024
 
     fun encode(pack: CatalogPack): String = JsonWriter.write(packMap(pack))
@@ -152,6 +152,7 @@ object CatalogCodec {
 
     private fun requiredVersion(pack: CatalogPack): Int {
         val data = listOf(pack.library) + pack.nodes.map { it.data } + pack.platforms.map { it.data }
+        if (data.any { d -> d.ecus.any { it.diagnostics?.faults?.workflow != null } }) return 5
         if (data.any { d -> d.pids.any { it.link?.needsExtendedKeepAliveSchema == true } ||
                 d.ecus.any { it.link?.needsExtendedKeepAliveSchema == true || it.diagnostics?.needsExtendedReadSchema == true } ||
                 d.actuators.any { it.module.target.link?.needsExtendedKeepAliveSchema == true } ||

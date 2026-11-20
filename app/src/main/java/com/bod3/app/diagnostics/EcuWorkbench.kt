@@ -54,10 +54,12 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
         return readings
     }
 
-    suspend fun readDtcs(ecu: EcuDefinition): DtcReadResult {
+    suspend fun readDtcs(ecu: EcuDefinition, diagnosticSession: com.bod3.app.obd.session.DiagnosticSessionConfirmation? = null): DtcReadResult {
         ecu.diagnostics?.let { definitions ->
             validate(ecu)
             val d = definitions.faults ?: return DtcReadResult.Failed("This ECU has no resolved fault-read definition; no generic request was sent.")
+            if (d.workflow != null) return ToyotaFaultWorkflowReader(session).read(ecu, d, diagnosticSession)
+            require(diagnosticSession == null) { "No source diagnostic-session setup belongs to this ECU" }
             return when (val result = read(ecu, d.read)) {
                 is DidResult.Value -> d.layout.decode(result.data, "${ecu.protocol.label} ${d.read.request} · ${d.read.name}")
                 is DidResult.Negative -> DtcReadResult.Negative(result.nrc)
@@ -69,6 +71,28 @@ class EcuWorkbench(private val session: Session, private val client: UdsClient =
             EcuProtocol.UDS -> client.readDtcs(ecu.target)
             EcuProtocol.OBD -> client.readObdStoredDtcs(ecu.target)
             EcuProtocol.KWP -> DtcReadResult.Failed("Enhanced KWP fault reads need a documented definition; no UDS request was sent. Use the OBD fault screen for standard emissions codes.")
+        }
+    }
+
+    /**
+     * Entry point ONLY for the operation-specific Expert-mode confirmation UI.
+     * Fresh preparation/identity guarding precedes the epoch-bound capability;
+     * no token is retained across the dialog, connection reset or bus wait.
+     * A source-read lease cannot authorize a clear, write, coding or active test.
+     */
+    suspend fun readDtcsWithConfirmedSourceSession(ecu: EcuDefinition, expertModeEnabled: Boolean): DtcReadResult {
+        require(expertModeEnabled) { "Source diagnostic-session setup needs Expert mode and an explicit confirmation" }
+        validate(ecu)
+        val definitions = requireNotNull(ecu.diagnostics)
+        val workflow = requireNotNull(definitions.faults?.workflow)
+        require(workflow.requiresSessionConfirmation) { "This ECU has no source diagnostic-session setup" }
+        return session.withSourceReadSessionOperation(ecu.target) {
+            val identities = readIdentification(ecu)
+            if (identities.isEmpty() || identities.any { (it.result as? DidResult.Value)?.data.isNullOrEmpty() })
+                return@withSourceReadSessionOperation DtcReadResult.Failed("Fresh selected-ECU identification failed; no diagnostic session was changed")
+            val confirmation = com.bod3.app.obd.session.DiagnosticSessionConfirmation.confirmed(
+                session, ecu.target, workflow, expertModeEnabled)
+            try { readDtcs(ecu, confirmation) } finally { confirmation.revoke() }
         }
     }
 

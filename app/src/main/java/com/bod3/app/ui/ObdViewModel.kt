@@ -328,6 +328,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private var scanJob: Job? = null
     private var profileJob: Job? = null
     private var ecuJob: Job? = null
+    private var sourceSessionPrompt: com.bod3.app.obd.session.DiagnosticSessionPrompt? = null
+    private var queuedSourceSessionPrompt: com.bod3.app.obd.session.DiagnosticSessionPrompt? = null
 
     private val preferences = SharedPrefsKeyValueStore(application)
     private val dataStore = DataPackStore(preferences)
@@ -813,6 +815,9 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             connectionStore.enableExpertMode(riskAcknowledged = true)
             appendLog("Expert mode enabled")
         } else {
+            // Re-enabling Expert mode must not revive an already displayed or
+            // queued source-session intent. A fresh operation dialog is needed.
+            dismissSourceDiagnosticSession()
             connectionStore.disableExpertMode()
             appendLog("Expert mode disabled")
             if (_state.value.screen == Screen.TERMINAL) closeTerminal()
@@ -925,6 +930,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Creates the session for the negotiated protocol and reads VIN and supported PIDs. */
     private suspend fun applyNegotiation(negotiation: NegotiationResult) {
+        dismissSourceDiagnosticSession()
+        session?.invalidateRouting()
         val currentRecorder = recorder ?: return
         bringUp.disconnected()
         val protocolInfo = negotiation.protocol
@@ -977,6 +984,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
      * talks to it and reconnects with the policy's back-off; the remembered protocol is tried first.
      */
     private fun onLinkLost(device: PairedAdapter, reason: String) {
+        dismissSourceDiagnosticSession()
+        session?.invalidateRouting()
         bringUp.disconnected()
         val wasLive = _state.value.screen == Screen.LIVE && _state.value.liveRunning
         appendLog("Connection lost: $reason")
@@ -1380,6 +1389,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     private fun prepareSystemChange() {
         require(!bringUp.state.value.running && !actuators.state.value.running && !coding.state.value.busy && scanJob?.isActive != true &&
             ecuJob?.isActive != true && dtcJob?.isActive != true && !_state.value.terminalBusy) { "Finish the active diagnostic operation before changing systems" }
+        dismissSourceDiagnosticSession()
         pauseLiveData()
         if (liveRecorder.isRecording) stopRecording()
         actuators.select(null); coding.select(null)
@@ -1397,6 +1407,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                                options: com.bod3.app.obd.session.SessionOptions): Session =
         Session(recording, protocol, options, ecuOperationGuard = { current, target ->
             if (isDownloadedSelection()) bringUp.requireSameEcu(current, target)
+        }, diagnosticSessionGuard = { current, target ->
+            if (isDownloadedSelection()) bringUp.requireSourceReadSession(current, target)
         })
 
     fun startBringUp() {
@@ -1650,6 +1662,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     fun openEcu(ecu: EcuDefinition) {
         if (coding.state.value.busy || actuators.state.value.running || scanJob?.isActive == true || ecuJob?.isActive == true ||
             dtcJob?.isActive == true || _state.value.terminalBusy) return
+        dismissSourceDiagnosticSession()
         pauseLiveData()
         if (_state.value.screen != Screen.ECU_DETAIL) ecuReturn = _state.value.screen
         _state.update { it.copy(screen = Screen.ECU_DETAIL, ecuDetail = EcuDetailState(ecu)) }
@@ -1657,6 +1670,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeEcu() {
+        dismissSourceDiagnosticSession()
         ecuJob?.cancel()
         _state.update { it.copy(screen = ecuReturn, ecuDetail = null) }
     }
@@ -1689,6 +1703,93 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             updateEcu { d -> d.copy(identificationLoading = false) }
             val dtcs = readout("${ecu.display} fault codes") { workbench.readDtcs(ecu) }
             updateEcu { d -> d.copy(dtcs = dtcs) }
+        }
+    }
+
+    fun requestSourceDiagnosticSession() {
+        val current = session ?: return
+        val ecu = _state.value.ecuDetail?.ecu ?: return
+        if (!canUseBus()) return
+        dismissSourceDiagnosticSession()
+        try {
+            sourceSessionPrompt = com.bod3.app.obd.session.DiagnosticSessionPrompt.open(current, ecu, _state.value.settings.expertMode)
+            updateEcu { it.copy(sourceSessionPrompt = true) }
+        } catch (e: IllegalArgumentException) {
+            updateEcu { it.copy(dtcs = Readout.Unavailable(e.message ?: "Source session confirmation unavailable")) }
+        }
+    }
+
+    fun dismissSourceDiagnosticSession() {
+        sourceSessionPrompt?.cancel(); sourceSessionPrompt = null
+        queuedSourceSessionPrompt?.cancel(); queuedSourceSessionPrompt = null
+        updateEcu { it.copy(sourceSessionPrompt = false) }
+    }
+
+    /** Called ONLY by the explicit 10 5F consequences dialog, never by Refresh or auto-reconnect. */
+    fun confirmSourceDiagnosticSession() {
+        val prompt = sourceSessionPrompt ?: return
+        sourceSessionPrompt = null
+        updateEcu { it.copy(sourceSessionPrompt = false) }
+        val current = session
+        val ecu = _state.value.ecuDetail?.ecu
+        if (current == null || ecu == null || !canUseBus() || !_state.value.settings.expertMode) {
+            prompt.cancel()
+            updateEcu { it.copy(dtcs = Readout.Unavailable("Confirmation expired or the ECU/connection/Expert setting changed. Confirm this operation again.")) }
+            return
+        }
+        queuedSourceSessionPrompt = prompt
+        pauseLiveData()
+        ecuJob = viewModelScope.launch {
+            updateEcu { it.copy(dtcs = Readout.Loading, records = emptyMap()) }
+            val log = com.bod3.app.audit.AuditRecorder(System::currentTimeMillis)
+            log.step("User confirmed one exact source DTC session setup; no write/clear/active-test permission", request = "105F")
+            var outcome = "Cancelled before completion; source session state is not assumed restored"
+            var success = false
+            try {
+                val result = current.withDiagnosticOperation {
+                    require(session === current && _state.value.ecuDetail?.ecu == ecu &&
+                        prompt.consume(current, ecu, _state.value.settings.expertMode)) {
+                        "Source confirmation expired or the ECU, routing, connection or Expert setting changed while waiting for the bus"
+                    }
+                    val observer = object : com.bod3.app.obd.elm.ExchangeObserver {
+                        private var count = 0
+                        private var bytes = 0
+                        override fun before(command: String, timeoutMs: Long) {
+                            require(count++ < 2048 && bytes < 2 * 1024 * 1024) { "Source-session audit budget exhausted; no further command sent" }
+                        }
+                        override fun after(exchange: com.bod3.app.obd.elm.ObservedExchange) {
+                            bytes += exchange.rawResponse.toByteArray(Charsets.UTF_8).size
+                            require(bytes <= 2 * 1024 * 1024) { "Source-session evidence exceeded its budget; operation aborted, no complete-evidence claim" }
+                            log.step("Exact adapter exchange", exchange.command, exchange.rawResponse, exchange.error == null)
+                        }
+                    }
+                    val remove = recorder?.observe(observer)
+                    try { EcuWorkbench(current).readDtcsWithConfirmedSourceSession(ecu, _state.value.settings.expertMode) }
+                    finally { remove?.invoke() }
+                }
+                success = result is com.bod3.app.obd.uds.DtcReadResult.Read
+                outcome = result.display
+                updateEcu { it.copy(dtcs = Readout.Value(result)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                outcome = "Source session/fault read failed: ${e.message}"
+                updateEcu { it.copy(dtcs = Readout.Unavailable(outcome)) }
+            } finally {
+                prompt.cancel()
+                if (queuedSourceSessionPrompt === prompt) queuedSourceSessionPrompt = null
+                log.step(outcome, ok = success)
+                // Synchronous local append survives coroutine cancellation. History is
+                // evidence only and can never restore this prompt or its permission.
+                auditStore.append(com.bod3.app.audit.AuditRecord(UUID.randomUUID().toString(),
+                    com.bod3.app.audit.AuditKind.DIAGNOSTIC_SESSION, "Source DTC session 10 5F",
+                    ecu.diagnostics?.faults?.read?.id.orEmpty(), "${ecu.display} ${ecu.requestId}/${ecu.responseId}", null,
+                    log.startedAtMs, System.currentTimeMillis(), success, outcome,
+                    details = mapOf("Permission" to "One source 105F; read-only default unchanged; no write/clear/actuator authority",
+                        "Source" to ecu.sourceRecords.joinToString("; "),
+                        "Restoration" to "No generic default-session command is invented. Next privileged operation requires a fresh guard."), steps = log.all))
+                appendLog("${ecu.display} source session: $outcome")
+            }
         }
     }
 
@@ -2333,6 +2434,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun disconnectInternal() {
+        dismissSourceDiagnosticSession()
+        session?.invalidateRouting()
         bringUp.disconnected()
         if (liveRecorder.isRecording) stopRecording()
         ecuJob?.cancel()

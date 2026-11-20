@@ -13,6 +13,7 @@ enum class AuditKind(val label: String) {
     ACTUATOR_TEST("Actuator test"),
     CODING_WRITE("Coding write"),
     CODING_ROLLBACK("Coding rollback"),
+    DIAGNOSTIC_SESSION("Confirmed source diagnostic session"),
 }
 
 /** One step of an operation: what was sent, what came back, and whether it was OK. */

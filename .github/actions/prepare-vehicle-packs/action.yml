@@ -32,6 +32,10 @@ runs:
           --decoded .local/toyota-conversion/decoded --english .local/toyota-conversion/english \
           --manifest .local/toyota-conversion/report/decoded-manifest.json \
           --output .local/toyota-vehicle-packs
+        python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/toyota-conversion/TOYOTA.zip \
+          --decoded .local/toyota-conversion/decoded \
+          --manifest .local/toyota-conversion/report/decoded-manifest.json \
+          --output .local/toyota-vehicle-packs
         python3 tools/thinkdiag/toyota_native_oracle.py run .local/toyota-conversion/TOYOTA.zip \
           --decoded .local/toyota-conversion/decoded \
           --manifest .local/toyota-conversion/report/decoded-manifest.json \
@@ -42,6 +46,7 @@ runs:
         set -euo pipefail
         python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/toyota-vehicle-packs
         python3 tools/thinkdiag/toyota_native_oracle.py verify .local/toyota-vehicle-packs/native-oracle.json
+        python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/toyota-vehicle-packs
         mkdir -p .local/vehicle-pack-assets/toyota-vehicle-packs
         cp .local/toyota-vehicle-packs/index.json .local/vehicle-pack-assets/toyota-vehicle-packs/index.json
         test "$(find .local/vehicle-pack-assets -type f | wc -l)" -eq 1

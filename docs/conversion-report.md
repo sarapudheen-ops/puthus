@@ -233,3 +233,62 @@ The migration from full offline source assets to the small pinned index is docum
 [on-demand delivery and reproduction](toyota-vehicle-packs.md). This report must be regenerated
 when actual executable conversion is implemented; zero/unknown counts must not be relabeled as
 completed coverage. No physical vehicle/adapter test has been performed.
+
+## Source DTC caller and explicit session UI (current work, not executable acceptance)
+
+The current converter still emits **zero executable definitions**. The full decoded
+input run checks 1,410 BIN arrays (114,797,280 bytes), retains 287,030 source system
+records, and verifies a 378,283-object graph. Its 3,767-byte index and 366,409,541-byte
+container are delivery/accounting results, not working ECU coverage.
+
+`toyota_runtime_compile.py compile` now also emits a separately named, non-production
+source-read review for the exact `SYSLIST_EU.BIN@0009d8f2` / function 61 / selector
+`0x11` / `EU/Ecu_Data_0081.BIN` join. It contains 30 literal-reviewed numeric live
+reads with exact source units, windows and A801/2100 applicability, 1,414 exact-key
+fault labels, four native ordered fault queries and one dispatch-14 calibration-ID
+read. These are **not** an enabled `vehicle-system.data`: the adapter timing/pin API
+mapping and full native retry/fallback lifecycle remain separate missing gates.
+The generated review explicitly reports `productionExecutableDefinitions: 0` and
+985 source live rows not compiled by this closed numeric class. No production
+coverage count includes these sidecars.
+
+The prepare action and inspection workflow compile and verify these source
+sidecars. Gradle unit tests receive their exact paths and fail when the expected
+generated files are missing, rather than silently skipping the actual-source
+cases. Synthetic adapter simulations consume the source request/formula/unit/
+applicability and fault caller objects. Their synthetic link, replies and ID do
+not establish the mandatory target's MIC3313 timing or physical behavior.
+
+The ECU detail screen now offers an **Expert-only, operation-specific** `10 5F`
+consequences dialog. Ordinary Refresh never changes the diagnostic session. The
+non-persisted dialog intent binds the displayed full ECU definition, Session
+instance, routing generation and a monotonic 60-second expiry. It is consumed
+only after acquiring the bus; reset, reconnection, definition change, dismissal,
+Expert disable and expiry cannot revive it. A fresh selected-ECU identity recheck
+then precedes a separate single-use, initialized-epoch-bound `105F` capability.
+The source-read lease cannot clear or consume a WriteGrant, including through
+nested active-operation calls. Coding, active tests and clears still require the
+separate fresh same-current-ECU guard and reviewed unique ECU serial. Calibration
+IDs remain nonunique and cannot unlock writes. Exact bounded exchanges and the
+outcome are appended to the local diagnostic-session audit even on cancellation;
+no generic restoration command is invented.
+
+Saved module readouts now preserve source request/name/display text, unsigned
+32-bit exact fault keys and Toyota status meaning/state without relabeling them
+as UDS bits. Older records retain legacy interpretation; unknown explicit future
+status schemas display raw metadata. Saved/imported results grant no authority.
+
+Latest local commands/results:
+
+- `PYTHONPATH=.local/python:tools/thinkdiag python -m unittest discover -s tools/thinkdiag -p 'test_*.py' -q`
+  (rerun before commit; all tests must pass).
+- Complete decoded source-read compilation and
+  `python tools/thinkdiag/toyota_runtime_compile.py verify .local/toyota-complete/vehicle-packs`:
+  **30 live reads / 1,414 labels / four source queries / one ID / zero production definitions**.
+- Standalone Kotlin 2.2.21 / JDK 17 harness: **101 scenario groups PASS**, including
+  actual generated definitions, queued-intent expiry/reset/cancellation, source
+  lease non-escalation and saved metadata. This is not Gradle/Compose/Android
+  acceptance; the project uses its own Kotlin/Android toolchain in CI.
+- Protected `ReadOnlyPolicyTest`, `WritePolicyTest` and `ClearConfirmationTest`
+  remain unchanged. Android 24 still tests index/range/cache delivery only, not
+  nonempty executable Toyota live/DTC screens. No physical validation is claimed.

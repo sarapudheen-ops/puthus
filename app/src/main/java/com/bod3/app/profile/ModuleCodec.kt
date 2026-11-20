@@ -9,6 +9,8 @@ import com.bod3.app.obd.uds.DidReading
 import com.bod3.app.obd.uds.DidResult
 import com.bod3.app.obd.uds.DtcReadResult
 import com.bod3.app.obd.uds.DtcRecord
+import com.bod3.app.obd.uds.DtcStatusMeaning
+import com.bod3.app.obd.uds.ToyotaDtcState
 
 /**
  * Flat, storage-friendly form of a [ModuleReport]: the summary fields the module list shows are
@@ -81,11 +83,14 @@ object ModuleCodec {
         )
     }
 
-    private fun encodeDid(reading: DidReading): Map<String, Any?> = when (val r = reading.result) {
-        is DidResult.Value -> mapOf("did" to reading.did, "kind" to "value", "data" to r.data.toHexString())
-        is DidResult.Negative -> mapOf("did" to reading.did, "kind" to "negative", "nrc" to r.nrc)
-        DidResult.NoResponse -> mapOf("did" to reading.did, "kind" to "none")
-        is DidResult.Failed -> mapOf("did" to reading.did, "kind" to "failed", "message" to r.message)
+    private fun encodeDid(reading: DidReading): Map<String, Any?> = linkedMapOf<String, Any?>(
+        "did" to reading.did, "definitionId" to reading.definitionId, "definitionName" to reading.definitionName,
+        "request" to reading.request, "hexOnly" to reading.hexOnly, "translatedText" to reading.translatedText,
+    ) + when (val r = reading.result) {
+        is DidResult.Value -> mapOf("kind" to "value", "data" to r.data.toHexString())
+        is DidResult.Negative -> mapOf("kind" to "negative", "nrc" to r.nrc)
+        DidResult.NoResponse -> mapOf("kind" to "none")
+        is DidResult.Failed -> mapOf("kind" to "failed", "message" to r.message)
     }
 
     private fun decodeDids(json: String): List<DidReading> {
@@ -99,7 +104,9 @@ object ModuleCodec {
                 "none" -> DidResult.NoResponse
                 else -> DidResult.Failed(map["message"] as? String ?: "unknown")
             }
-            DidReading(did, result)
+            DidReading(did, result, definitionId = map["definitionId"] as? String,
+                definitionName = map["definitionName"] as? String, request = map["request"] as? String,
+                hexOnly = map["hexOnly"] as? Boolean ?: false, translatedText = map["translatedText"] as? String)
         }
     }
 
@@ -108,7 +115,9 @@ object ModuleCodec {
             "kind" to "read",
             "source" to result.source,
             "mask" to result.availabilityMask,
-            "records" to result.records.map { mapOf("code" to it.code, "status" to it.status, "raw" to it.raw.toHexString()) },
+            "records" to result.records.map { mapOf("code" to it.code, "status" to it.status, "raw" to it.raw.toHexString(),
+                "statusMeaning" to it.statusMeaning.name, "nativeCode" to it.nativeCode?.let { key -> "%08X".format(key) },
+                "toyotaState" to it.toyotaState?.name, "sourceDescription" to it.sourceDescription) },
         )
         is DtcReadResult.Negative -> mapOf("kind" to "negative", "nrc" to result.nrc)
         DtcReadResult.NoResponse -> mapOf("kind" to "none")
@@ -127,6 +136,13 @@ object ModuleCodec {
                         code = record["code"] as? String ?: return@mapNotNull null,
                         status = (record["status"] as? Double)?.toInt(),
                         raw = parseHex(record["raw"] as? String),
+                        // Legacy rows omitted statusMeaning and remain UDS/OBD. Unknown
+                        // future values MUST stay opaque, never acquire UDS bit meanings.
+                        statusMeaning = if ("statusMeaning" !in record) DtcStatusMeaning.UDS
+                            else DtcStatusMeaning.entries.firstOrNull { it.name == record["statusMeaning"] } ?: DtcStatusMeaning.RAW,
+                        nativeCode = (record["nativeCode"] as? String)?.takeIf { it.matches(Regex("[0-9A-F]{8}")) }?.toLongOrNull(16),
+                        toyotaState = ToyotaDtcState.entries.firstOrNull { it.name == record["toyotaState"] },
+                        sourceDescription = record["sourceDescription"] as? String,
                     )
                 },
                 availabilityMask = (map["mask"] as? Double)?.toInt(),

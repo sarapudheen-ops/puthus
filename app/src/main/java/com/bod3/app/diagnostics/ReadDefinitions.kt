@@ -158,7 +158,8 @@ data class DiagnosticClear(val request: String, val responsePrefix: String, val 
     }
 }
 
-data class FaultRead(val read: DiagnosticRead, val layout: FaultRecordLayout, val clear: DiagnosticClear? = null)
+data class FaultRead(val read: DiagnosticRead, val layout: FaultRecordLayout, val clear: DiagnosticClear? = null,
+                     val workflow: ToyotaFaultWorkflow? = null)
 
 /** An empty explicit definition set deliberately suppresses legacy generic identification/DTC requests. */
 data class EcuReadDefinitions(val identification: List<IdentificationRead> = emptyList(), val faults: FaultRead? = null) {
@@ -179,14 +180,20 @@ data class EcuReadDefinitions(val identification: List<IdentificationRead> = emp
             if (item.read.requestBytes.firstOrNull() !in faultServices) add("faults.read: needs a documented dialect-specific fault-read variant")
             addAll(item.layout.problems().map { "faults.layout.$it" })
             addAll(item.clear?.problems(protocol).orEmpty().map { "faults.clear.$it" })
+            item.workflow?.let { w ->
+                addAll(w.problems().map { "faults.workflow.$it" })
+                if (protocol != EcuProtocol.KWP || item.layout !is ToyotaFaultLayout) add("faults.workflow: source P3/P4 needs KWP and the explicit Toyota layout")
+                if (w.queries.none { q -> q.queryKind == (item.layout as? ToyotaFaultLayout)?.queryKind && q.frames.any { it.requestBytes == item.read.requestBytes } })
+                    add("faults.workflow: primary fault read must belong to the same source workflow")
+            }
         }
     }
     val sourceRecords: List<String> get() = identification.flatMap { it.read.sourceRecords + it.read.supportChecks.flatMap { c -> c.sourceRecords } } +
         faults?.let { it.read.sourceRecords + it.read.supportChecks.flatMap { c -> c.sourceRecords } +
-            it.layout.sourceRecords + it.clear?.sourceRecords.orEmpty() }.orEmpty()
+            it.layout.sourceRecords + it.clear?.sourceRecords.orEmpty() + it.workflow?.allSourceRecords.orEmpty() }.orEmpty()
     val needsExtendedReadSchema: Boolean get() = identification.any { it.encoding in setOf(IdentificationEncoding.BYTE_ENUM, IdentificationEncoding.ASCII_RECORDS) ||
         it.read.supportChecks.isNotEmpty() || it.read.dataBytes != null } ||
-        faults?.read?.let { it.supportChecks.isNotEmpty() || it.dataBytes != null } == true
+        faults?.read?.let { it.supportChecks.isNotEmpty() || it.dataBytes != null } == true || faults?.workflow != null
 }
 
 /** Strict additive JSON schema. Imports never get write grants or trusted flags from these fields. */
@@ -196,7 +203,7 @@ object EcuReadDefinitionsCodec {
             "byteValues" to item.byteValues.takeIf { it.isNotEmpty() }?.mapKeys { "%02X".format(it.key) },
             "defaultText" to item.defaultText, "recordBytes" to item.recordBytes).filterValues { it != null } },
         "faults" to d.faults?.let { f -> linkedMapOf(
-            "read" to readMap(f.read), "layout" to layoutMap(f.layout),
+            "read" to readMap(f.read), "layout" to layoutMap(f.layout), "workflow" to f.workflow?.let(ToyotaFaultWorkflowCodec::encode),
             "clear" to f.clear?.let { linkedMapOf("request" to it.request, "responsePrefix" to it.responsePrefix, "sourceRecords" to it.sourceRecords) },
         ).filterValues { it != null } },
     ).filterValues { it != null }
@@ -249,7 +256,7 @@ object EcuReadDefinitionsCodec {
         }
         val faults = f.obj(m, "faults", path, false)?.let { v ->
             val p = "$path.faults"
-            unknown(v, setOf("read", "layout", "clear"), p)
+            unknown(v, setOf("read", "layout", "clear", "workflow"), p)
             val r = read(v["read"], "$p.read")
             val layout = f.obj(v, "layout", p)?.let { l ->
                 val lp = "$p.layout"
@@ -270,7 +277,7 @@ object EcuReadDefinitionsCodec {
                 val request = f.string(c, "request", cp); val prefix = f.string(c, "responsePrefix", cp); val records = f.strings(c, "sourceRecords", cp)
                 if (request == null || prefix == null) null else DiagnosticClear(request, prefix, records)
             }
-            if (r == null || layout == null) null else FaultRead(r, layout, clear)
+            if (r == null || layout == null) null else FaultRead(r, layout, clear, ToyotaFaultWorkflowCodec.decode(v["workflow"], "$p.workflow", errors))
         }
         return if (errors.size == before) EcuReadDefinitions(ids, faults) else null
     }

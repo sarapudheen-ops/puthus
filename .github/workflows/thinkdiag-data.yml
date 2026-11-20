@@ -131,6 +131,10 @@ jobs:
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/toyota_runtime_compile.py compile .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/vehicle-packs
+          python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/thinkdiag/vehicle-packs
           python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/thinkdiag/vehicle-packs
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota vehicle conversion accounting' -f head_sha="$GITHUB_SHA" \
