@@ -105,3 +105,11 @@ explicit pin-pair selection, binary32 baud conversion and the full shifted timin
 the alternate connector. Tests reject source flag changes and packets above the 63-byte short-frame
 limit rather than silently switching variants. No P1–P4 name, receive address or operational grant is
 inferred from this intermediate projection; the per-ECU production blocker above remains unresolved.
+
+The additional `toyota_lifecycle.py` projection now joins the exact regional/function initial,
+keepalive and exit bindings for all 284 entries. A linked native FILE → SYSP → COMM comparison
+matches first-positive-entry, keepalive-on/off and exit call traces without Python frame/packet
+substitutions. Source keepalives have **six** exact variants, not a universal `3E`, and native pulse
+arguments include **35/15** as well as **25/25**; the first ECU does not supply global defaults.
+Adapter APIs and the positive reply are still synthetic. Native failure/retry/ISO-fallback paths,
+ST/VT-equivalent timing semantics and production emission remain unfinished.

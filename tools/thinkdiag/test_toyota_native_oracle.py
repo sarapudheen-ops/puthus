@@ -15,7 +15,7 @@ from vehicle_bundle import SOURCE_SHA256, canonical
 
 
 class NativeOracleTest(unittest.TestCase):
-    def test_reviewed_reference_pins_all_four_actual_executed_libraries_and_domains(self):
+    def test_reviewed_reference_pins_all_five_actual_executed_libraries_and_domains(self):
         reference = json.loads(REFERENCE.read_text())
         self.assertEqual(SOURCE_SHA256, reference['sourceSha256'])
         self.assertIs(reference['adapterAccess'], False)
@@ -30,6 +30,15 @@ class NativeOracleTest(unittest.TestCase):
         self.assertTrue(any('trace-only fake' in boundary for boundary in kwp['fakeBoundaries']))
         wire_kotlin = (Path(__file__).resolve().parents[2] / 'app/src/test/java/com/bod3/app/obd/kwp/KwpScenarios.kt').read_text()
         self.assertIn(kwp['wireContractResultsSha256'], wire_kotlin)
+        lifecycle = reference['kwpLifecycleComparison']
+        self.assertEqual(284, lifecycle['sourceEntries'])
+        self.assertEqual({'fastPositiveEntry': 284, 'keepaliveOn': 284, 'keepaliveOff': 284, 'exit': 284}, lifecycle['vectors'])
+        self.assertEqual((284, 284), (sum(lifecycle['keepaliveRequests'].values()), sum(lifecycle['exitRequests'].values())))
+        self.assertEqual((174, 41), (lifecycle['keepaliveRequests']['2100'], lifecycle['keepaliveRequests']['3e']))
+        self.assertEqual({'1919': 78, '230f': 206}, lifecycle['sourcePulseArguments'])
+        self.assertEqual(reference['entryComparison']['librarySha256'], lifecycle['linkedLibrariesSha256']['libTOYOTA_FILE.so'])
+        self.assertEqual(reference['frameComparison']['librarySha256'], lifecycle['linkedLibrariesSha256']['libTOYOTA_COMM.so'])
+        self.assertEqual(lifecycle['librarySha256'], lifecycle['linkedLibrariesSha256']['libTOYOTA_SYSP.so'])
         self.assertEqual(180316, sum(r['faultCodeMappings'] for r in reference['functionReaderComparison']['regions'].values()))
         self.assertEqual(70144, reference['faultDecoderComparison']['stateVectors'])
         self.assertEqual(2112, reference['faultDecoderComparison']['recordVectors'])
@@ -42,7 +51,7 @@ class NativeOracleTest(unittest.TestCase):
         self.assertEqual(3584, reference['faultLabelComparison']['fallbackVectors'])
         self.assertEqual(196608, reference['faultLabelComparison']['mergeVectors'])
         self.assertEqual(0, sum(r['missingExactLabels'] for r in reference['faultLabelComparison']['scopedLabels'].values()))
-        for key in ('entryComparison', 'kwpTransportComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'p5DecoderComparison', 'faultLabelComparison', 'calcComparison'):
+        for key in ('entryComparison', 'kwpTransportComparison', 'kwpLifecycleComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'p5DecoderComparison', 'faultLabelComparison', 'calcComparison'):
             self.assertRegex(reference[key]['librarySha256'], r'^[0-9a-f]{64}$')
             self.assertIs(reference[key]['nativeInstructionsExecuted'], True)
         kotlin = (Path(__file__).resolve().parents[2] / 'app/src/test/java/com/bod3/app/diagnostics/ToyotaFaultScenarios.kt').read_text()
@@ -88,8 +97,8 @@ class NativeOracleTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'details'): verify_reference(actual, ref)
 
     def test_native_extraction_is_archive_pinned_complete_unique_and_individually_hashed(self):
-        names = ('libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_DTCF.so', 'libTOYOTA_CALC.so')
-        fields = ('entryComparison', 'frameComparison', 'faultDecoderComparison', 'calcComparison')
+        names = ('libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_DTCF.so', 'libTOYOTA_CALC.so', 'libTOYOTA_SYSP.so')
+        fields = ('entryComparison', 'frameComparison', 'faultDecoderComparison', 'calcComparison', 'kwpLifecycleComparison')
         with tempfile.TemporaryDirectory() as root:
             root = Path(root); archive = root / 'synthetic.zip'; ref = root / 'reference.json'
             reference = {field: {'librarySha256': hashlib.sha256(name.encode()).hexdigest()} for name, field in zip(names, fields)}

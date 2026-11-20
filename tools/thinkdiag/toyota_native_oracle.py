@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Owner-authorized offline native/source differential checks, never an ECU bridge.
 
-The supplied FILE/COMM/DTCF/CALC instructions run in bounded AArch64 emulation. File
+The supplied FILE/COMM/SYSP/DTCF/CALC instructions run in bounded AArch64 emulation. File
 APIs below see only immutable, supplied decoded byte arrays. Adapter, discovery,
 UI and open-library boundaries are explicit fakes, recorded as such. There is
 no physical validation and no claim that mocked boundaries themselves worked.
@@ -25,6 +25,8 @@ from toyota_dtc_labels import (DiagnosticCodeMerge, FaultLabels, fallback_code, 
 from source_verification import verify_archive
 from toyota_entries import EntryIndex
 from toyota_frames import SourceFrames
+from toyota_lifecycle import SYSP_SHA256, selected_fast_kwp_lifecycle
+from toyota_transport import COMM_SHA256, ConsumerCall
 from toyota_faults import NativeFaultLayout, NativeP5FaultLayout, state_ids
 from toyota_functions import FunctionBlocks
 from vehicle_bundle import SOURCE_SHA256, canonical
@@ -136,6 +138,149 @@ def compare_entries(libraries, source):
             'function': 'GetInfoFromEnterList', 'comparedRecords': total, 'bySelector': dict(descriptors),
             'inMemoryReadCalls': files.reads,
             'fakeBoundaries': ['fseekEx/freadEx over decoded byte arrays; not libDEVICEID file decryption']}
+
+
+def compare_fast_kwp_lifecycle(libraries, sources):
+    """Real FILE -> SYSP -> COMM linkage; only adapter/file/libc edges are fakes.
+
+    The supplied frame-lookup, configuration, packet, keepalive and exit
+    consumers execute together. This removes the earlier Python frame/packing
+    substitutions in the first-ECU SYSP experiment, but still proves only the
+    first-success fast-entry branch with a synthetic positive adapter reply.
+    """
+    file, comm, sysp = 'libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_SYSP.so'
+    identities = {file: 'dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0',
+                  comm: COMM_SHA256, sysp: SYSP_SHA256}
+    for name, digest in identities.items():
+        if not isinstance(libraries.get(name), bytes) or hashlib.sha256(libraries[name]).hexdigest() != digest:
+            raise ValueError('Fast KWP lifecycle comparison needs the exact supplied library: ' + name)
+    native = NativeSandbox({name: libraries[name] for name in identities})
+    files = MemoryFiles(native); files.bind(file)
+    handle = files.register(sources['SYSTEMENTER.BIN'])
+    index = EntryIndex(sources['SYSTEMENTER.BIN'])
+    context = native.allocate(0x20000)
+    global_state = native.allocate(0x280e1d0)
+    for name in (comm, sysp):
+        native.write(native.symbol(name, 'g_MToken'), struct.pack('<Q', global_state))
+    for name, functions in {
+            comm: ('OpenAbstractCommDll', 'OpenDiagFuncDll', 'OpenShowInterfaceDLL'),
+            sysp: ('OpenDiagCommDll', 'OpenAbstractCommDll', 'OpenShowInterfaceDLL')}.items():
+        for function in functions:
+            native.bind(function, lambda *_: 0, library=name)
+    for function in ('InitSetEnterFrame', 'InitCommSet', 'GetFuncCommFrameInfo',
+                     'MultiPackFunc', 'MultSetLinkKeepFunc', 'CmdSendWithoutRec'):
+        native.link_function_pointer(sysp, function, comm, function)
+
+    trace = []
+    for name in (comm, sysp):
+        for function, count in (
+                ('BeginCombination', 0), ('EnableLLine', 1), ('SelectPIN', 5),
+                ('SetCommunicationMaximumWaitTime', 1), ('SetEcuCommunicationVoltageLogic', 2),
+                ('SetCommunicationParameter', 4), ('SetCommunicationLineVoltage', 3)):
+            if function not in native.libraries[name].symbols: continue
+            def callback(*args, api=function, n=count):
+                trace.append(ConsumerCall(api, tuple(args[:n])))
+                return 1
+            native.bind(function, callback, indirect=True, library=name)
+        def end(*_):
+            trace.append(ConsumerCall('EndCombination', ()))
+            return 9  # Explicit synthetic adapter positive, not a device result.
+        native.bind('EndCombination', end, indirect=True, library=name)
+    def baud(*_):
+        trace.append(ConsumerCall('SetEcuBaudRate', (native.f32(),)))
+        return 1
+    def timing(a, b, *_):
+        trace.append(ConsumerCall('SetEcuCommTimeInterval', (native.f32(), a, b)))
+        return 1
+    native.bind('SetEcuBaudRate', baud, indirect=True, library=comm)
+    native.bind('SetEcuCommTimeInterval', timing, indirect=True, library=comm)
+    def exchange(out, capacity, a, b, tx, *_):
+        header = native.read(tx, 1)[0]
+        size = (header & 63) + 4
+        if header & 0xc0 != 0x80 or not 5 <= size <= 50:
+            raise AssertionError('Unexpected native lifecycle packet class/size')
+        wire = native.read(tx, size)
+        trace.append(ConsumerCall('CommSubFunc_00000003', (capacity, a, b, wire.hex())))
+        reply = bytes([0x83, wire[2], wire[1], 0xc1, 0xe9, 0x8f])
+        reply += bytes([sum(reply) & 255])
+        native.write(out, bytes([1, len(reply)]) + reply)
+        return len(reply) + 2
+    native.bind('CommSubFunc_00000003', exchange, indirect=True, library=sysp)
+    def link_keep(tx, size, a, b, *_):
+        if not 0 <= size <= 20: raise AssertionError('Unbounded native keepalive packet')
+        trace.append(ConsumerCall('SetLinkKeep', (native.read(tx, size).hex(), size, a, b)))
+        return 1
+    native.bind('SetLinkKeep', link_keep, indirect=True, library=comm)
+    native.bind('SetLinkKeep', link_keep, indirect=True, library=sysp)
+    def exit_exchange(wait, _out, capacity, count, tx, *_):
+        # This is a variadic packet-pointer API, not a pointer/length pair.
+        # x5 is an unrelated caller-saved word, not a packet-size argument.
+        header = native.read(tx, 1)[0]
+        size = (header & 63) + 4
+        if header & 0xc0 != 0x80 or not 5 <= size <= 50:
+            raise AssertionError('Unexpected native exit packet class/size')
+        trace.append(ConsumerCall('KwpSendDataToEcuGetAnswer', (wait, capacity, count, native.read(tx, size).hex())))
+        return 9
+    native.bind('KwpSendDataToEcuGetAnswer', exit_exchange, indirect=True, library=comm)
+    native.bind('usleep', lambda n, *_: trace.append(ConsumerCall('usleep', (n,))) or 0)
+
+    result_digest = hashlib.sha256(); binding_digest = hashlib.sha256()
+    counts = Counter(); keepalive_requests = Counter(); exit_requests = Counter(); pulses = Counter()
+    def compare(stage, result, expected, identity):
+        actual = canonical([call.report() for call in trace])
+        wanted = canonical([call.report() for call in expected])
+        if result != 0 or actual != wanted:
+            raise AssertionError(f'Native {stage} lifecycle differs for {identity}: result={result}, calls={actual!r}')
+        result_digest.update(identity.encode() + b':' + stage.encode() + b':' + actual + b'\n')
+        counts[stage] += 1
+    for region_id, region in enumerate(('EU', 'NA', 'JP'), 1):
+        frames = SourceFrames(sources, region)
+        for offset, filename in ((0, 'Toyota_bin_00.BIN'), (0x38, 'Toyota_bin_11.BIN'), (0x40, 'Toyota_bin_12.BIN')):
+            raw = sources[region + '/' + filename]
+            native.write(global_state + 0xc0 + offset, struct.pack('<Q', native.allocate(len(raw), raw)))
+        for function, row in index.regions[region_id].items():
+            for entry in index.lists[row['listOffset']].entries:
+                if entry.transport not in (1, 5): continue
+                lifecycle = selected_fast_kwp_lifecycle(index, frames, region=region_id,
+                    function=function, selector=entry.descriptor)
+                identity = f'{region}/{function}/{entry.source_id}'
+                native.write(context, bytes(0x20000))
+                if native.call(file, 'GetInfoFromEnterList', handle, row['listOffset'], entry.descriptor, context) != 0:
+                    raise AssertionError('Native lifecycle FILE entry reader failed')
+                native.write(context, struct.pack('<I', function))
+                native.write(global_state + 0x9e, b'\x10')
+                binding_digest.update(canonical(lifecycle.report()) + b'\n')
+                trace.clear()
+                compare('fastPositiveEntry', native.call(sysp, 'SystemEnterPart', function, context),
+                    lifecycle.fast_success_calls(connector=16, pin_pair_index=0), identity)
+                for enabled in (True, False):
+                    trace.clear()
+                    compare('keepaliveOn' if enabled else 'keepaliveOff',
+                        native.call(sysp, 'SystemSetLinkKeepFunc', int(enabled), context),
+                        lifecycle.keepalive_calls(enabled=enabled), identity)
+                trace.clear()
+                native.write(context + 0x1082b, b'\x01')
+                compare('exit', native.call(sysp, 'SystemExitPart', function, context), lifecycle.exit_calls(), identity)
+                if native.read(context + 0x1082b, 1) != b'\0':
+                    raise AssertionError('Native exit did not clear its selected context state')
+                keepalive_requests[lifecycle.keepalive.request.hex()] += 1
+                exit_requests[lifecycle.exit.request.hex()] += 1
+                pulses[lifecycle.entry.timing[3:].hex()] += 1
+    if not counts['fastPositiveEntry']:
+        raise ValueError('No source fast-KWP lifecycle was compared')
+    return {'nativeInstructionsExecuted': True, 'librarySha256': SYSP_SHA256,
+        'linkedLibrariesSha256': identities, 'sourceEntries': counts['fastPositiveEntry'],
+        'vectors': dict(counts), 'consumerCallsSha256': result_digest.hexdigest(),
+        'sourceBindingsSha256': binding_digest.hexdigest(), 'inMemoryReadCalls': files.reads,
+        'keepaliveRequests': dict(sorted(keepalive_requests.items())),
+        'exitRequests': dict(sorted(exit_requests.items())), 'sourcePulseArguments': dict(sorted(pulses.items())),
+        'fakeBoundaries': ['FILE fseekEx/freadEx see only supplied decoded arrays; not libDEVICEID decryption',
+            'Open*Dll exports do not load host code; six explicitly identified SYSP cells link to real COMM guest functions',
+            'Every adapter operation is an explicit trace-only fake; EndCombination returns synthetic positive 9',
+            'Synthetic addressed C1 reply, libc memory and no-wait usleep shims; not initialization/electrical/clock proof'],
+        'notCovered': ['Fast-entry failure/negative-reply/retry and native-transport-5 ISO fallback branches',
+            'MIC3313 ST/VT timing/line/pin mapping and physical validation',
+            'Keepalive adapter argument units, runtime scheduling/receive semantics and production emission']}
 
 
 def compare_frames(libraries, sources, region, function, templates):
@@ -592,6 +737,7 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
         'physicalValidation': False, 'adapterAccess': False, 'networkAccess': False,
         'entryComparison': compare_entries(libraries, sources['SYSTEMENTER.BIN']),
         'kwpTransportComparison': compare_fast_kwp(libraries, sources['SYSTEMENTER.BIN']),
+        'kwpLifecycleComparison': compare_fast_kwp_lifecycle(libraries, sources),
         'frameComparison': compare_frames(libraries, sources, 'EU', 61,
             (1, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 102, 103, 104, 127, 160)),
         'functionRoundTrips': counts,
@@ -607,7 +753,7 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
 
 def load_libraries(path):
     verify_archive(path)
-    names = {'libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_CALC.so', 'libTOYOTA_DTCF.so'}
+    names = {'libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_CALC.so', 'libTOYOTA_DTCF.so', 'libTOYOTA_SYSP.so'}
     libraries = {}
     with zipfile.ZipFile(path) as archive:
         for info in checked_infos(archive):
@@ -619,7 +765,8 @@ def load_libraries(path):
         raise ValueError('Missing native comparison libraries')
     reference = json.loads(REFERENCE.read_text())
     for name, comparison in (('libTOYOTA_FILE.so', 'entryComparison'), ('libTOYOTA_COMM.so', 'frameComparison'),
-            ('libTOYOTA_DTCF.so', 'faultDecoderComparison'), ('libTOYOTA_CALC.so', 'calcComparison')):
+            ('libTOYOTA_DTCF.so', 'faultDecoderComparison'), ('libTOYOTA_CALC.so', 'calcComparison'),
+            ('libTOYOTA_SYSP.so', 'kwpLifecycleComparison')):
         if hashlib.sha256(libraries[name]).hexdigest() != reference[comparison]['librarySha256']:
             raise ValueError('Native comparison library differs from its reviewed identity: ' + name)
     return libraries
@@ -641,7 +788,12 @@ def summary(result):
         f"{result['kwpTransportComparison']['configurationVectors']:,} configuration traces, "
         f"{result['kwpTransportComparison']['sourcePacketVectors']:,} source packet vectors and "
         f"{result['kwpTransportComparison']['wireContractVectors']:,} native/Python/Kotlin short-packet contract vectors. "
-        'Every adapter API is a trace-only fake; ST/VT timing/pin mapping and SYSP startup remain unresolved.\n'
+        'Every adapter API is a trace-only fake; ST/VT timing/pin mapping remains unresolved.\n'
+        f"- Linked FILE/SYSP/COMM fast lifecycle: {result['kwpLifecycleComparison']['sourceEntries']:,} exact entries; "
+        f"{result['kwpLifecycleComparison']['vectors']['fastPositiveEntry']:,} first-positive-entry, "
+        f"{result['kwpLifecycleComparison']['vectors']['keepaliveOn'] + result['kwpLifecycleComparison']['vectors']['keepaliveOff']:,} keepalive-on/off and "
+        f"{result['kwpLifecycleComparison']['vectors']['exit']:,} exit traces. Real native frame lookup, configuration and packing; "
+        'synthetic adapter/C1 reply only. Negative/retry/ISO fallback and physical behavior remain unresolved.\n'
         f"- DTCF: {result['faultLabelComparison']['exactLabelVectors']:,} exact TCODE pairs, "
         f"{result['faultLabelComparison']['fallbackVectors']:,} source numeric-display vectors, "
         f"{result['faultLabelComparison']['mergeVectors']:,} exact-key byte-merge calls. "

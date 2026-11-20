@@ -339,7 +339,7 @@ write, a value that changed since the backup, confirmation reuse/expiry, and the
 
 The owner-verified `assets-v1/TOYOTA.zip` specification has been decoded into 1,410 YZJM binary payloads
 and eight English text libraries (198,091 indexed records; 193,589 valid UTF-8). Owner-authorized **offline**
-AArch64 emulation now executes supplied FILE/COMM/DTCF/CALC functions to check the independent ports.
+AArch64 emulation now executes supplied FILE/COMM/SYSP/DTCF/CALC functions to check the independent ports.
 No adapter/ECU is connected, host native loading is not used, and no vendor code/scripts enter the APK.
 Recovered datasets remain outside Git in Actions artifacts.
 
@@ -371,8 +371,11 @@ byte-merge vectors. P5 core record projection additionally matches on 49,152 vec
 freeze/mask/query workflows). FILE comparisons cover every regional fault/clear block and all 1,308 entries; COMM
 covers 8,775 regional frames and 34,671 template lookups. A separate fast-KWP configuration/packing
 port covers 284 source entries, 568 native API traces and 17,892 source packet vectors; 2,016 short-packet
-vectors also match Kotlin. Its adapter APIs are trace-only fakes: MIC3313 timing/pin mapping and SYSP
-startup are still unresolved. All 27,035 exact TCODE pairs are checked, and
+vectors also match Kotlin. Real linked FILE → SYSP → COMM instructions additionally match 284
+first-positive-entry, 568 keepalive-on/off and 284 exit traces. Exact source keepalives are not
+universally `3E`; the six function-bound requests and their literal native configuration arguments
+are retained. Adapter APIs/replies are explicit fakes: MIC3313 timing/pin mapping, failed-entry/retry/
+ISO-fallback branches and operational emission are still unresolved. All 27,035 exact TCODE pairs are checked, and
 the selected-function label joins have no missing keys. CALC comparison covers 65,792 vectors for two
 arithmetic forms. These are bounded offline semantic checks—not transport, full-language or
 executable-vehicle proof.

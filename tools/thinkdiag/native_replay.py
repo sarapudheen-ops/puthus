@@ -191,17 +191,38 @@ class NativeSandbox:
             cell = self.symbol(library, name)
             self.write(cell, struct.pack('<Q', self._shim(name, callback)))
         else:
-            address = self.imports.get(name)
+            address = self.imports.get(name) if library is None else None
             if address is None:
-                # Hook a real exported function only on explicit request. No
-                # changes to the supplied source bytes are stored on disk.
-                owners = [lib for lib in self.libraries.values() if name in lib.symbols]
-                if len(owners) != 1:
-                    raise ReplayError(f"Unknown/ambiguous replay import: {name}")
+                # Hook a real exported function only on explicit request. A
+                # library-scoped binding never overrides its sibling's export.
+                # No changes to supplied bytes are stored on disk.
+                owners = [lib for lib in self.libraries.values()
+                          if name in lib.symbols and (library is None or lib.name == library)]
+                if len(owners) != 1 or owners[0].symbols[name]['st_info']['type'] != 'STT_FUNC':
+                    raise ReplayError(f"Unknown/ambiguous replay function: {library}:{name}")
                 address = owners[0].base + owners[0].symbols[name]['st_value']
-                self.uc.hook_add(UC_HOOK_CODE, self._hook, begin=address, end=address)
+                if address not in self.hooks:
+                    self.uc.hook_add(UC_HOOK_CODE, self._hook, begin=address, end=address)
             self.hooks[address] = (name, callback)
-        self.bindings[name] = callback
+        self.bindings[name if library is None else library + ':' + name] = callback
+
+    def link_function_pointer(self, library, cell, target_library, function):
+        """Explicitly join a source-identified pointer cell to real guest code.
+
+        This does not run Open*Dll, constructors, dlopen or a host loader. The
+        experiment identifies BOTH consumer cell and supplier export; no name
+        guessing, callback or fallback is used. A data object cannot be linked
+        as executable code and an ordinary function cannot be used as a cell.
+        """
+        try:
+            slot = self.libraries[library].symbols[cell]
+            target = self.libraries[target_library].symbols[function]
+            if (slot['st_info']['type'] != 'STT_OBJECT' or slot['st_size'] != 8
+                    or target['st_info']['type'] != 'STT_FUNC' or target['st_size'] < 4):
+                raise ReplayError('Native linkage needs an eight-byte pointer cell and a defined guest function')
+        except KeyError as error:
+            raise ReplayError('Missing explicitly selected guest linkage endpoint') from error
+        self.write(self.symbol(library, cell), struct.pack('<Q', self.symbol(target_library, function)))
 
     def _unbound(self, name):
         raise ReplayError(f"External call has no experiment binding: {name}")

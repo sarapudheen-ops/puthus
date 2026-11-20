@@ -77,6 +77,24 @@ The three timing arguments keep their source API positions, not guessed P1–P4 
 pin/line/timing configuration, SYSP fast/slow startup, replies, sessions, keepalive/exit, other native
 transports and production emission remain incomplete. The projection never approves an ECU link.
 
+`toyota_lifecycle.py` now adds exact single-template initial/keepalive/exit joins for that same closed
+284-entry source class. The expanded oracle links real FILE → SYSP → COMM guest functions through
+six source-identified pointer cells: **284 first-positive-entry, 568 keepalive-on/off and 284 exit
+traces** match the independent projection. No Python callback supplies the frame lookup, packet
+construction or configuration in this comparison. Five native library identities are now pinned.
+Hardware APIs and the positive `C1` reply remain explicit fakes; failure/retry and transport-5 ISO
+fallback are not ported or validated. Library-scoped Open*Dll hooks cannot override a sibling's
+same-named export. Synthetic regression tests also execute cross-library guest linkage without a
+callback in the supplier function.
+
+In particular, keepalive is **not universally `3E`**: exact bindings are `0100` (42), `2100` (174),
+`2102` (4), `21E1` (3), `3E` (41), `3E01` (20). Their literal native `SetLinkKeep` arguments are
+`(wire, length, 3, 800)`; the 800 is not an app P3-derived default or a proven adapter scheduling unit.
+Exit requests are source `82` (236), `3E` (42), or `3E01` (6). Native exit uses a variadic packet-pointer
+API, **not** a pointer/length pair, then `usleep(500)`; original response bytes remain provenance,
+not an invented enforced handshake. Source pulse argument pairs are `25/25` (78) and `35/15` (206).
+These findings do not approve MIC3313 mapping, physical initialization or executable emission.
+
 `toyota_dtc_labels.py` joins **179,770 distinct per-function keys** from the 180,316 mapping rows to
 exact source pairs, with **zero missing keys** across EU/NA/JP. Repeated printed codes are not merged,
 legacy codes are retained, and no other ECU's text is substituted. The English reader now retains GAG

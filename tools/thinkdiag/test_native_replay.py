@@ -61,6 +61,31 @@ class NativeReplayTest(unittest.TestCase):
         sandbox.bind('oracle', lambda a, *_: a + 19, indirect=True, library='synthetic.so')
         self.assertEqual(42, sandbox.call('synthetic.so', 'entry', 23))
 
+    def test_scoped_export_binding_cannot_override_a_sibling_with_the_same_symbol(self):
+        sandbox = NativeSandbox({'one.so': elf_fixture(), 'two.so': elf_fixture()})
+        with self.assertRaisesRegex(ReplayError, 'ambiguous'):
+            sandbox.bind('entry', lambda *_: 91)
+        sandbox.bind('entry', lambda *_: 91, library='one.so')
+        self.assertEqual(91, sandbox.call('one.so', 'entry', 2, 3))
+        self.assertEqual(5, sandbox.call('two.so', 'entry', 2, 3))
+        with self.assertRaises(ReplayError): sandbox.bind('entry', lambda *_: 0, library='absent.so')
+        sandbox.bind('entry', lambda *_: 92, library='one.so')
+        self.assertEqual(92, sandbox.call('one.so', 'entry'))
+
+    def test_explicit_cross_library_pointer_link_executes_real_guest_code_not_a_callback(self):
+        code = bytes.fromhex('fd7bbfa9 f0000058 100240f9 00023fd6 fd7bc1a8 c0035fd6')
+        sandbox = NativeSandbox({'caller.so': elf_fixture(code, relocation=257, symbol_type=1),
+                                 'supplier.so': elf_fixture()})
+        sandbox.link_function_pointer('caller.so', 'oracle', 'supplier.so', 'entry')
+        self.assertEqual(42, sandbox.call('caller.so', 'entry', 23, 19))
+        self.assertNotIn(sandbox.symbol('supplier.so', 'entry'), sandbox.hooks)
+        for args in (('caller.so', 'entry', 'supplier.so', 'entry'),
+                     ('caller.so', 'oracle', 'caller.so', 'oracle'),
+                     ('absent.so', 'oracle', 'supplier.so', 'entry'),
+                     ('caller.so', 'oracle', 'supplier.so', 'absent')):
+            with self.subTest(args=args), self.assertRaises(ReplayError): sandbox.link_function_pointer(*args)
+        with self.assertRaises(ReplayError): sandbox.bind('oracle', lambda *_: 0, library='caller.so')
+
     def test_unmapped_access_loops_and_unsupported_relocations_abort(self):
         sandbox = NativeSandbox({'synthetic.so': elf_fixture(bytes.fromhex('000040f9 c0035fd6'))})
         with self.assertRaisesRegex(ReplayError, 'Replay stopped'):

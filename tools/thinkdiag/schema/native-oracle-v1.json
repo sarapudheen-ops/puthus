@@ -193,6 +193,53 @@
     }
   },
   "kind": "offline-native-differential",
+  "kwpLifecycleComparison": {
+    "consumerCallsSha256": "d14837717846cacb7bcdb476a581e3cd5d477c8fcd6758010466ea32f2704736",
+    "exitRequests": {
+      "3e": 42,
+      "3e01": 6,
+      "82": 236
+    },
+    "fakeBoundaries": [
+      "FILE fseekEx/freadEx see only supplied decoded arrays; not libDEVICEID decryption",
+      "Open*Dll exports do not load host code; six explicitly identified SYSP cells link to real COMM guest functions",
+      "Every adapter operation is an explicit trace-only fake; EndCombination returns synthetic positive 9",
+      "Synthetic addressed C1 reply, libc memory and no-wait usleep shims; not initialization/electrical/clock proof"
+    ],
+    "inMemoryReadCalls": 7198,
+    "keepaliveRequests": {
+      "0100": 42,
+      "2100": 174,
+      "2102": 4,
+      "21e1": 3,
+      "3e": 41,
+      "3e01": 20
+    },
+    "librarySha256": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432",
+    "linkedLibrariesSha256": {
+      "libTOYOTA_COMM.so": "e4f02f44c116b30623ecba3e6fe2e3c70b97a976d61c585b1049888ed0d2f7f2",
+      "libTOYOTA_FILE.so": "dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0",
+      "libTOYOTA_SYSP.so": "6c65bd75f924f17445bf9853b327a318c04debc88a17d14735aaa9c108b1c432"
+    },
+    "nativeInstructionsExecuted": true,
+    "notCovered": [
+      "Fast-entry failure/negative-reply/retry and native-transport-5 ISO fallback branches",
+      "MIC3313 ST/VT timing/line/pin mapping and physical validation",
+      "Keepalive adapter argument units, runtime scheduling/receive semantics and production emission"
+    ],
+    "sourceBindingsSha256": "91ead1d7cc8e7ad1062b7b6273473497f6280ed4846bad616c6ed53aaccadff1",
+    "sourceEntries": 284,
+    "sourcePulseArguments": {
+      "1919": 78,
+      "230f": 206
+    },
+    "vectors": {
+      "exit": 284,
+      "fastPositiveEntry": 284,
+      "keepaliveOff": 284,
+      "keepaliveOn": 284
+    }
+  },
   "kwpTransportComparison": {
     "allEntryCensusByNativeTransport": {
       "1": 267,

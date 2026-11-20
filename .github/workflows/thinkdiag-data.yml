@@ -47,7 +47,7 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
-      - name: Compare supplied FILE COMM DTCF CALC instructions with bounded ports (offline only)
+      - name: Compare supplied FILE COMM SYSP DTCF CALC instructions with bounded ports (offline only)
         id: native_oracle
         run: |
           python3 tools/thinkdiag/toyota_native_oracle.py run .local/thinkdiag/TOYOTA.zip \

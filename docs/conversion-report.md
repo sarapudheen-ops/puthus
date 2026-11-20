@@ -138,6 +138,8 @@ are in [`native-oracle-v1.json`](../tools/thinkdiag/schema/native-oracle-v1.json
 | FILE `GetInfoFromEnterList` | all 1,308 source entries | byte-for-byte loaded fields match |
 | FILE `GetRDtcDataFromRDTCPart` / `GetCDtcDataFromCDTCPart` | 1,186 fault blocks / 1,184 clear blocks; 1,881 / 1,208 queries; 180,316 mappings across EU/NA/JP | exact fields, offsets, mapping arrays and source round trips match |
 | COMM `GetCommFrameInfo` / `GetFuncCommFrameInfo_MultiCmd` | all 8,775 regional frame records, 34,671 default/declared-fault template lookups; 18 starting EU/function-61 joins | exact request/mask/reply bytes, frame IDs and source order match; 372 nondefault bindings are counted, not executed; not transport proof |
+| COMM `InitCommSet_Ex` / `InitKWPISOMode` / `MultiPackFunc` | 284 fast-KWP source entries, 568 configuration traces, 17,892 source packets; eight synthetic configuration branches; 2,016 shared short-packet contract vectors | Python calls/packets match native; Kotlin packet digest matches; adapter APIs are trace-only fakes, not ST/VT configuration proof |
+| Linked FILE → SYSP → COMM entry / keepalive / exit | 284 first-positive-entry, 568 keepalive-on/off and 284 exit traces with exact regional/function/full-selector source joins | native FILE loading, COMM lookup/configuration/packing and SYSP consumers execute together; positive adapter reply is synthetic; negative/retry/ISO fallback, adapter scheduling and physical semantics remain unvalidated |
 | DTCF `GetDtcStateResult` / `GetDTCCodeFromAnsP3P4` | 70,144 status/mask and 2,112 record vectors | independent Python and app Kotlin result hashes match |
 | DTCF `GetDTCCodeFromAnsP5` | 49,152 core record-projection vectors; 395 source P5 blocks share the compared header | native/Python/Kotlin hashes match; auxiliary freeze/mask side-table allocation is explicitly disabled, not validated |
 | DTCF `GetShowDtcInfo` / `InitDtcNum` / `SetDiagCodeData` | 27,035 exact TCODE pairs; 3,584 width/display vectors; 21 missing-key display calls; 196,608 exact-key byte merges | Python matches native consumer instructions; Kotlin display/merge hashes match; English IdSearch/TEXT/libc boundaries are declared shims |
@@ -170,10 +172,21 @@ a tempting three-byte slice produced a real native-comparison failure and now ha
 Source flags `81`/`33` packets reject payloads above 63 bytes rather than changing addressing bits or
 substituting an extended-length source variant. This is not yet an approved adapter configuration.
 
-Local checks at this checkpoint: **176 Python tests**, **122 Kotlin source files compiled**, and
+`toyota_lifecycle.py` retains the function-specific initial/keepalive/exit packets instead of inserting
+a generic testerPresent or stopCommunication. Of the 284 fast-KWP entry joins, only **41** keepalives
+are bare `3E`: the others are `0100` (42), `2100` (174), `2102` (4), `21E1` (3), and `3E01` (20).
+Native fast keepalive passes literal `(wire, length, 3, 800)` to `SetLinkKeep`; the API units and
+MIC3313 scheduler mapping are still open. Exit requests are source `82` (236), `3E` (42), or `3E01` (6),
+using the variadic native packet-pointer API, not a pointer/length pair. Original expected-response
+bytes are retained, but SYSP exit does not enforce them. Pulse arguments are 25/25 (78) or 35/15 (206).
+The oracle now pins five library identities and links six explicitly identified SYSP cells directly
+to real COMM guest exports. None of this is same-current-ECU proof or production emission.
+
+Local checks at this checkpoint: **186 Python tests**, **122 Kotlin source files compiled**, and
 **111 standalone core scenario groups passed**, including DTCF P3/P4 and P5 core/state/display/merge
 and the short-KWP-packet digest. Standalone results are **not** Gradle/JUnit, lint, Android or physical
-results. Native comparisons executed locally on restored hash-checked inputs.
+results. The complete local expanded native/reference run passed in **396.26 seconds**, with English
+JSON keys reversed, on restored hash-checked inputs. It is not the original-ZIP/full-manifest CLI check.
 
 The first full-archive CI attempt at `d85c290` failed its native-reference gate. After canonicalizing
 global label keys independently of GAG/JSON iteration order (without changing original offsets or
@@ -184,9 +197,15 @@ per-function mapping order), the corrected `b0e3e96` full-archive inspection
 `assembleDebug lintDebug testDebugUnitTest` and APK-index verification. The push run installed the
 actual APK on API 24: **two tests passed in 2.008 seconds**, proving index-only packaging, exact manual
 selected-path range delivery/offline cache and no automatic vehicle selection—not ECU functionality.
-The PR run deliberately skips the release-publishing emulator job. These runs include the P5 port but
-precede the new fast-KWP comparison/contract test; that expanded current-head gate still needs Actions
-results. The exact original `d85c290` log exception could not be retrieved from the signed log host,
+The PR run deliberately skips the release-publishing emulator job. The subsequent fast-KWP head
+`156cb70` also passed [inspection 44675858188](https://github.com/sarapudheen-ops/puthus/actions/runs/44675858188),
+[push Android 44675858091](https://github.com/sarapudheen-ops/puthus/actions/runs/44675858091) and
+[PR Android 44675863827](https://github.com/sarapudheen-ops/puthus/actions/runs/44675863827): **556 JVM tests,
+zero failures/errors/skips in 67 classes**, Gradle assemble/lint and exact APK checks, plus **2 actual-APK
+API-24 tests PASS in 1.076 seconds**. Its native check **136088714661** passes the original archive/full
+manifest and fast-KWP reference. Those runs precede the separate linked-lifecycle domain above;
+expanded linked-lifecycle CI is recorded separately when available. The exact original `d85c290` log
+exception could not be retrieved from the signed log host,
 so iteration order is not asserted to be its independently confirmed cause. Failed gates now retain
 raw evidence and publish explicit failure annotations/reports. **The API-24 nonempty executable Toyota
 system acceptance criterion remains unmet**, despite delivery/UI smoke tests passing.

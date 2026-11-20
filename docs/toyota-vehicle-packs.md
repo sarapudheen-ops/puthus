@@ -58,7 +58,7 @@ mappings are also unresolved. Enabling a screen is not semantic conversion.
 ## Offline native comparison gate
 
 Both source inspection and cache-miss pack preparation now run `toyota_native_oracle.py` against the
-original owner-verified archive and the **complete hash-checked decoded manifest**. Four individually
+original owner-verified archive and the **complete hash-checked decoded manifest**. Five individually
 pinned supplied libraries execute only inside bounded AArch64 emulation. All 1,308 entry records,
 1,186 regional fault blocks / 1,184 clear blocks / 180,316 code mappings, all 8,775 regional frame
 records and 34,671 default/declared-fault template lookups, 70,144 DTC state/mask and 2,112 fault-record
@@ -66,8 +66,12 @@ vectors, all 27,035 exact TCODE pairs, 3,584 source numeric-display vectors, 196
 calls, 49,152 P5 core record-projection vectors (not auxiliary P5 freeze/mask/query workflows), and
 65,792 numeric vectors for two CALC forms are compared. The separate fast-KWP consumer port adds
 284 source entries, 568 configuration traces, 17,892 source packets and 2,016 native/Python/Kotlin
-short-packet contract vectors, with every adapter API explicitly faked. It does not establish ST/VT
-timing/pin mapping or SYSP startup and is not an executable vehicle pack. All 179,770 distinct per-function
+short-packet contract vectors, with every adapter API explicitly faked. A separate closed lifecycle
+projection additionally matches real linked FILE → SYSP → COMM execution for 284 first-positive-entry,
+568 keepalive-on/off and 284 exit traces. It preserves all six exact keepalive request variants and
+source-bound exit packets instead of substituting generic testerPresent/stop commands. This does not
+establish ST/VT timing/pin mapping, failed-entry/retry/ISO-fallback semantics or a working diagnostic
+link and is not an executable vehicle pack. All 179,770 distinct per-function
 mapping keys have exact source labels; repeated printed codes are never suffix-matched. English pairs
 are re-extracted from the pinned archive, with original GAG index/text offset provenance. The reviewed
 counts/library/result hashes live in `tools/thinkdiag/schema/native-oracle-v1.json`.
