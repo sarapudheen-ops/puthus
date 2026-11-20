@@ -146,8 +146,6 @@ def branch_body(binary: Binary, start: int, limit: int = 60) -> list:
                     break
             except ValueError:
                 pass
-        if ins.address >= CONVERGE:
-            break
     return body
 
 
@@ -178,6 +176,13 @@ def analyse(data: bytes) -> dict:
                         "raw": binary.read(page + offset, 16).hex()}
             break
 
+    # The block every branch converges into: it fixes the frame length and dispatches.
+    tail = []
+    for ins in binary.code(CONVERGE, 4 * 40):
+        tail.append(f"{ins.address:x}: {ins.mnemonic:<7} {ins.op_str}")
+        if ins.mnemonic in ("ret", "br"):
+            break
+
     branches = []
     for transport, target in sorted(resolved["entries"].items()):
         body = branch_body(binary, target)
@@ -188,7 +193,7 @@ def analyse(data: bytes) -> dict:
             "stores": frame_layout(body),
             "lines": [f"{ins.address:x}: {ins.mnemonic:<7} {ins.op_str}" for ins in body],
         })
-    return {"function": FUNCTION, "address": f"0x{address:x}", "size": size,
+    return {"function": FUNCTION, "tail": tail, "address": f"0x{address:x}", "size": size,
             "table": resolved["detail"], "seed": seed, "branches": branches,
             "callCount": len(instructions)}
 
@@ -215,6 +220,12 @@ def markdown(report: dict) -> str:
         placed = ", ".join(f"+{s['offset']}" for s in item["stores"])
         sources = ", ".join(f"{s['source']}(+{s['offset']})" for s in item["stores"])
         lines.append(f"| {item['transport']} | {item['target']} | {placed} | {sources} |")
+    lines.append("")
+    lines.append("### Converged block " + f"@ 0x{CONVERGE:x}")
+    lines.append("")
+    lines.append("```")
+    lines.extend(report.get("tail", [])[:28])
+    lines.append("```")
     lines.append("")
     for item in report["branches"]:
         lines.append(f"**transport {item['transport']}** @ {item['target']} "
