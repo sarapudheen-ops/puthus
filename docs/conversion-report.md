@@ -139,6 +139,7 @@ are in [`native-oracle-v1.json`](../tools/thinkdiag/schema/native-oracle-v1.json
 | FILE `GetRDtcDataFromRDTCPart` / `GetCDtcDataFromCDTCPart` | 1,186 fault blocks / 1,184 clear blocks; 1,881 / 1,208 queries; 180,316 mappings across EU/NA/JP | exact fields, offsets, mapping arrays and source round trips match |
 | COMM `GetCommFrameInfo` / `GetFuncCommFrameInfo_MultiCmd` | all 8,775 regional frame records, 34,671 default/declared-fault template lookups; 18 starting EU/function-61 joins | exact request/mask/reply bytes, frame IDs and source order match; 372 nondefault bindings are counted, not executed; not transport proof |
 | DTCF `GetDtcStateResult` / `GetDTCCodeFromAnsP3P4` | 70,144 status/mask and 2,112 record vectors | independent Python and app Kotlin result hashes match |
+| DTCF `GetDTCCodeFromAnsP5` | 49,152 core record-projection vectors; 395 source P5 blocks share the compared header | native/Python/Kotlin hashes match; auxiliary freeze/mask side-table allocation is explicitly disabled, not validated |
 | DTCF `GetShowDtcInfo` / `InitDtcNum` / `SetDiagCodeData` | 27,035 exact TCODE pairs; 3,584 width/display vectors; 21 missing-key display calls; 196,608 exact-key byte merges | Python matches native consumer instructions; Kotlin display/merge hashes match; English IdSearch/TEXT/libc boundaries are declared shims |
 | CALC numeric evaluator / `ResultCalcFromScript` | 65,792 numeric vectors, two arithmetic forms, eight script edges | numeric results match; libc/printf is a declared shim |
 
@@ -158,12 +159,20 @@ not mutable JSON. An optional source-defined unknown-code presentation preserves
 it is not a global P-code lookup. The app-layout compiler rejects PSA/P5/flash callers and the P3/P4
 kind-5 workflow query whose native caller deliberately skips fault decoding.
 
-Local checks at this checkpoint: **160 Python tests**, **121 Kotlin source files compiled**, and
-**108 standalone core scenario groups passed**, including the DTCF state/assembly/display/merge vector
-domains. Standalone compiler/scenario results are **not** Gradle/JUnit, lint, Android or physical-vehicle
-results. Native comparisons completed locally on recovered hash-checked inputs; original-archive/
-manifest CLI integration and Android build/device results for this checkpoint are pending Actions
-until explicitly recorded below. Prior green runs do not validate these edits.
+The separate P5 layout/compiler preserves P5's record origin without applying P3/P4 count/origin
+rules, and requires an explicit caller-supplied availability mask. Its 395 source headers match the
+compared shape; mask discovery, auxiliary side tables and query workflows remain separate work.
+
+Local checks at this checkpoint: **165 Python tests**, **122 Kotlin source files compiled**, and
+**110 standalone core scenario groups passed**, including DTCF P3/P4 and P5 core/state/display/merge
+vector domains. Standalone compiler/scenario results are **not** Gradle/JUnit, lint, Android or physical
+results. Native comparisons executed locally on restored hash-checked inputs. The first full-archive
+CI attempt at `d85c290` failed its native-reference gate; it is not a green Android/regeneration result.
+The global label index now canonicalizes full keys independently of GAG/JSON iteration order while
+preserving original GAG offsets and source mapping-row order. Failed gates retain raw evidence and
+publish explicit failure annotations/reports rather than losing their diagnostic data. Current
+original-archive/manifest CLI and Android build/device results are pending the corrected-head Actions
+run until explicitly recorded below. Prior green runs do not validate these edits.
 
 **Still incomplete:** complete transport/init/session/timing mapping, source fault-query conditions/
 selection and multi-query workflows, general EXPRESS/control flow/signed/string helpers, ECU-info,

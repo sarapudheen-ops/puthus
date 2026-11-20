@@ -367,7 +367,8 @@ owner verification and sandbox inspection/decoding/execution permission are reco
 [`toyota-verified.json`](tools/thinkdiag/verification/toyota-verified.json); that is not a write grant or
 physical-ECU verification. The new independent Python/Kotlin native-fault decoder agrees with supplied
 DTCF execution on 70,144 state/mask, 2,112 assembly, 3,584 source numeric-display and 196,608 exact-key
-byte-merge vectors. FILE comparisons cover every regional fault/clear block and all 1,308 entries; COMM
+byte-merge vectors. P5 core record projection additionally matches on 49,152 vectors (not its auxiliary
+freeze/mask/query workflows). FILE comparisons cover every regional fault/clear block and all 1,308 entries; COMM
 covers 8,775 regional frames and 34,671 template lookups. All 27,035 exact TCODE pairs are checked, and
 the selected-function label joins have no missing keys. CALC comparison covers 65,792 vectors for two
 arithmetic forms. These are bounded offline semantic checks—not transport, full-language or

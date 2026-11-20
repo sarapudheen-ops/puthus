@@ -65,13 +65,16 @@ class FaultLabels:
     Optional locations come from GagFile.indexed_records(), not guessed offsets.
     """
     def __init__(self, records, locations=None):
-        if not isinstance(records, dict) or len(records) > 65535:
+        if not isinstance(records, dict) or len(records) > 65535 or any(not isinstance(k, str) for k in records):
             raise ValueError('Invalid TCODE record table')
         self.labels = {}
         locations = {} if locations is None else locations
         if not isinstance(locations, dict) or locations and locations.keys() != records.keys():
             raise ValueError('TCODE provenance does not cover exactly the record table')
-        for key, pair in records.items():
+        # JSON serialization/order is not source semantics. Canonicalize the
+        # global key index; per-function output still follows exact mapping-row
+        # order, and indexed provenance retains the original GAG locations.
+        for key, pair in sorted(records.items()):
             if not isinstance(key, str) or not re.fullmatch('[0-9A-F]{8}', key) or not isinstance(pair, str):
                 raise ValueError('TCODE needs exact uppercase uint32 keys and text')
             fields = pair.split('\0')
@@ -141,6 +144,39 @@ def compile_p3p4_layout(block, query, function_file, labels, texts, *, mode_lowb
         'sourceRecords': list(dict.fromkeys([f'{function_file}@{block.source_offset:08x}#fault-header',
             f'{function_file}@{query.source_offset:08x}#fault-query', *context_source_records,
             'libTOYOTA_DTCF.so@00014ae8#GetDTCCodeFromAnsP3P4',
+            'libTOYOTA_DTCF.so@00015618#GetDtcStateResult']))}
+
+
+def compile_p5_layout(block, query, function_file, labels, texts, *, availability_mask, context_source_records):
+    """Compile only the compared P5 core projection, not mask/query discovery.
+
+    All 395 source P5 blocks use the compared header below. The selected caller
+    must still supply its actual discovered availability mask and provenance.
+    This cannot promote source mask flags, history or an imported report into
+    current ECU applicability or an executable system by itself.
+    """
+    if (not isinstance(block, FaultBlock)
+            or (block.byte1, block.byte2, block.count_index, block.record_start, block.record_bytes, block.assembly_kind)
+                != (3, 8, 255, 2, 4, 6)
+            or query not in block.queries or query.kind != 10
+            or not isinstance(labels, FaultLabels) or not isinstance(texts, dict)
+            or type(availability_mask) is not int or not 0 <= availability_mask <= 255
+            or not isinstance(context_source_records, list) or not context_source_records
+            or any(not isinstance(s, str) or not s or len(s) > 256 for s in context_source_records)):
+        raise ValueError('P5 projection needs the exact compared source header/query/mask context')
+    selected, missing = labels.for_block(block, function_file)
+    if missing:
+        raise ValueError('Selected fault mappings have missing exact TCODE keys')
+    note = texts.get('FFFF0048')
+    fallback_description(0, note)
+    return {'kind': 'TOYOTA_P5', 'recordStart': block.record_start, 'recordBytes': block.record_bytes,
+        'queryKind': query.kind, 'availabilityMask': availability_mask, 'labels': selected,
+        'sourceFallback': {'missingDescription': note, 'sourceRecords': [
+            f'{TEXT_FILE}#idFFFF0048', 'libTOYOTA_DTCF.so@00011f90#GetShowDtcInfo',
+            'libTOYOTA_DTCF.so@00012788#InitDtcNum']},
+        'sourceRecords': list(dict.fromkeys([f'{function_file}@{block.source_offset:08x}#fault-header',
+            f'{function_file}@{query.source_offset:08x}#fault-query', *context_source_records,
+            'libTOYOTA_DTCF.so@000151c4#GetDTCCodeFromAnsP5',
             'libTOYOTA_DTCF.so@00015618#GetDtcStateResult']))}
 
 

@@ -10,7 +10,7 @@ import zipfile
 
 from native_replay import NativeSandbox, ReplayError
 from test_native_replay import elf_fixture
-from toyota_native_oracle import (MemoryFiles, REFERENCE, load_libraries, verify_reference)
+from toyota_native_oracle import (MemoryFiles, REFERENCE, load_libraries, verify_reference, write_checked_report)
 from vehicle_bundle import SOURCE_SHA256, canonical
 
 
@@ -25,6 +25,8 @@ class NativeOracleTest(unittest.TestCase):
         self.assertEqual(180316, sum(r['faultCodeMappings'] for r in reference['functionReaderComparison']['regions'].values()))
         self.assertEqual(70144, reference['faultDecoderComparison']['stateVectors'])
         self.assertEqual(2112, reference['faultDecoderComparison']['recordVectors'])
+        self.assertEqual(49152, reference['p5DecoderComparison']['recordVectors'])
+        self.assertEqual(395, reference['p5DecoderComparison']['sourceBlocks'])
         self.assertEqual(65792, sum(v['vectors'] for v in reference['calcComparison']['vectors']))
         self.assertEqual(8775, sum(r['standaloneFrames'] for r in reference['regionalTemplateComparison']['regions'].values()))
         self.assertEqual(34671, sum(r['templateLookups'] for r in reference['regionalTemplateComparison']['regions'].values()))
@@ -32,7 +34,7 @@ class NativeOracleTest(unittest.TestCase):
         self.assertEqual(3584, reference['faultLabelComparison']['fallbackVectors'])
         self.assertEqual(196608, reference['faultLabelComparison']['mergeVectors'])
         self.assertEqual(0, sum(r['missingExactLabels'] for r in reference['faultLabelComparison']['scopedLabels'].values()))
-        for key in ('entryComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'faultLabelComparison', 'calcComparison'):
+        for key in ('entryComparison', 'frameComparison', 'regionalTemplateComparison', 'faultDecoderComparison', 'p5DecoderComparison', 'faultLabelComparison', 'calcComparison'):
             self.assertRegex(reference[key]['librarySha256'], r'^[0-9a-f]{64}$')
             self.assertIs(reference[key]['nativeInstructionsExecuted'], True)
         kotlin = (Path(__file__).resolve().parents[2] / 'app/src/test/java/com/bod3/app/diagnostics/ToyotaFaultScenarios.kt').read_text()
@@ -40,6 +42,7 @@ class NativeOracleTest(unittest.TestCase):
             self.assertIn(reference['faultDecoderComparison'][key], kotlin)
         for key in ('fallbackResultsSha256', 'mergeResultsSha256'):
             self.assertIn(reference['faultLabelComparison'][key], kotlin)
+        self.assertIn(reference['p5DecoderComparison']['recordResultsSha256'], kotlin)
 
     def test_missing_partial_retyped_and_changed_reports_fail_closed(self):
         expected = {'complete': True, 'adapter': False, 'count': 3, 'hash': 'abc', 'cases': [{'n': 2}]}
@@ -52,6 +55,19 @@ class NativeOracleTest(unittest.TestCase):
             actual = dict(expected); del actual[key]
             with self.assertRaises(ValueError): verify_reference(actual, expected)
         with self.assertRaises(ValueError): verify_reference({})
+
+    def test_failed_evidence_is_retained_but_cannot_be_reported_or_reused_as_a_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / 'native-oracle.json'
+            out.with_suffix('.md').write_text('Stale PASS must be replaced')
+            invalid = {'kind': 'synthetic-incomplete-comparison'}
+            with self.assertRaises(ValueError): write_checked_report(invalid, out)
+            self.assertEqual(invalid, json.loads(out.read_text()))
+            text = out.with_suffix('.md').read_text()
+            self.assertIn('FAIL', text)
+            self.assertNotIn('PASS', text)
+            self.assertIn('reference', text)
+            with self.assertRaises(ValueError): verify_reference(json.loads(out.read_text()))
 
     def test_frame_detail_hash_and_count_cannot_disagree_with_claimed_evidence(self):
         frames = [{'synthetic': 'frame'}]

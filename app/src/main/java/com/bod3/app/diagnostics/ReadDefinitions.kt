@@ -143,6 +143,7 @@ object EcuReadDefinitionsCodec {
 
     private fun layoutMap(layout: FaultRecordLayout): Map<String, Any?> = when (layout) {
         is ToyotaFaultLayout -> layout.map()
+        is ToyotaP5FaultLayout -> layout.map()
         is FaultLayout -> linkedMapOf("recordBytes" to layout.recordBytes, "codeOffset" to layout.codeOffset,
             "codeBytes" to layout.codeBytes, "statusOffset" to layout.statusOffset, "statusMeaning" to layout.statusMeaning.name,
             "countBytes" to layout.countBytes, "skipZeroCode" to layout.skipZeroCode).filterValues { it != null }
@@ -182,6 +183,7 @@ object EcuReadDefinitionsCodec {
             val layout = f.obj(v, "layout", p)?.let { l ->
                 val lp = "$p.layout"
                 if (l["kind"] == "TOYOTA_P3P4") ToyotaFaultLayout.decode(l, lp, errors)
+                else if (l["kind"] == "TOYOTA_P5") ToyotaP5FaultLayout.decode(l, lp, errors)
                 else {
                     unknown(l, setOf("recordBytes", "codeOffset", "codeBytes", "statusOffset", "statusMeaning", "countBytes", "skipZeroCode"), lp)
                     val width = f.int(l, "recordBytes", lp); val offset = f.int(l, "codeOffset", lp); val size = f.int(l, "codeBytes", lp)

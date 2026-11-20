@@ -57,7 +57,7 @@ vendor code or a device-test claim.
 Current coverage: FILE all 1,308 entries and all regional 1,186 fault / 1,184 clear blocks (180,316 code
 mappings); COMM all 8,775 regional frame records and 34,671 default/declared-fault template lookups;
 DTCF 70,144 state/mask + 2,112 assembly vectors, all 27,035 exact TCODE pairs, 3,584 numeric-display
-vectors and 196,608 exact-key byte-merge calls; CALC 65,792 unsigned-byte/unsigned-word numeric vectors
+vectors and 196,608 exact-key byte-merge calls; P5 49,152 core record-projection vectors; CALC 65,792 unsigned-byte/unsigned-word numeric vectors
 for **two** expression forms and eight full-script edges. IdSearch/English-text/libc formatting remain
 declared shims, not native search/decryption/libc proof. Kotlin independently produces the DTCF state,
 assembly, numeric-display and byte-merge result hashes. General CALC/control flow, transport/init,
@@ -71,7 +71,11 @@ index/text offsets and encoded lengths; source runs re-extract the labels from t
 rather than trusting mutable JSON. The layout compiler preserves the source-defined missing-key
 numeric display only when explicitly supplied with its source text/provenance. Raw 32-bit keys remain
 attached to every decoded record. PSA/P5/flash callers and P3/P4 kind-5 non-decoding workflow queries
-are not mislabeled as ordinary P3/P4 reads.
+are not mislabeled as ordinary P3/P4 reads. The separate P5 compiler requires the exact header shared by
+all 395 P5 blocks and actual caller-supplied mask provenance. Native/Python/Kotlin core record digests
+match; auxiliary P5 freeze/mask side tables are explicitly disabled in that isolated native comparison,
+not validated. Global text-key comparison is independent of source-index/JSON iteration order, while
+per-function output retains original mapping-row order.
 
 `toyota_functions.py` preserves/round-trips every fault/clear field with exact offsets; `toyota_frames.py`
 resolves request/mask/reply roles and source-order default bindings, including EU's `0112` versus JP/NA's

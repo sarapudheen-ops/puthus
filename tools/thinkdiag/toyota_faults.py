@@ -89,3 +89,23 @@ class NativeFaultLayout:
                 if pair not in result:
                     result.append(pair)
         return tuple(result)
+
+
+@dataclass(frozen=True)
+class NativeP5FaultLayout:
+    """P5 core record projection, not its auxiliary freeze-frame/mask workflow.
+
+    GetDTCCodeFromAnsP5 @151c4 takes the start/stride from packed bytes 1/2,
+    ignores count/assembly bytes, and uses the last record byte as status.
+    Unlike P3/P4, kind 3 never changes the record origin. Here this is exactly
+    the existing assembly-6 projection with no count and no origin override.
+    """
+    record_start: int
+    record_bytes: int
+
+    def __post_init__(self):
+        NativeFaultLayout(255, self.record_start, self.record_bytes, 6, False, 2)
+
+    def decode(self, payload, query_kind, availability_mask):
+        return NativeFaultLayout(255, self.record_start, self.record_bytes, 6, False, 2).decode(
+            payload, query_kind, availability_mask)

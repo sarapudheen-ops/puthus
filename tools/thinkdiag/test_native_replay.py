@@ -73,7 +73,17 @@ class NativeReplayTest(unittest.TestCase):
         for n in (-1, 33):
             with self.assertRaises(ReplayError): sandbox.reg(n)
         with self.assertRaises(ReplayError): sandbox.allocate(sandbox.HEAP_BYTES + 1)
-        with self.assertRaises(ReplayError): sandbox.call('synthetic.so', 'entry', *range(9))
+        with self.assertRaises(ReplayError): sandbox.call('synthetic.so', 'entry', *range(17))
+
+    def test_integer_stack_arguments_follow_aapcs_and_do_not_leak_between_calls(self):
+        # ldr x0,[sp]; ldr x1,[sp,#56]; add x0,x0,x1; add x0,x0,x7; ret
+        code = bytes.fromhex('e00340f9 e11f40f9 0000018b 0000078b c0035fd6')
+        sandbox = NativeSandbox({'synthetic.so': elf_fixture(code)})
+        self.assertEqual(7 + 8 + 15, sandbox.call('synthetic.so', 'entry', *range(16)))
+        self.assertEqual(7 + 8, sandbox.call('synthetic.so', 'entry', *range(9)))
+        self.assertEqual(7, sandbox.call('synthetic.so', 'entry', *range(8)))
+        self.assertEqual(0, sandbox.call('synthetic.so', 'entry'))
+        with self.assertRaises(ReplayError): sandbox.call('synthetic.so', 'entry', *([0] * 8 + [True]))
 
     def test_elf_identity_and_bounds_are_not_guessed(self):
         fixture = elf_fixture()

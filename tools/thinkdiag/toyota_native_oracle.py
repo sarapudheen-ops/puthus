@@ -24,7 +24,7 @@ from toyota_dtc_labels import (DiagnosticCodeMerge, FaultLabels, fallback_code, 
 from source_verification import verify_archive
 from toyota_entries import EntryIndex
 from toyota_frames import SourceFrames
-from toyota_faults import NativeFaultLayout, state_ids
+from toyota_faults import NativeFaultLayout, NativeP5FaultLayout, state_ids
 from toyota_functions import FunctionBlocks
 from vehicle_bundle import SOURCE_SHA256, canonical
 
@@ -370,6 +370,65 @@ def compare_fault_decoder(libraries):
         'atomicHardening': 'The port additionally rejects short counts, invalid layouts and partial record tails; native partial-result behavior is not enabled'}
 
 
+def compare_p5_decoder(libraries, sources):
+    """Native P5 state/code projection; auxiliary freeze/mask side tables disabled.
+
+    Context+1e8 is an explicit experiment setting, not a vehicle applicability
+    flag. The native routine still assembles every record, calls the real state
+    function, deduplicates and grows its result. No auxiliary P5 workflow proof
+    is inferred from this isolated comparison.
+    """
+    name = 'libTOYOTA_DTCF.so'
+    native = NativeSandbox({name: libraries[name]})
+    context = native.allocate(0x18000)
+    native.write(context + 0x1e8, b'\x01')
+    table = native.allocate(129)
+    data = native.allocate(4096)
+    output = native.allocate(4096)
+    digest = hashlib.sha256(); vectors = 0
+    for start in (0, 1, 2, 7):
+        for width in (2, 3, 4, 5):
+            layout = NativeP5FaultLayout(start, width)
+            for kind in (1, 3, 8, 9, 10):
+                for status in range(256):
+                    for mask in ((0, 1, 2, 4, 8, 15, 85, 255) if kind == 10 else (255,)):
+                        row = bytes((status + i) & 255 for i in range(width - 1)) + bytes([status])
+                        payload = bytes(range(start)) + row + row + bytes(width)
+                        expected = layout.decode(payload, kind, mask)
+                        native.write(data, payload); native.write(output, bytes(4096))
+                        packed = int.from_bytes(bytes([255, start, width, 6]), 'little')
+                        answer = native.call(name, 'GetDTCCodeFromAnsP5', len(payload), data, packed, 0,
+                                             output, kind, mask, table, context)
+                        if not answer: raise AssertionError('Native P5 decoder failed to return its result')
+                        count = struct.unpack('<I', native.read(answer, 4))[0]
+                        if count > 6: raise AssertionError('Unbounded native P5 projection')
+                        actual = tuple(struct.unpack('<II', native.read(answer + 4 + i * 8, 8)) for i in range(count))
+                        if actual != expected:
+                            raise AssertionError(f'Native P5 projection differs: {layout}/{kind}/{mask}/{payload.hex()}: {actual} != {expected}')
+                        digest.update(bytes([start, width, kind, status, mask]) + native.read(answer, 4 + count * 8))
+                        vectors += 1
+    headers = {}; blocks = 0
+    for region in ('EU', 'NA', 'JP'):
+        functions = FunctionBlocks(sources[f'FUNCDATA_{region}.BIN'])
+        count = 0
+        for key in functions.rows:
+            block = functions.faults(key)
+            if block is not None and block.byte1 & 7 == 3:
+                fields = (block.byte1, block.byte2, block.count_index, block.record_start,
+                          block.record_bytes, block.assembly_kind)
+                if fields != (3, 8, 255, 2, 4, 6) or any(q.kind != 10 for q in block.queries):
+                    raise AssertionError('A source P5 block differs from the compared source shape')
+                count += 1
+        headers[region] = count; blocks += count
+    return {'nativeInstructionsExecuted': True, 'librarySha256': native.libraries[name].sha256,
+        'recordVectors': vectors, 'recordResultsSha256': digest.hexdigest(), 'sourceBlocks': blocks,
+        'sourceBlocksByRegion': headers, 'sourceLayoutBytes': '0308ff020406',
+        'fakeBoundaries': ['malloc/realloc/free within guest heap',
+                           'context+1e8=1 disables auxiliary P5 freeze-frame/mask side-table allocation'],
+        'notCovered': 'P5 query selection, mask discovery, auxiliary diagnostic side tables, transport and ECU applicability',
+        'atomicHardening': 'The port rejects an incomplete record tail instead of retaining a native partial result'}
+
+
 def compare_fault_labels(libraries, sources, codes, texts):
     """Execute DTCF's display/split/fallback and exact-key byte-merge consumers.
 
@@ -537,6 +596,7 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
         'functionReaderComparison': compare_function_readers(libraries, sources),
         'regionalTemplateComparison': compare_regional_templates(libraries, sources),
         'faultDecoderComparison': compare_fault_decoder(libraries),
+        'p5DecoderComparison': compare_p5_decoder(libraries, sources),
         'faultLabelComparison': compare_fault_labels(libraries, sources,
             text_libraries['TCODE_EN.GAG'][0], text_libraries['TEXT_EN.GAG'][0])}
     if full_calc: result['calcComparison'] = compare_calc(libraries)
@@ -581,6 +641,9 @@ def summary(result):
         'Selected-function labels have no missing exact keys; global printed-code matching is not used.\n'
         f"- DTCF: {result['faultDecoderComparison']['stateVectors']:,} state/mask vectors and "
         f"{result['faultDecoderComparison']['recordVectors']:,} record-assembly vectors.\n"
+        f"- DTCF P5: {result['p5DecoderComparison']['recordVectors']:,} core record-projection vectors; "
+        f"{result['p5DecoderComparison']['sourceBlocks']:,} source blocks have the compared source shape. "
+        'Auxiliary freeze/mask tables and query workflows are not covered.\n'
         f"- CALC: {sum(v['vectors'] for v in result['calcComparison']['vectors']):,} numeric vectors, "
         'two arithmetic forms, eight full-script edge calls. Other expressions are not covered.\n\n'
         'Only supplied AArch64 instructions and explicit memory/libc shims execute. Constructors, host dlopen, '
@@ -589,6 +652,26 @@ def summary(result):
         'The Android decoder rejects malformed partial records atomically even where native code would retain a partial result. '
         'All result/library hashes must equal `tools/thinkdiag/schema/native-oracle-v1.json`. '
         'No vendor code or expressions enter the APK. **Zero executable recovered vehicle definitions; no physical validation.**\n')
+
+
+def write_checked_report(result, output):
+    """Keep failed evidence inspectable, but never publish a PASS before gating.
+
+    JSON existing on disk is not validation: every cache consumer must still
+    run verify_reference. This also exposes the exact mismatching gate in CI
+    annotations/reports when GitHub's signed log/artifact redirect is unavailable.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(canonical(result) + b'\n')
+    try:
+        verify_reference(result)
+    except Exception as error:
+        output.with_suffix('.md').write_text('# Toyota offline native comparison\n\n'
+            '**FAIL — result did not match the reviewed reference.**\n\n'
+            + str(error) + '\n\nThe raw comparison report is retained for diagnosis. '
+            'No index is staged by this failed gate; no adapter or ECU was contacted.\n')
+        raise
+    output.with_suffix('.md').write_text(summary(result))
 
 
 def main():
@@ -612,12 +695,14 @@ def main():
     # allowing any supplied reader to see it. A pinned ZIP alone is insufficient.
     sources = load_sources(args.archive, args.decoded, args.manifest)
     result = run(load_libraries(args.archive), sources, text_libraries=read_text_libraries(args.archive))
-    verify_reference(result)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(canonical(result) + b'\n')
-    args.output.with_suffix('.md').write_text(summary(result))
+    write_checked_report(result, args.output)
     print(summary(result))
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as error:
+        message = str(error).replace('%', '%25').replace('\n', '%0A').replace('\r', '%0D')
+        print(f'::error title=Toyota offline native comparison::{message}', flush=True)
+        raise

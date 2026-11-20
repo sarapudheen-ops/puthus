@@ -4,7 +4,7 @@ import unittest
 
 from test_toyota_functions import fault_fixture
 from toyota_functions import FaultMapping
-from toyota_dtc_labels import (DiagnosticCodeMerge, FaultLabels, MergedCode, compile_p3p4_layout,
+from toyota_dtc_labels import (DiagnosticCodeMerge, FaultLabels, MergedCode, compile_p3p4_layout, compile_p5_layout,
                                fallback_code, fallback_description)
 
 
@@ -26,6 +26,16 @@ class FaultLabelsTest(unittest.TestCase):
         other_labels, _ = table.for_block(other, 'FUNCDATA_JP.BIN')
         self.assertEqual('First exact source wording', other_labels[0]['description'])
         self.assertNotIn('FUNCDATA_EU.BIN', str(other_labels))
+
+    def test_global_label_comparison_is_independent_of_gag_or_json_iteration_order(self):
+        records = {'00000420': 'P0420\0First', '00000001': '12\0Legacy', '00010420': 'P0420\0Other'}
+        a = FaultLabels(records)
+        b = FaultLabels(dict(reversed(list(records.items()))))
+        self.assertEqual(list(a.labels.items()), list(b.labels.items()))
+        self.assertEqual([1, 0x420, 0x10420], list(a.labels))
+        block = replace(fault_fixture(), mappings=(FaultMapping(30, 0x10420, 1, 1), FaultMapping(36, 1, 1, 1)))
+        self.assertEqual([0x10420, 1], [int(r['nativeCode'], 16) for r in b.for_block(block, 'FUNCDATA_EU.BIN')[0]])
+        with self.assertRaises(ValueError): FaultLabels({1: 'Bad\0Key', '00000001': '12\0Legacy'})
 
     def test_legacy_codes_empty_descriptions_and_exact_spelling_are_not_passive_reference_filters(self):
         table = FaultLabels({'00000000': '12\0', '00000001': 'P0001\0  Exact  spacing; °C\nsecond line'})
@@ -64,6 +74,27 @@ class FaultLabelsTest(unittest.TestCase):
                 compile_p3p4_layout(changed_block, query, *args[2:], **context)
         with self.assertRaisesRegex(ValueError, 'missing exact'):
             compile_p3p4_layout(block, block.queries[1], args[2], FaultLabels({}), args[4], **context)
+
+    def test_p5_compiler_keeps_a_distinct_kind_and_requires_actual_mask_context(self):
+        original = fault_fixture()
+        query = replace(original.queries[0], kind=10)
+        block = replace(original, byte1=3, byte2=8, count_index=255, record_start=2,
+            record_bytes=4, assembly_kind=6, queries=(query,), mappings=(FaultMapping(30, 0x42013, 1, 1),))
+        args = (block, query, 'FUNCDATA_JP.BIN', FaultLabels({'00042013': 'SourceP5\0Exact P5 source'}), {'FFFF0048': 'Source manual'})
+        context = {'availability_mask': 5, 'context_source_records': ['synthetic:actual-P5-mask-discovery']}
+        result = compile_p5_layout(*args, **context)
+        self.assertEqual('TOYOTA_P5', result['kind'])
+        self.assertEqual((2, 4, 10, 5), tuple(result[k] for k in ('recordStart', 'recordBytes', 'queryKind', 'availabilityMask')))
+        self.assertNotIn('countIndex', result)
+        self.assertNotIn('modeLowBits', result)
+        self.assertEqual('00042013', result['labels'][0]['nativeCode'])
+        for fields in ({'byte1': 1}, {'count_index': 0}, {'byte2': 0}, {'assembly_kind': 5}, {'record_start': 0}):
+            with self.assertRaises(ValueError): compile_p5_layout(replace(block, **fields), *args[1:], **context)
+        for change in ({'availability_mask': True}, {'availability_mask': 256}, {'context_source_records': []}):
+            with self.assertRaises(ValueError): compile_p5_layout(*args, **(context | change))
+        with self.assertRaises(ValueError): compile_p5_layout(block, replace(query, kind=1), *args[2:], **context)
+        with self.assertRaisesRegex(ValueError, 'missing exact'):
+            compile_p5_layout(block, query, args[2], FaultLabels({}), args[4], **context)
 
     def test_source_numeric_fallback_is_width_specific_not_generic_key_normalization(self):
         for assembly in (1, 2, 3, 5, 7):

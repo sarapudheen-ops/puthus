@@ -2,7 +2,7 @@
 from dataclasses import replace
 import unittest
 
-from toyota_faults import (NativeFaultLayout, state_ids, STATE_CURRENT, STATE_HISTORY,
+from toyota_faults import (NativeFaultLayout, NativeP5FaultLayout, state_ids, STATE_CURRENT, STATE_HISTORY,
     STATE_PENDING, STATE_READNESS, STATE_PERMANENT, STATE_FAILED, STATE_CONFIRMED)
 
 
@@ -54,6 +54,17 @@ class ToyotaFaultDecoderTest(unittest.TestCase):
         mode2 = replace(layout, mode_lowbits=2)
         self.assertEqual(((STATE_PENDING, 0x0420),), mode2.decode(bytes.fromhex('01 04 20'), 3))
         with self.assertRaises(ValueError): mode2.decode(bytes.fromhex('04 20'), 3)
+
+    def test_p5_projection_has_no_p3p4_count_or_kind_three_override(self):
+        layout = NativeP5FaultLayout(2, 4)
+        data = bytes.fromhex('02 ff 04 20 13 0f 04 20 13 0f 00 00 00 00')
+        self.assertEqual(((STATE_FAILED, 0x042013), (STATE_PENDING, 0x042013)), layout.decode(data, 10, 5))
+        self.assertEqual(((STATE_PENDING, 0x042013),), layout.decode(data, 3, 255))
+        self.assertEqual((), layout.decode(bytes.fromhex('02 ff'), 10, 255))
+        for bad in (b'', b'\x02', data[:-1], data + b'\x00'):
+            with self.assertRaises(ValueError): layout.decode(bad, 10, 255)
+        for start, width in ((-1, 4), (256, 4), (0, 1), (0, 6), (True, 4)):
+            with self.assertRaises(ValueError): NativeP5FaultLayout(start, width)
 
     def test_short_counts_partial_tail_invalid_fields_and_oversize_fail_atomically(self):
         layout = NativeFaultLayout(0, 1, 2, 2)

@@ -277,8 +277,11 @@ class NativeSandbox:
         return at
 
     def call(self, library, function, *args):
-        if len(args) > 8 or any(type(i) is not int for i in args):
-            raise ReplayError("Replay arguments must be at most eight machine words")
+        # AAPCS64: x0..x7, then eight-byte stack slots at the 16-byte-aligned
+        # entry SP. This is deliberately a bounded integer/pointer-only API;
+        # aggregates, variadic metadata and implicit host pointers are not bridged.
+        if len(args) > 16 or any(type(i) is not int for i in args):
+            raise ReplayError("Replay arguments must be at most sixteen machine words")
         lib = self.libraries[library]
         if isinstance(function, str):
             address = self.symbol(library, function)
@@ -288,7 +291,9 @@ class NativeSandbox:
             raise ReplayError("Invalid replay entry")
         for i in range(31):
             self.uc.reg_write(XREGS[i], args[i] & MASK64 if i < len(args) else 0)
-        self.uc.reg_write(UC_ARM64_REG_SP, self.STACK + self.STACK_BYTES - 4096)
+        stack = self.STACK + self.STACK_BYTES - 4096
+        self.write(stack, b''.join(struct.pack('<Q', i & MASK64) for i in args[8:]).ljust(64, b'\0'))
+        self.uc.reg_write(UC_ARM64_REG_SP, stack)
         self.uc.reg_write(UC_ARM64_REG_X30, self.RETURN)
         self._failure, self._returned = None, False
         try:

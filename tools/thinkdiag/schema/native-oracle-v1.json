@@ -194,6 +194,25 @@
   },
   "kind": "offline-native-differential",
   "networkAccess": false,
+  "p5DecoderComparison": {
+    "atomicHardening": "The port rejects an incomplete record tail instead of retaining a native partial result",
+    "fakeBoundaries": [
+      "malloc/realloc/free within guest heap",
+      "context+1e8=1 disables auxiliary P5 freeze-frame/mask side-table allocation"
+    ],
+    "librarySha256": "686dc71e111d2a82205df75ddfa9d2a873ae4d7eea5de7aef81abcde295c39b7",
+    "nativeInstructionsExecuted": true,
+    "notCovered": "P5 query selection, mask discovery, auxiliary diagnostic side tables, transport and ECU applicability",
+    "recordResultsSha256": "80d7b89ebccc5f36c996053c4682840b978fddbbb7afde6b99714477f2ef6f50",
+    "recordVectors": 49152,
+    "sourceBlocks": 395,
+    "sourceBlocksByRegion": {
+      "EU": 145,
+      "JP": 123,
+      "NA": 127
+    },
+    "sourceLayoutBytes": "0308ff020406"
+  },
   "physicalValidation": false,
   "regionalTemplateComparison": {
     "fakeBoundaries": [

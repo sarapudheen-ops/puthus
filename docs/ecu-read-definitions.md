@@ -85,7 +85,19 @@ byte-merge calls. The latter preserves opaque source bytes and first-seen order,
 rejection; those bytes are not write/identity grants. `toyota_dtc_labels.py` compiles exact per-function
 labels from the source mapping rows, with GAG record/offset provenance when extracted from the archive.
 PSA/P5/flash callers and the source P3/P4 kind-5 non-decoding workflow query are not ordinary P3/P4 fault
-reads. This schema alone is not complete source-to-executable vehicle conversion, multi-query/discovery
+reads.
+
+The separate `TOYOTA_P5` kind has only `recordStart`, `recordBytes`, `queryKind`, `availabilityMask`,
+exact `labels` and provenance/fallback fields. It walks a big-endian code followed by one status byte,
+with **no count guard and no query-kind-3 origin override**. Mixing P3/P4-only fields into P5 is rejected.
+All **395** source P5 blocks (EU 145 / NA 127 / JP 123) have the compared `03 08 FF 02 04 06` header;
+the Python compiler requires that exact shape and caller-supplied mask/provenance. Native/Python/Kotlin
+core projections agree on **49,152** start/width/status/mask vectors. This comparison explicitly disables
+native auxiliary freeze-frame/mask side-table allocation; it is not proof of mask discovery, auxiliary
+workflows or ECU applicability. The synthetic selected-ECU workbench test uses only the declared P5
+request/layout and never falls back to generic UDS decoding.
+
+These schemas alone are not complete source-to-executable vehicle conversion, multi-query/discovery
 workflow coverage, transport proof or physical testing.
 
 ## Confirmed clearing

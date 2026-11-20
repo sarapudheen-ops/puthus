@@ -62,6 +62,51 @@ object ToyotaFaultScenarios {
         check(hex(digest) == "bb1ed0df809e6216d04d56993cf4757453eafbd946125872385e4186b7d06cb5")
     }
 
+    fun everyNativeP5ProjectionVectorMatchesTheNativeDigest() {
+        val digest = MessageDigest.getInstance("SHA-256"); var count = 0
+        for (start in listOf(0, 1, 2, 7)) for (width in 2..5) for (kind in listOf(1, 3, 8, 9, 10)) {
+            for (status in 0..255) for (mask in if (kind == 10) listOf(0, 1, 2, 4, 8, 15, 85, 255) else listOf(255)) {
+                val row = List(width - 1) { (status + it) and 255 } + status
+                val payload = (0 until start).toList() + row + row + List(width) { 0 }
+                val layout = ToyotaP5FaultLayout(start, width, kind, mask)
+                val result = layout.decode(payload, "synthetic") as DtcReadResult.Read
+                digest.update(bytes(start, width, kind, status, mask)); digest.update(word(result.records.size.toLong()))
+                result.records.forEach { digest.update(word(it.toyotaState!!.textId)); digest.update(word(it.nativeCode!!)) }
+                count++
+            }
+        }
+        check(count == 49152)
+        check(hex(digest) == "80d7b89ebccc5f36c996053c4682840b978fddbbb7afde6b99714477f2ef6f50")
+    }
+
+    suspend fun p5SchemaAndWorkbenchKeepSourceOriginAndMaskWithoutP3P4Rules() {
+        val layout = ToyotaP5FaultLayout(2, 4, 10, 5, listOf(ToyotaFaultLabel("00042013", "ExactP5", "Synthetic selected P5 wording")),
+            sourceRecords = listOf("synthetic:P5-header", "synthetic:mask-discovery"))
+        val selected = ecu.copy(diagnostics = EcuReadDefinitions(faults = FaultRead(
+            DiagnosticRead("p5", "Synthetic P5", "1902FF", "59", minBytes = 2), layout)))
+        val pack = CatalogPack("native-p5-test", "Synthetic", library = CatalogData(ecus = listOf(selected)))
+        val json = CatalogCodec.encode(pack)
+        check(CatalogCodec.decodeOrThrow(json) == pack)
+        for (bad in listOf(json.replace("TOYOTA_P5", "UNKNOWN_P5"), json.replace("\"recordStart\":2", "\"recordStart\":-1"),
+            json.replace("\"recordBytes\":4", "\"recordBytes\":1"), json.replace("\"availabilityMask\":5", "\"availabilityMask\":256"),
+            json.replace("\"queryKind\":10", "\"queryKind\":1.5"), json.replace("\"kind\":\"TOYOTA_P5\"", "\"kind\":\"TOYOTA_P5\",\"countIndex\":0")))
+            check(!CatalogCodec.decode(bad).isValid) { "Accepted invalid/mixed P5 schema: $bad" }
+        for (payload in listOf(emptyList(), listOf(2), listOf(2, 255, 4, 32, 19), listOf(2, 255, 4, 32, 19, 15, 1)))
+            check(layout.decode(payload, "synthetic") is DtcReadResult.Failed)
+        check((layout.decode(listOf(2, 255), "synthetic") as DtcReadResult.Read).records.isEmpty())
+        val pending = layout.copy(queryKind = 3)
+        val one = (pending.decode(listOf(2, 255, 4, 32, 19, 15), "synthetic") as DtcReadResult.Read).records.single()
+        check(one.nativeCode == 0x042013L && one.toyotaState == ToyotaDtcState.PENDING)
+        val adapter = SimulatedCanAdapter(listOf(SimModule('6', "7E0", "7E8", dialect = DiagnosticDialect.KWP2000, respond = { request ->
+            check(request == listOf(0x19, 2, 255)) { "P5 substituted another read: $request" }
+            listOf(listOf(0x59, 2, 255, 4, 32, 19, 15))
+        })))
+        val result = EcuWorkbench(Session(adapter, protocol)).readDtcs(selected) as DtcReadResult.Read
+        check(result.records.map { it.toyotaState } == listOf(ToyotaDtcState.TEST_FAILED, ToyotaDtcState.PENDING))
+        check(result.records.all { it.nativeCode == 0x042013L && it.code == "ExactP5" && it.status == 15 && it.statusMeaning == DtcStatusMeaning.TOYOTA })
+        check(adapter.requests.map { it.payload } == listOf(listOf(0x19, 2, 255)) && adapter.violations.isEmpty())
+    }
+
     fun sourceNumericFallbackMatchesNativeWidthVectorsWithoutLosingTheKey() {
         val fallback = ToyotaFaultFallback("Synthetic source manual", listOf("synthetic:TEXT#idFFFF0048", "synthetic:InitDtcNum"))
         val digest = MessageDigest.getInstance("SHA-256"); var count = 0
