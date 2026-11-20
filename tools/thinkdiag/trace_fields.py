@@ -20,7 +20,9 @@ import zipfile
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM, CS_ARCH_ARM, CS_MODE_THUMB
 from elftools.elf.elffile import ELFFile
 
-OFFSETS = (0x7B0, 0x7B4, 0x7C4, 0x7C8, 0x828, 0x829, 0x7F0, 0x7F2)
+# mov w10,#0x10000 / movk w10,#0x7b0 builds 0x17b0: the movk keeps the 0x10000 half.
+OFFSETS = (0x17B0, 0x17B4, 0x17C4, 0x17C8, 0x1828, 0x1829, 0x17F0, 0x17F2,
+           0x17B8, 0x17BC, 0x17D4)
 STORE_RE = re.compile(r"\[(x\d+|w\d+)(?:,\s*#?(0x[0-9a-fA-F]+|\d+))?\]")
 LIB_PATTERN = re.compile(r"^lib.*\.so$")
 MAX_ROWS = 300

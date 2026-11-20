@@ -31,10 +31,12 @@ from pathlib import Path
 
 from toyota_entries import EntryIndex
 
-HEADER_OFFSET = 0x7B0
-ADDRESS_OFFSET = 0x7B4
-REPLY_OFFSET = 0x7C4
-MODE_OFFSET = 0x828
+# The native code builds these with `mov w,#0x10000; movk w,#0x7b0`, so the selector
+# byte lands at 0x17b0 in the runtime context, not 0x7b0.
+HEADER_OFFSET = 0x17B0
+ADDRESS_OFFSET = 0x17B4
+REPLY_OFFSET = 0x17C4
+MODE_OFFSET = 0x1828
 HEADER_REMAP = {0x45A8: 0x2E3B}      # csel w21, #0x2e3b, w8, eq
 SEED = bytes.fromhex("55aa0d61010800000000")
 
@@ -112,7 +114,7 @@ def audit(data: bytes) -> dict:
 def markdown(report: dict) -> str:
     lines = [f"## Toyota ECU framing — {report['entries']} system entries", ""]
     lines.append("Derived from `InitSetEnterFrame` @`0x1a130`, not guessed: header at "
-                 "`entry+0x7b0`, reply at `entry+0x7c4`, transport at `entry+0x828`.")
+                 "`ctx+0x17b0`, reply at `ctx+0x17c4`, transport at `ctx+0x1828`.")
     lines.append("")
     lines.append("### What the entries address")
     lines.append("")
