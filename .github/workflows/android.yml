@@ -157,10 +157,11 @@ jobs:
             bash .github/scripts/sync-emulator-ca.sh
             adb install -r -t .local/device/app/app-debug.apk
             adb install -r -t .local/device/tests/app-debug-androidTest.apk
-            adb shell am instrument -w -r -e class com.bod3.app.vehiclepack.VehiclePackInstrumentedTest,com.bod3.app.diagnostics.SourceSessionUiInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
+            adb shell am instrument -w -r -e class com.bod3.app.vehiclepack.VehiclePackInstrumentedTest,com.bod3.app.vehiclepack.ToyotaPackFeatureUiInstrumentedTest,com.bod3.app.diagnostics.SourceSessionUiInstrumentedTest com.bod3.app.test/androidx.test.runner.AndroidJUnitRunner | tee .local/device/reports/instrumentation.txt
             adb logcat -d > .local/device/reports/logcat.txt
-            grep -Eq '^OK \(6 tests\)' .local/device/reports/instrumentation.txt
+            grep -Eq '^OK \(7 tests\)' .local/device/reports/instrumentation.txt
             ! grep -q 'FAILURES!!!' .local/device/reports/instrumentation.txt
+            grep 'ToyotaPackUiEvidence.*2007 UI:' .local/device/reports/logcat.txt > .local/device/reports/ui-string-evidence.txt
       - name: Publish Android smoke evidence for API inspection
         if: always() && hashFiles('.local/device/reports/instrumentation.txt') != ''
         env:
@@ -172,7 +173,9 @@ jobs:
           text = source[:48000].decode('utf-8', errors='replace')
           trust = Path('.local/device/reports/tls-trust.md')
           tls = trust.read_text() if trust.exists() else 'Emulator trust setup did not complete; inspect the failing setup step.\n'
-          Path('.local/device/reports/summary.md').write_text('Android 24 actual APK: three pinned-range, selected-system and private-offline-cache tests and three synthetic source-session-consent Compose UI tests. UI callbacks only; no Session, Bluetooth or ECU requests. JVM scenarios independently cover capability/lease guards.\n\n' + tls + '\n```text\n' + text + '\n```\n')
+          ui = Path('.local/device/reports/ui-string-evidence.txt')
+          ui_text = ui.read_text() if ui.exists() else 'UI string evidence not produced.'
+          Path('.local/device/reports/summary.md').write_text('Android 24 actual APK: three pack delivery tests, one 2007 feature UI test with simulated verification, and three synthetic source-session-consent Compose UI tests. UI callbacks only; no Session, Bluetooth or ECU requests. JVM scenarios independently cover capability/lease guards.\n\n' + tls + '\nUI string evidence: ' + ui_text + '\n```text\n' + text + '\n```\n')
           PY
           gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
             -f name='Toyota Android 24 on-demand pack evidence' -f head_sha="$GITHUB_SHA" \
