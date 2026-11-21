@@ -115,4 +115,15 @@ def main():
     (args.output/'code1-lifecycle-sweep.md').write_text('\n'.join(md)+'\n')
     print('\n'.join(md))
     if timeout: raise SystemExit(2)
-if __name__=='__main__': main()
+if __name__=='__main__':
+    try:
+        main()
+    except Exception as exc:
+        import sys, traceback
+        out=Path(sys.argv[sys.argv.index('--output')+1]) if '--output' in sys.argv else Path('code1-lifecycle-sweep')
+        out.mkdir(parents=True,exist_ok=True)
+        detail=''.join(traceback.format_exception(type(exc),exc,exc.__traceback__))
+        payload={'format':'code1-lifecycle-sweep-v1','fatalError':f'{type(exc).__name__}: {exc}','traceback':detail,'tupleCount':0,'completed':0,'timedOut':False,'tuples':[]}
+        (out/'code1-lifecycle-sweep.json').write_bytes(canonical(payload)+b'\\n')
+        (out/'code1-lifecycle-sweep.md').write_text('# Code 1 lifecycle sweep failed\\n\\n```text\\n'+detail+'\\n```\\n')
+        raise
