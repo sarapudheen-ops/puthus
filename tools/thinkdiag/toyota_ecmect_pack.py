@@ -15,9 +15,9 @@ FUNCTION = 'FUNCDATA_EU.BIN@000005e9'
 
 # Existing KLineConfig transport-policy defaults, NOT inferred Toyota native
 # P1/P2/P3 meanings. Exact baud, packet addresses and FAST-init frame/pulses
-# come from the selected source. initAddress is a mandatory driver field used
-# only by FIVE_BAUD init: 00 is an unused FAST-only configuration placeholder,
-# NOT a decoded Toyota slow-init address. No FIVE_BAUD fallback is enabled.
+# come from the selected source. initAddress 00 is a mandatory app placeholder,
+# NOT a decoded Toyota address. The driver still sends ATIIA in FAST mode; its
+# effect on MIC3313 is unproven. No FIVE_BAUD fallback is enabled.
 LINK = {
     'protocol': 'ISO_14230_4_KWP_FAST', 'dialect': 'KWP2000',
     'kLine': {'init': 'FAST', 'initAddress': 0, 'baud': 10416,
@@ -113,7 +113,7 @@ def transport_for(review):
             },
             'blockers': [
                 'MIC3313 keepalive scheduling and timing policy defaults are not established as equivalent to the source lifecycle',
-                'FAST initAddress 00 is an app placeholder, not a decoded source address',
+                'FAST initAddress 00 is an app placeholder, not a decoded source address; ATIIA is sent and its effect is unproven',
                 'Physical vehicle and adapter equivalence validation is pending',
             ],
             'initialFrameHex': '8113F08105', 'sourcePlan': copy.deepcopy(review['transportPlan'])}
