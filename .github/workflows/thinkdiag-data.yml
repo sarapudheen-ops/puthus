@@ -137,7 +137,7 @@ jobs:
             --output .local/thinkdiag/sweep --report .local/thinkdiag/report
       - name: Convert source-bound, on-demand vehicle packs in Actions
         run: |
-          set -uo pipefail
+          set -euo pipefail
           LOG=.local/thinkdiag/report/convert-step.log
           exec > >(tee "$LOG") 2>&1
           set -x
