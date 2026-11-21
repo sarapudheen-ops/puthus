@@ -92,6 +92,17 @@ def transport_for(review):
     return {'driver': 'MIC3313_KWP', 'physicalValidation': 'PENDING',
             'nativeFirmwareEquivalenceRequired': False,
             'timingBasis': 'Existing app KLineConfig policy; not native Toyota firmware equivalence',
+            'policyDefaults': {
+                'testerPresent': LINK['testerPresent'],
+                **{field: LINK['kLine'][field] for field in
+                   ('p1MaxMs', 'p2MaxMs', 'p2StarMs', 'p3MinMs', 'p3MaxMs', 'p4Ms')},
+                'initAddress': LINK['kLine']['initAddress'],
+            },
+            'blockers': [
+                'MIC3313 keepalive and timing policy defaults are not established as equivalent to the source lifecycle',
+                'FAST initAddress 00 is an app placeholder, not a decoded source address',
+                'Physical vehicle and adapter equivalence validation is pending',
+            ],
             'initialFrameHex': '8113F08105', 'sourcePlan': copy.deepcopy(review['transportPlan'])}
 
 
