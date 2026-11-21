@@ -85,6 +85,16 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Inspect exact 2007 Innova source join (no link approval)
+        run: |
+          python3 tools/thinkdiag/inspect_innova_2007.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --english .local/thinkdiag/english --output .local/thinkdiag/report/innova-2007-join.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota 2007 Innova source join' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Exact source join; adapter equivalence not approved' \
+            -F 'output[summary]=@.local/thinkdiag/report/innova-2007-join.json'
       - name: Publish checksummed ECU program-dispatch input for exact reader work
         # The agent workspace cannot follow the release-asset storage redirect. Keep
         # this small, owner-verified source input in research evidence, never Git/APK.
@@ -170,6 +180,26 @@ jobs:
             -f status=completed -f conclusion=neutral \
             -f 'output[title]=Conversion step output (last lines)' \
             -F 'output[summary]=@.local/thinkdiag/report/convert-step-tail.txt' || true
+      - name: Compile 2007 Innova source-read candidate (not enabled)
+        run: |
+          python3 tools/thinkdiag/toyota_innova_2007_reads.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --english .local/thinkdiag/english --pilot-artifacts .local/thinkdiag/vehicle-packs \
+            --output .local/thinkdiag/vehicle-packs/innova-2007-source-read-candidate.json > .local/thinkdiag/report/innova-2007-read-candidate.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota 2007 Innova read candidate' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Unpinned research candidate; not an enabled definition' \
+            -F 'output[summary]=@.local/thinkdiag/report/innova-2007-read-candidate.json'
+      - name: Inventory source fast-KWP link evidence (no adapter approval)
+        run: |
+          python3 tools/thinkdiag/toyota_link_map.py --directory .local/thinkdiag/vehicle-packs \
+            --output .local/thinkdiag/vehicle-packs/source-link-evidence.json > .local/thinkdiag/report/source-link-summary.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota source link evidence' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Source lifecycle evidence only; adapter mapping blocked' \
+            -F 'output[summary]=@.local/thinkdiag/report/source-link-summary.json'
       - name: Upload on-demand packs and exact per-item conversion ledgers
         uses: actions/upload-artifact@v7
         with:
