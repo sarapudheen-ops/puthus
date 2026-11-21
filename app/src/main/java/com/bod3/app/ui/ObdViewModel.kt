@@ -220,6 +220,7 @@ data class PacksState(
 
 data class UiState(
     val screen: Screen = Screen.TOYOTA_PACKS,
+    val showIntroduction: Boolean = false,
     val bluetoothAvailable: Boolean = true,
     val bluetoothEnabled: Boolean = false,
     val permissionGranted: Boolean = false,
@@ -1458,8 +1459,6 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     fun openCars() {
         if (_state.value.screen != Screen.TOYOTA_PACKS) toyotaPacksReturn = _state.value.screen
         _state.update { it.copy(screen = Screen.TOYOTA_PACKS) }
-        if (vehiclePacks.state.value.view == com.bod3.app.vehiclepack.PackView.PICKER &&
-            vehiclePacks.state.value.page == null && !vehiclePacks.state.value.busy) vehiclePacks.picker()
     }
 
     fun openDevices() {
@@ -1980,9 +1979,12 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             .getOrElse { e -> appendLog("Settings: ${e.message}"); change(_appSettings.value) }
     }
 
-    fun finishOnboarding() = updateAppSettings { it.copy(onboardingDone = true) }
+    fun finishOnboarding() {
+        updateAppSettings { it.copy(onboardingDone = true) }
+        _state.update { it.copy(showIntroduction = false) }
+    }
 
-    fun showOnboarding() = updateAppSettings { it.copy(onboardingDone = false) }
+    fun showOnboarding() { _state.update { it.copy(showIntroduction = true) } }
 
     // ---- Data packs: import / export --------------------------------------------------------------
 

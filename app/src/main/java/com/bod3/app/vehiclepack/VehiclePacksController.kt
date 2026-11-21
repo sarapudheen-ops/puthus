@@ -66,6 +66,25 @@ class VehiclePacksController(
             } finally { if (sequence == loadSequence) _state.update { it.copy(busy = false) } }
         }
     }
+    /** Start with the offline name catalog; no remote data is needed just to list brands. */
+    fun home() {
+        loadSequence++; job?.cancel()
+        _state.update { it.copy(view = PackView.PICKER, busy = false, error = null,
+            preview = null, trail = emptyList(), page = null) }
+    }
+
+    /** The on-demand index is opened only after the driver chooses the supported brand. */
+    fun openBrand(name: String) {
+        if (_state.value.busy) return
+        fetch { client, check ->
+            val root = withContext(Dispatchers.IO) { client.root(check) }
+            val brand = root.children.singleOrNull { it.name.equals(name, ignoreCase = true) }
+                ?: error("No read-only data is available for this brand")
+            val page = withContext(Dispatchers.IO) { client.open(brand, check) }
+            _state.update { it.copy(view = PackView.PICKER, page = page, trail = listOf(root), preview = null) }
+        }
+    }
+
     fun picker() {
         _state.update { it.copy(view = PackView.PICKER, preview = null, trail = emptyList(), page = null) }
         fetch { client, check ->
@@ -179,7 +198,7 @@ class VehiclePacksController(
         val s = _state.value
         when {
             s.view == PackView.FEATURES -> _state.update { it.copy(view = PackView.SYSTEMS, unresolvedItems = emptyList(), unresolvedPage = null) }
-            s.view == PackView.SYSTEMS -> { picker(); return true }
+            s.view == PackView.SYSTEMS -> { home(); return true }
             s.preview != null -> _state.update { it.copy(preview = null, error = null) }
             s.trail.isNotEmpty() -> _state.update { it.copy(page = it.trail.last(), trail = it.trail.dropLast(1), error = null) }
             else -> return false

@@ -58,7 +58,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
         onDispose { view.keepScreenOn = false }
     }
 
-    if (!appSettings.onboardingDone) {
+    if (state.showIntroduction) {
         OnboardingScreen(onFinish = viewModel::finishOnboarding)
         return
     }
@@ -478,7 +478,8 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onDiagnostics = viewModel::openSelectedSystemDiagnostics, bringUp = bringUp, bringUpController = viewModel.bringUp,
                 onStartBringUp = viewModel::startBringUp, writeBringUpReport = viewModel::writeBringUpReport,
                 writeVerifiedSetups = viewModel::writeVerifiedSetups, onImportSetups = viewModel::openDataPacks,
-                onConnect = viewModel::openDevices, onSettings = viewModel::openAppSettings)
+                onConnect = viewModel::openDevices, onSettings = viewModel::openAppSettings,
+                names = state.catalog.pack.nodes)
         }
 
         Screen.DATA_PACKS -> {

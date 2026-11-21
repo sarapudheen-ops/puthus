@@ -450,6 +450,27 @@ object VehiclePackScenarios {
         }
     }
 
+    fun openingBrandIsExplicitAndLoadsOnlyItsPage() = runBlocking {
+        temporary { cache ->
+            val fixture = Fixture(enabled = true)
+            val client = fixture.client(cache)
+            val selected = AtomicReference<String?>(null)
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val controller = VehiclePacksController(owner, { client }, { selected.get() },
+                { selected.set(it.variantId) }, {}, {})
+            suspend fun settled() = withTimeout(10_000) { controller.state.first { !it.busy } }
+            try {
+                controller.home()
+                check(fixture.fetches == 0 && controller.state.value.page == null)
+                controller.openBrand("MAKE")
+                val page = settled()
+                check(page.error == null && page.page?.level == "make")
+                check(selected.get() == null && controller.selectedData().count == 0)
+                check(controller.back() && controller.state.value.page?.level == "root")
+            } finally { owner.cancel() }
+        }
+    }
+
     fun explicitCarSelectionLoadsOnlyItsEnabledSystem() = runBlocking {
         temporary { cache ->
             val fixture = Fixture(enabled = true)

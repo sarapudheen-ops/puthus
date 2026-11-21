@@ -41,12 +41,26 @@ class ProtocolSelectionTest {
         assertEquals(listOf("STP 52"), ObdProtocol.STN_SW_CAN_15765_29.selectCommands())
         assertEquals(listOf("STP 31", "STPBR 1000000"), ObdProtocol.STN_ISO_15765_11.selectCommands(1000.0))
         assertEquals(listOf("STP 31"), ObdProtocol.STN_ISO_15765_11.selectCommands(500.0))
-        assertEquals(listOf("STP 42"), ObdProtocol.STN_ISO_11898_29.selectCommands(250.0)) // raw CAN: fixed rate, baud ignored
+        assertEquals(listOf("STP 42"), ObdProtocol.STN_ISO_11898_29.selectCommands(250.0)) // J1939: fixed rate, baud ignored
         assertEquals(listOf("VTP291"), ObdProtocol.VT_KWP1281.selectCommands())
         assertFalse(ObdProtocol.VT_KWP1281.isCan)
         assertTrue(ObdProtocol.STN_MS_CAN_15765_29.isCan)
         assertEquals(HeaderFormat.CAN_29, ObdProtocol.STN_MS_CAN_15765_29.headerFormat)
-        assertEquals(PhysicalBus.MS_CAN, ObdProtocol.STN_MS_CAN_15765_29.bus)
+        assertEquals(PhysicalBus.SW_CAN, ObdProtocol.STN_MS_CAN_15765_29.bus)
+    }
+
+    @Test
+    fun adapterReportedStnProtocolsAreNotMislabelled() {
+        val j1939 = listOf(ObdProtocol.STN_ISO_11898_11, ObdProtocol.STN_ISO_11898_29)
+        j1939.forEach { assertEquals(HeaderFormat.CAN_29, it.headerFormat); assertEquals(ProtocolProbe.J1939, it.probe) }
+        assertTrue(j1939[0].displayName.contains("500"))
+        assertTrue(j1939[1].displayName.contains("250"))
+        listOf(ObdProtocol.STN_SW_CAN_15765_11, ObdProtocol.STN_SW_CAN_15765_29).forEach {
+            assertEquals(PhysicalBus.MS_CAN, it.bus); assertTrue(it.displayName.contains("125"))
+        }
+        listOf(ObdProtocol.STN_MS_CAN_15765_11, ObdProtocol.STN_MS_CAN_15765_29).forEach {
+            assertEquals(PhysicalBus.SW_CAN, it.bus); assertTrue(it.displayName.contains("33"))
+        }
     }
 
     @Test

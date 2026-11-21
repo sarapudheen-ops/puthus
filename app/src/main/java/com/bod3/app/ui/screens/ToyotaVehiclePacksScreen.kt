@@ -1,5 +1,6 @@
 package com.bod3.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import com.bod3.app.bringup.BringUpController
 import com.bod3.app.bringup.BringUpState
 import com.bod3.app.catalog.CatalogData
+import com.bod3.app.catalog.CatalogLevel
+import com.bod3.app.catalog.CatalogNode
 import com.bod3.app.diagnostics.EcuWorkbench
 import java.io.File
 import com.bod3.app.vehiclepack.PackView
@@ -47,11 +50,22 @@ fun ToyotaVehiclePacksScreen(
     onDiagnostics: () -> Unit, bringUp: BringUpState, bringUpController: BringUpController,
     onStartBringUp: () -> Unit, writeBringUpReport: suspend () -> File, writeVerifiedSetups: suspend () -> File,
     onImportSetups: () -> Unit, onConnect: () -> Unit = {}, onSettings: () -> Unit = {},
+    names: List<CatalogNode> = emptyList(),
 ) {
-    var query by rememberSaveable(state.page?.id) { mutableStateOf("") }
+    var localBrandId by rememberSaveable { mutableStateOf<String?>(null) }
+    var localModelId by rememberSaveable { mutableStateOf<String?>(null) }
+    val localBrand = names.firstOrNull { it.id == localBrandId && it.level == CatalogLevel.MAKE }
+    val localModel = names.firstOrNull { it.id == localModelId && it.parentId == localBrandId && it.level == CatalogLevel.MODEL }
+    val atBrands = state.view == PackView.PICKER && state.page?.level in listOf(null, "root")
+    val localBack = {
+        if (localModelId != null) localModelId = null else localBrandId = null
+    }
+    BackHandler(enabled = atBrands && localBrandId != null, onBack = localBack)
+    val back = { if (atBrands && localBrandId != null) localBack() else onBack() }
+    var query by rememberSaveable(state.page?.id, localBrandId, localModelId) { mutableStateOf("") }
     Scaffold(topBar = {
         TopAppBar(title = { Text(when (state.view) { PackView.PICKER -> "Cars"; PackView.SYSTEMS -> "Car"; PackView.FEATURES -> state.vehicle?.title ?: "Car" }) },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+            navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
             actions = {
                 if (!connected) TextButton(onClick = onConnect) { Text("Connect") }
                 TextButton(onClick = onSettings) { Text("Settings") }
@@ -68,48 +82,69 @@ fun ToyotaVehiclePacksScreen(
             state.error?.let { message -> item { SectionCard("Cars unavailable") { Text(message, color = MaterialTheme.colorScheme.error) } } }
             when (state.view) {
                 PackView.PICKER -> {
-                    item {
-                        Text(
-                            when (state.page?.level) {
-                                "root", null -> "Choose a brand"
-                                "make" -> "Choose a model"
-                                else -> "Choose your car"
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text((state.trail + listOfNotNull(state.page)).filter { it.level != "root" }.joinToString(" / ") { it.name },
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                    item {
-                        OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("Search") },
-                            singleLine = true, modifier = Modifier.fillMaxWidth())
-                    }
-                    val generations = when (state.page?.level) {
-                        "model" -> state.page
-                        "generation" -> state.trail.lastOrNull { it.level == "model" }
-                        else -> null
-                    }
-                    if (generations != null && state.page?.level == "generation") {
-                        item {
-                            Text("Generation", style = MaterialTheme.typography.titleSmall)
-                            generations.children.forEach { generation ->
-                                OutlinedButton(onClick = { controller.changeGeneration(generation) },
-                                    enabled = !state.busy && generation.id != state.page.id,
-                                    modifier = Modifier.fillMaxWidth()) { Text(generation.name) }
-                            }
-                            Text("Choose your car", style = MaterialTheme.typography.titleSmall)
+                    if (atBrands) {
+                        val level = when {
+                            localModel != null -> CatalogLevel.GENERATION
+                            localBrand != null -> CatalogLevel.MODEL
+                            else -> CatalogLevel.MAKE
                         }
+                        val parent = localModel?.id ?: localBrand?.id
+                        val choices = names.filter { it.level == level && it.parentId == parent &&
+                            it.label.contains(query, ignoreCase = true) }.sortedBy { it.name.lowercase() }
+                        item {
+                            Text(when (level) { CatalogLevel.MAKE -> "Choose a brand"; CatalogLevel.MODEL -> "Choose a model"; else -> "Choose your car" },
+                                style = MaterialTheme.typography.titleMedium)
+                            Text(listOfNotNull(localBrand?.name, localModel?.name).joinToString(" / "), style = MaterialTheme.typography.bodySmall)
+                            if (localModel == null) OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("Search") },
+                                singleLine = true, modifier = Modifier.fillMaxWidth())
+                        }
+                        if (localModel != null) item {
+                            Text("Names and model years only. Read-only diagnostic data is not available for this car.",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        items(choices, key = { it.id }) { choice ->
+                            OutlinedButton(onClick = {
+                                when (level) {
+                                    CatalogLevel.MAKE -> if (choice.name.equals("Toyota", ignoreCase = true)) controller.openBrand(choice.name)
+                                        else localBrandId = choice.id
+                                    CatalogLevel.MODEL -> localModelId = choice.id
+                                    else -> Unit
+                                }
+                            }, enabled = !state.busy && level != CatalogLevel.GENERATION, modifier = Modifier.fillMaxWidth()) { Text(choice.label) }
+                        }
+                        if (choices.isEmpty() && !state.busy) item { Text("No matches.") }
+                    } else {
+                        item {
+                            Text(if (state.page?.level == "make") "Choose a model" else "Choose your car",
+                                style = MaterialTheme.typography.titleMedium)
+                            Text((state.trail + listOfNotNull(state.page)).filter { it.level != "root" }.joinToString(" / ") { it.name },
+                                style = MaterialTheme.typography.bodySmall)
+                            OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("Search") },
+                                singleLine = true, modifier = Modifier.fillMaxWidth())
+                        }
+                        val generations = when (state.page?.level) {
+                            "model" -> state.page
+                            "generation" -> state.trail.lastOrNull { it.level == "model" }
+                            else -> null
+                        }
+                        if (generations != null && state.page?.level == "generation") {
+                            item {
+                                Text("Generation", style = MaterialTheme.typography.titleSmall)
+                                generations.children.forEach { generation ->
+                                    OutlinedButton(onClick = { controller.changeGeneration(generation) },
+                                        enabled = !state.busy && generation.id != state.page?.id,
+                                        modifier = Modifier.fillMaxWidth()) { Text(generation.name) }
+                                }
+                                Text("Choose your car", style = MaterialTheme.typography.titleSmall)
+                            }
+                        }
+                        val children = state.page?.children.orEmpty().filter { it.name.contains(query, ignoreCase = true) }
+                        items(children, key = { it.id }) { choice ->
+                            OutlinedButton(onClick = { if (choice.level == "variant") controller.selectCar(choice) else controller.browse(choice) },
+                                enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text(choice.name) }
+                        }
+                        if (!state.busy && children.isEmpty()) item { Text("No matches.") }
                     }
-                    val children = state.page?.children.orEmpty().filter { it.name.contains(query, ignoreCase = true) }
-                    items(children, key = { it.id }) { choice ->
-                        OutlinedButton(
-                            onClick = { if (choice.level == "variant") controller.selectCar(choice) else controller.browse(choice) },
-                            enabled = !state.busy, modifier = Modifier.fillMaxWidth(),
-                        ) { Text(choice.name) }
-                    }
-                    if (!state.busy && state.page?.children?.isEmpty() == true) item { Text("No cars here.") }
-                    if (!state.busy && state.page == null) item { OutlinedButton(onClick = controller::picker) { Text("Load cars") } }
-                    if (!state.busy && state.page?.children?.isNotEmpty() == true && children.isEmpty()) item { Text("No matches.") }
                 }
                 PackView.SYSTEMS -> {
                     val vehicle = state.vehicle

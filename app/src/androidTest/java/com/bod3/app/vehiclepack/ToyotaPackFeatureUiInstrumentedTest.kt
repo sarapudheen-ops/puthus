@@ -10,6 +10,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.bod3.app.android.AssetVehiclePacks
@@ -22,6 +25,8 @@ import com.bod3.app.bringup.BringUpReport
 import com.bod3.app.bringup.BringUpScope
 import com.bod3.app.bringup.BringUpState
 import com.bod3.app.bringup.VerifiedSetupStore
+import com.bod3.app.catalog.CatalogLevel
+import com.bod3.app.catalog.CatalogNode
 import com.bod3.app.ui.screens.ToyotaVehiclePacksScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +44,45 @@ import java.util.UUID
 @RunWith(AndroidJUnit4::class)
 class ToyotaPackFeatureUiInstrumentedTest {
     @get:Rule val rule = createComposeRule()
+
+    @Test fun offlineBrandsAndModelsNeedNoPackDownload() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext
+        val cache = File(app.noBackupFilesDir, "offline-ui-${UUID.randomUUID()}")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val names = listOf(
+            CatalogNode("honda", null, CatalogLevel.MAKE, "Honda"),
+            CatalogNode("civic", "honda", CatalogLevel.MODEL, "Civic"),
+            CatalogNode("civic-gen", "civic", CatalogLevel.GENERATION, "Example generation"),
+            CatalogNode("toyota", null, CatalogLevel.MAKE, "Toyota"),
+        )
+        try {
+            val controller = VehiclePacksController(scope, { error("Offline names must not load a pack") }, { null }, {}, {}, {})
+            val bringController = BringUpController(scope, VerifiedSetupStore(File(cache, "setups")), SharedPrefsKeyValueStore(app), { null })
+            rule.setContent {
+                MaterialTheme {
+                    ToyotaVehiclePacksScreen(VehiclePacksState(), controller, offline = true, connected = false,
+                        onBack = {}, onLive = {}, onTests = {}, onCoding = {}, onDiagnostics = {},
+                        bringUp = BringUpState(), bringUpController = bringController, onStartBringUp = {},
+                        writeBringUpReport = { File(cache, "report") }, writeVerifiedSetups = { File(cache, "setups.json") },
+                        onImportSetups = {}, names = names)
+                }
+            }
+            rule.onNodeWithText("Choose a brand").assertExists()
+            rule.onNodeWithText("Search").performTextInput("Honda")
+            rule.onNodeWithText("Toyota").assertDoesNotExist()
+            rule.onNodeWithText("Honda").performClick()
+            rule.onNodeWithText("Choose a model").assertExists()
+            rule.onNodeWithText("Civic").performClick()
+            rule.onNodeWithText("Choose your car").assertExists()
+            rule.onNodeWithText("Example generation").assertIsNotEnabled()
+            rule.onNodeWithText("Names and model years only.", substring = true).assertExists()
+            rule.onNodeWithContentDescription("Back").performClick()
+            rule.onNodeWithText("Choose a model").assertExists()
+        } finally {
+            scope.cancel()
+            cache.deleteRecursively()
+        }
+    }
 
     @Test fun enabled2007ExplainsBringUpAndVerifiedStateUnlocksReadButtons() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
