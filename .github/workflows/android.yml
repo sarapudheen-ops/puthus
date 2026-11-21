@@ -36,6 +36,32 @@ jobs:
       - name: Prepare on-demand Toyota vehicle packs (APK index only)
         uses: ./.github/actions/prepare-vehicle-packs
 
+      - name: Report generated Toyota pack enablement (observational)
+        if: always()
+        run: |
+          mkdir -p .local
+          set +e
+          python3 tools/thinkdiag/pack_report.py .local/toyota-vehicle-packs --output .local/toyota-pack-report.md > .local/pack-report.stdout 2> .local/pack-report.stderr
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            cat .local/toyota-pack-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '## Toyota generated pack report' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Report generation failed (non-fatal):' >> "$GITHUB_STEP_SUMMARY"
+            cat .local/pack-report.stderr >> "$GITHUB_STEP_SUMMARY"
+            printf '\nReport exit status: %s\n' "$status" >> "$GITHUB_STEP_SUMMARY"
+            cp .local/pack-report.stderr .local/toyota-pack-report.md
+          fi
+
+      - name: Upload Toyota pack report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: toyota-pack-report
+          path: .local/toyota-pack-report.md
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Test converters, pack bounds, source provenance and delivery contract
         run: python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py' -v
 
