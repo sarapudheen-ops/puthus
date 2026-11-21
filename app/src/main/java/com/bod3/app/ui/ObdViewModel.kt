@@ -1409,10 +1409,10 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         bringUp.select(selected.vehicle?.path?.nodes?.map { it.id }.orEmpty(), selected.system?.id,
             if (selected.system != null) selected.bringUpCandidates else emptyList())
         refreshData(); actuators.refresh(); coding.refresh()
-        // A random read-session scope is not a vehicle or ECU identity. Verification remains
+        // This stable local grouping key is not a vehicle or ECU identity. Verification remains
         // bound to the current Session and write operations still require an ECU serial.
-        if (selected.system?.readOnly == true) {
-            bringUp.vehicleInstance("Read session ${UUID.randomUUID()}")
+        if (selected.system?.readOnly == true && bringUp.state.value.vehicleInstance.isBlank()) {
+            bringUp.vehicleInstance("Local read group ${UUID.randomUUID()}")
         }
         if (selected.system?.enabled == true && _state.value.isConnected && !bringUp.state.value.running &&
             bringUp.state.value.report == null && bringUp.state.value.vehicleInstance.isNotBlank()) startBringUp()

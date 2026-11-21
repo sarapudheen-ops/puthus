@@ -114,7 +114,7 @@ class VehiclePacksController(
      * No review screen, no pack picker and no candidate menu are shown to the driver.
      */
     fun selectCar(choice: PackChoice) {
-        if (_state.value.busy) return
+        if (_state.value.busy || choice.level != "variant" || choice !in _state.value.page?.children.orEmpty()) return
         try { beforeSystemChange() } catch (e: Exception) { _state.update { it.copy(error = e.message) }; return }
         fetch { client, check ->
             val vehicle = withContext(Dispatchers.IO) { client.vehicle(choice, check) }
