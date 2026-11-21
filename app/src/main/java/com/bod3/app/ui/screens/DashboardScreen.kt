@@ -168,7 +168,6 @@ private fun DiagnosticButtons(state: UiState, connected: Boolean, busy: Boolean,
         OutlinedButton(onClick = actions.onOpenGarage, enabled = !state.scan.running) { Text("Saved vehicles") }
         OutlinedButton(onClick = actions.onOpenActuators, enabled = !state.scan.running) { Text("Bidirectional tests") }
         OutlinedButton(onClick = actions.onOpenCoding, enabled = !state.scan.running) { Text("Coding") }
-        OutlinedButton(onClick = actions.onOpenDataPacks, enabled = !state.scan.running) { Text("Data packs") }
         OutlinedButton(onClick = actions.onOpenAppSettings) { Text("App settings") }
         if (state.settings.expertMode) {
             OutlinedButton(onClick = actions.onOpenTerminal, enabled = connected && !state.scan.running) { Text("Expert terminal") }

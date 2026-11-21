@@ -58,7 +58,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
         onDispose { view.keepScreenOn = false }
     }
 
-    if (!appSettings.onboardingDone) {
+    if (state.showIntroduction) {
         OnboardingScreen(onFinish = viewModel::finishOnboarding)
         return
     }
@@ -82,6 +82,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             onOpenAppSettings = viewModel::openAppSettings,
             onOpenDataPacks = viewModel::openDataPacks,
             onShowIntro = viewModel::showOnboarding,
+            onBackToCars = viewModel::openCars,
         )
 
         Screen.DASHBOARD -> {
@@ -468,6 +469,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
 
         Screen.TOYOTA_PACKS -> {
             BackHandler(onBack = viewModel::closeToyotaPacks)
+            LaunchedEffect(Unit) { viewModel.openCars() }
             val vehiclePacks by viewModel.vehiclePacks.state.collectAsStateWithLifecycle()
             val bringUp by viewModel.bringUp.state.collectAsStateWithLifecycle()
             ToyotaVehiclePacksScreen(vehiclePacks, viewModel.vehiclePacks, state.offline, state.isConnected,
@@ -475,7 +477,9 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
                 onTests = viewModel::openActuators, onCoding = viewModel::openCoding,
                 onDiagnostics = viewModel::openSelectedSystemDiagnostics, bringUp = bringUp, bringUpController = viewModel.bringUp,
                 onStartBringUp = viewModel::startBringUp, writeBringUpReport = viewModel::writeBringUpReport,
-                writeVerifiedSetups = viewModel::writeVerifiedSetups, onImportSetups = viewModel::openDataPacks)
+                writeVerifiedSetups = viewModel::writeVerifiedSetups, onImportSetups = viewModel::openDataPacks,
+                onConnect = viewModel::openDevices, onSettings = viewModel::openAppSettings,
+                names = state.catalog.pack.nodes)
         }
 
         Screen.DATA_PACKS -> {

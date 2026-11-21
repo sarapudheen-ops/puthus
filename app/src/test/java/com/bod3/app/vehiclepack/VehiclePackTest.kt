@@ -22,6 +22,8 @@ class VehiclePackTest {
     @Test fun systemScopeAndSavedLiveChoicesNeverFallBackOrCrossVehicles() = VehiclePackScenarios.closedSystemScopeNeverMixesGlobalPidsAndSelections()
     @Test fun selectedSystemConnectionDoesNotLeakAcrossScopesOrUseLibraryFallbacks() = VehiclePackScenarios.connectionUsesOnlyTheManualPathAndCurrentSystemWithSparseOverrides()
     @Test fun pickerAndDownloadsCannotAutomaticallyChooseVehicleConfiguration() = VehiclePackScenarios.controllerDownloadsNeverSelectWithoutExplicitManualConfirmation()
+    @Test fun openingBrandIsExplicitAndLoadsOnlyItsPage() = VehiclePackScenarios.openingBrandIsExplicitAndLoadsOnlyItsPage()
+    @Test fun explicitCarSelectionLoadsOnlyItsEnabledSystem() = VehiclePackScenarios.explicitCarSelectionLoadsOnlyItsEnabledSystem()
     @Test fun actionsBundleUsesTheProductionKotlinValidator() {
         val directory = System.getProperty("toyota.pack.directory") ?: return
         VehiclePackScenarios.generatedBundle(File(directory))

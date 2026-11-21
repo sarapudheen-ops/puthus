@@ -10,6 +10,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.bod3.app.android.AssetVehiclePacks
@@ -22,6 +25,8 @@ import com.bod3.app.bringup.BringUpReport
 import com.bod3.app.bringup.BringUpScope
 import com.bod3.app.bringup.BringUpState
 import com.bod3.app.bringup.VerifiedSetupStore
+import com.bod3.app.catalog.CatalogLevel
+import com.bod3.app.catalog.CatalogNode
 import com.bod3.app.ui.screens.ToyotaVehiclePacksScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +44,45 @@ import java.util.UUID
 @RunWith(AndroidJUnit4::class)
 class ToyotaPackFeatureUiInstrumentedTest {
     @get:Rule val rule = createComposeRule()
+
+    @Test fun offlineBrandsAndModelsNeedNoPackDownload() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext
+        val cache = File(app.noBackupFilesDir, "offline-ui-${UUID.randomUUID()}")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val names = listOf(
+            CatalogNode("honda", null, CatalogLevel.MAKE, "Honda"),
+            CatalogNode("civic", "honda", CatalogLevel.MODEL, "Civic"),
+            CatalogNode("civic-gen", "civic", CatalogLevel.GENERATION, "Example generation"),
+            CatalogNode("toyota", null, CatalogLevel.MAKE, "Toyota"),
+        )
+        try {
+            val controller = VehiclePacksController(scope, { error("Offline names must not load a pack") }, { null }, {}, {}, {})
+            val bringController = BringUpController(scope, VerifiedSetupStore(File(cache, "setups")), SharedPrefsKeyValueStore(app), { null })
+            rule.setContent {
+                MaterialTheme {
+                    ToyotaVehiclePacksScreen(VehiclePacksState(), controller, offline = true, connected = false,
+                        onBack = {}, onLive = {}, onTests = {}, onCoding = {}, onDiagnostics = {},
+                        bringUp = BringUpState(), bringUpController = bringController, onStartBringUp = {},
+                        writeBringUpReport = { File(cache, "report") }, writeVerifiedSetups = { File(cache, "setups.json") },
+                        onImportSetups = {}, names = names)
+                }
+            }
+            rule.onNodeWithText("Choose a brand").assertExists()
+            rule.onNodeWithText("Search").performTextInput("Honda")
+            rule.onNodeWithText("Toyota").assertDoesNotExist()
+            rule.onNodeWithText("Honda").performClick()
+            rule.onNodeWithText("Choose a model").assertExists()
+            rule.onNodeWithText("Civic").performClick()
+            rule.onNodeWithText("Choose your car").assertExists()
+            rule.onNodeWithText("Example generation").assertIsNotEnabled()
+            rule.onNodeWithText("Names and model years only.", substring = true).assertExists()
+            rule.onNodeWithContentDescription("Back").performClick()
+            rule.onNodeWithText("Choose a model").assertExists()
+        } finally {
+            scope.cancel()
+            cache.deleteRecursively()
+        }
+    }
 
     @Test fun enabled2007ExplainsBringUpAndVerifiedStateUnlocksReadButtons() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
@@ -70,20 +114,14 @@ class ToyotaPackFeatureUiInstrumentedTest {
                 }
             }
             fun scroll(text: String) = rule.onNodeWithTag("toyotaPackContent").performScrollToNode(hasText(text))
-            fun gate(button: String, prompt: String, notConverted: String) {
-                scroll(prompt)
-                rule.onNodeWithText(prompt).assertExists()
-                rule.onNodeWithText(notConverted, substring = true).assertDoesNotExist()
-                rule.onNodeWithText(button).assertIsNotEnabled()
+            scroll("Read now")
+            rule.onNodeWithText("Vehicle label or VIN").assertDoesNotExist()
+            rule.onNodeWithText("View this system's tests").assertDoesNotExist()
+            rule.onNodeWithText("View this system's customizations").assertDoesNotExist()
+            for (button in listOf("Select values, graph and record", "Read fault codes", "ECU information")) {
+                scroll(button); rule.onNodeWithText(button).assertIsNotEnabled()
             }
-            scroll("Start is disabled: enter the required vehicle instance above.")
-            rule.onNodeWithText("Unique vehicle instance (garage label or VIN) · required").assertExists()
-            rule.onNodeWithText("Try ranked read-only candidates").assertIsNotEnabled()
-            gate("Select values, graph and record", "Run the read-only ECU bring-up above on this connection to unlock live data.", "No executable PID request")
-            gate("Read fault codes", "Run the read-only ECU bring-up above on this connection to unlock fault codes.", "have not been converted")
-            gate("View this system's tests", "Run the read-only ECU bring-up above on this connection to check available tests. Read-only restrictions still apply.", "Start/stop/status and safety mappings remain unresolved")
-            gate("View this system's customizations", "Run the read-only ECU bring-up above on this connection to check available customizations. Read-only restrictions still apply.", "Read/write identifiers and value maps remain unresolved")
-            gate("ECU information", "Run the read-only ECU bring-up above on this connection to unlock ECU information.", "have not been converted")
+            rule.onNodeWithText("have not been converted", substring = true).assertDoesNotExist()
 
             // Only UI state is simulated; no proof is persisted and no ECU request is made.
             val attempt = BringUpAttempt(candidate.id, candidate.fingerprint, 1, 2, AttemptOutcome.WORKING, "Simulated UI state")
@@ -92,9 +130,6 @@ class ToyotaPackFeatureUiInstrumentedTest {
             rule.runOnIdle { bringUp.value = BringUpState(vehicleInstance = "UI fixture", candidates = listOf(candidate), report = report, verifiedHere = true) }
             for (button in listOf("Select values, graph and record", "Read fault codes", "ECU information")) {
                 scroll(button); rule.onNodeWithText(button).assertIsEnabled()
-            }
-            for (button in listOf("View this system's tests", "View this system's customizations")) {
-                scroll(button); rule.onNodeWithText(button).assertIsNotEnabled()
             }
             Log.i("ToyotaPackUiEvidence", "2007 UI: unverified bring-up prompts shown; unconverted claims absent; simulated verified read buttons enabled; read-only write buttons disabled")
         } finally {

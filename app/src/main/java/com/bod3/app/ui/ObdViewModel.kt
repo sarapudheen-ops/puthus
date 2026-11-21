@@ -219,7 +219,8 @@ data class PacksState(
 )
 
 data class UiState(
-    val screen: Screen = Screen.DEVICES,
+    val screen: Screen = Screen.TOYOTA_PACKS,
+    val showIntroduction: Boolean = false,
     val bluetoothAvailable: Boolean = true,
     val bluetoothEnabled: Boolean = false,
     val permissionGranted: Boolean = false,
@@ -348,7 +349,13 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         BringUpController(viewModelScope, verifiedSetupStore, preferences, environment = {
             val current = session; val recording = recorder
             if (_state.value.isConnected && current != null && recording != null) current to recording else null
-        }, accessChanged = { refreshData(); actuators.refresh(); coding.refresh() })
+        }, accessChanged = {
+            refreshData(); actuators.refresh(); coding.refresh()
+            viewModelScope.launch {
+                if (_state.value.screen == Screen.TOYOTA_PACKS && bringUp.state.value.verifiedHere &&
+                    vehiclePacks.selectedSystem()?.readOnly == true) openSelectedSystemLive()
+            }
+        })
     }
     private val catalogAccess = CatalogAccess(catalog, ::downloadedScope)
     private val actuatorLibrary = ActuatorLibrary(bundledActuators.packs, preferences, catalogAccess)
@@ -469,8 +476,9 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val result = openConnection(device)
                 appendLog("Connected with profile \"${result.profile.name}\"")
-                _state.update { it.copy(screen = Screen.DASHBOARD) }
+                _state.update { it.copy(screen = Screen.TOYOTA_PACKS) }
                 onConnected(device, result)
+                if (vehiclePacks.selectedSystem()?.enabled == true) refreshDownloadedSystem()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1382,7 +1390,8 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun selectDownloadedVehicle(vehicle: PackVehicle) {
-        requireCatalogEditable()
+        require(catalogErrors.isEmpty()) { "Resolve catalog migration problems before changing preserved data" }
+        require(!bringUp.state.value.running && !coding.state.value.busy && !actuators.state.value.running) { "Finish the active operation first" }
         catalog.selectDownloadedPath(vehicle.path, connectionStore.activeProfile())
     }
 
@@ -1401,6 +1410,13 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         bringUp.select(selected.vehicle?.path?.nodes?.map { it.id }.orEmpty(), selected.system?.id,
             if (selected.system != null) selected.bringUpCandidates else emptyList())
         refreshData(); actuators.refresh(); coding.refresh()
+        // This stable local grouping key is not a vehicle or ECU identity. Verification remains
+        // bound to the current Session and write operations still require an ECU serial.
+        if (selected.system?.readOnly == true && bringUp.state.value.vehicleInstance.isBlank()) {
+            bringUp.vehicleInstance("Local read group ${UUID.randomUUID()}")
+        }
+        if (selected.system?.enabled == true && _state.value.isConnected && !bringUp.state.value.running &&
+            bringUp.state.value.report == null && bringUp.state.value.vehicleInstance.isNotBlank()) startBringUp()
     }
 
     private fun guardedSession(recording: RecordingExecutor, protocol: com.bod3.app.obd.protocol.ObdProtocol,
@@ -1439,6 +1455,17 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun writeVerifiedSetups(): File = shareJson("bod3-verified-ecu-setups-${System.currentTimeMillis()}.json",
         withContext(Dispatchers.IO) { verifiedSetupStore.exportPack() }, "No verified setups saved yet")
 
+    /** Cars is the entry screen: brands, models, then the car. */
+    fun openCars() {
+        if (_state.value.screen != Screen.TOYOTA_PACKS) toyotaPacksReturn = _state.value.screen
+        _state.update { it.copy(screen = Screen.TOYOTA_PACKS) }
+    }
+
+    fun openDevices() {
+        pauseLiveData()
+        _state.update { it.copy(screen = Screen.DEVICES) }
+    }
+
     fun openToyotaPacks() {
         if (bringUp.state.value.running || coding.state.value.busy || actuators.state.value.running || importApplying) return
         pauseLiveData()
@@ -1458,7 +1485,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeToyotaPacks() {
         if (bringUp.state.value.running) { bringUp.stop(); return }
-        if (!vehiclePacks.back()) {
+        if (!vehiclePacks.back() && toyotaPacksReturn != Screen.VEHICLES) {
             refreshData()
             _state.update { it.copy(screen = toyotaPacksReturn) }
         }
@@ -1952,9 +1979,12 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
             .getOrElse { e -> appendLog("Settings: ${e.message}"); change(_appSettings.value) }
     }
 
-    fun finishOnboarding() = updateAppSettings { it.copy(onboardingDone = true) }
+    fun finishOnboarding() {
+        updateAppSettings { it.copy(onboardingDone = true) }
+        _state.update { it.copy(showIntroduction = false) }
+    }
 
-    fun showOnboarding() = updateAppSettings { it.copy(onboardingDone = false) }
+    fun showOnboarding() { _state.update { it.copy(showIntroduction = true) } }
 
     // ---- Data packs: import / export --------------------------------------------------------------
 

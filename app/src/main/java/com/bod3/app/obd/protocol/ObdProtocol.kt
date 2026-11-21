@@ -93,14 +93,17 @@ enum class ObdProtocol(
 
     STN_ISO_15765_11("STN 31", "ISO 15765 CAN (11 bit, custom baud, default 500k)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.HS_CAN, selectArgument = "31", defaultBaudKbps = 500.0),
     STN_ISO_15765_29("STN 32", "ISO 15765 CAN (29 bit, custom baud, default 500k)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.HS_CAN, selectArgument = "32", defaultBaudKbps = 500.0),
-    STN_ISO_11898_11("STN 41", "ISO 11898 raw CAN (11 bit)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.HS_CAN, ProtocolProbe.RAW_CAN, selectArgument = "41"),
-    STN_ISO_11898_29("STN 42", "ISO 11898 raw CAN (29 bit)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.HS_CAN, ProtocolProbe.RAW_CAN, selectArgument = "42"),
-    STN_SW_CAN_15765_11("STN 51", "SW-CAN GMLAN ISO 15765 (11 bit, 33.3k)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.SW_CAN, selectArgument = "51"),
-    STN_SW_CAN_15765_29("STN 52", "SW-CAN GMLAN ISO 15765 (29 bit, 33.3k)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.SW_CAN, selectArgument = "52"),
+    // Enum names are retained for saved-profile compatibility; displayed protocols and buses
+    // reflect the adapter's ATDP replies, not the old names. Header width for 51/52/61/62
+    // still needs physical verification and is deliberately not asserted in the labels.
+    STN_ISO_11898_11("STN 41", "SAE J1939 CAN (29 bit, 500 kbaud)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.HS_CAN, ProtocolProbe.J1939, selectArgument = "41"),
+    STN_ISO_11898_29("STN 42", "SAE J1939 CAN (29 bit, 250 kbaud)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.HS_CAN, ProtocolProbe.J1939, selectArgument = "42"),
+    STN_SW_CAN_15765_11("STN 51", "MS-CAN (125 kbaud; adapter reported)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.MS_CAN, selectArgument = "51"),
+    STN_SW_CAN_15765_29("STN 52", "MS-CAN (125 kbaud; adapter reported)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.MS_CAN, selectArgument = "52"),
     STN_SW_CAN_11898_11("STN 53", "SW-CAN GMLAN raw ISO 11898 (11 bit)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.SW_CAN, ProtocolProbe.RAW_CAN, selectArgument = "53"),
     STN_SW_CAN_11898_29("STN 54", "SW-CAN GMLAN raw ISO 11898 (29 bit)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.SW_CAN, ProtocolProbe.RAW_CAN, selectArgument = "54"),
-    STN_MS_CAN_15765_11("STN 61", "MS-CAN ISO 15765 (11 bit, 125k)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.MS_CAN, selectArgument = "61"),
-    STN_MS_CAN_15765_29("STN 62", "MS-CAN ISO 15765 (29 bit, 125k)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.MS_CAN, selectArgument = "62"),
+    STN_MS_CAN_15765_11("STN 61", "SW-CAN (33 kbaud; adapter reported)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.SW_CAN, selectArgument = "61"),
+    STN_MS_CAN_15765_29("STN 62", "SW-CAN (33 kbaud; adapter reported)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.SW_CAN, selectArgument = "62"),
     STN_MS_CAN_11898_11("STN 63", "MS-CAN raw ISO 11898 (11 bit)", HeaderFormat.CAN_11, ProtocolFamily.STN, PhysicalBus.MS_CAN, ProtocolProbe.RAW_CAN, selectArgument = "63"),
     STN_MS_CAN_11898_29("STN 64", "MS-CAN raw ISO 11898 (29 bit)", HeaderFormat.CAN_29, ProtocolFamily.STN, PhysicalBus.MS_CAN, ProtocolProbe.RAW_CAN, selectArgument = "64"),
 
