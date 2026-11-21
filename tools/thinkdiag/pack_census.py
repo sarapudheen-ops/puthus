@@ -51,6 +51,11 @@ def census(pack_dir: Path, decoded: Path | None = None) -> dict:
         for listing in EntryIndex((decoded / "SYSTEMENTER.BIN").read_bytes()).lists.values():
             for entry in listing.entries:
                 entry_transport[entry.source_id] = entry.transport
+    elif (pack_dir / "entry-index.json").is_file():
+        entry_index = json.loads((pack_dir / "entry-index.json").read_text())
+        for listing in entry_index.get("lists", []):
+            for entry in listing.get("entries", []):
+                entry_transport[entry["id"]] = entry.get("transportCode", "unknown")
     system_classes = Counter()
     class_counts = Counter()
     reason_counts = Counter()
@@ -111,8 +116,9 @@ def census(pack_dir: Path, decoded: Path | None = None) -> dict:
               "categorySystems": {cat: sum(bool(s.get("counts", {}).get(cat, {}).get("converted", 0)) for s in systems)
                                    for cat in CATEGORIES}}
 
+    source_counts = {"systementer": {}, "ecuTables": {}, "funData": {}}
     if decoded is not None:
-        source_counts = {"systementer": {}, "ecuTables": {}, "funData": {}}
+
         entry_path = decoded / "SYSTEMENTER.BIN"
         if entry_path.exists():
             ei = EntryIndex(entry_path.read_bytes())
@@ -141,6 +147,30 @@ def census(pack_dir: Path, decoded: Path | None = None) -> dict:
         source_counts["ecuTables"] = {k: {"count": v["count"], "ecuFiles": len(v["ecuFiles"]),
             "uniqueTables": len(v.get("uniqueTables", set())), "rows": v["rows"][:3]} for k, v in tables.items()}
         report["sourceCensus"] = source_counts
+    else:
+        # Cache-hit mode has no decoded corpus. Its source-inventory objects still
+        # carry the exact ECU section census and bounded disabled-row samples.
+        tables = defaultdict(lambda: {"count": 0, "files": set(), "unique": set(), "rows": []})
+        for obj in objects.values():
+            if obj.get("kind") != "ecu-source": continue
+            for sec in obj.get("sections", []):
+                stride = sec.get("stride")
+                bucket_count = sec.get("rows", 0)
+                key = f"slot={sec.get('slot')},tag={sec.get('tag')},stride={stride},rows={bucket_count}"
+                row = tables[key]; row["count"] += 1; row["files"].add(obj.get("sourceFile"))
+                row["unique"].add((obj.get("sha256"), sec.get("sourceRecord")))
+            for ref in obj.get("pages", []):
+                page = objects.get(ref.get("sha256")) or visit(ref)
+                for item in page.get("items", []):
+                    tag = item.get("tableTag")
+                    if tag is not None:
+                        for key, row in tables.items():
+                            if f"tag={tag}," in key and len(row["rows"]) < 3:
+                                row["rows"].append(item.get("rawHex", "")[:256])
+        source_counts["ecuTables"] = {k: {"count": v["count"], "ecuFiles": len(v["files"]),
+            "uniqueTables": len(v["unique"]), "rows": v["rows"][:3]} for k, v in tables.items()}
+        source_counts["systementer"] = {"note": "Exact native transport codes are available from entry-index.json; decoded archive absent on cache hit."}
+        report["sourceCensus"] = source_counts
     return report
 
 
@@ -163,7 +193,9 @@ def markdown(data):
             lines.append(f"- {region}: {value['functionRecords']} indexed function records; {value['declaredLiveRows']} declared live rows; nonempty columns 1-5: {value['nonemptyColumns']}")
     if "sourceCensus" in data:
         lines += ["", "## SYSTEMENTER transports", ""]
-        for key, value in data["sourceCensus"]["systementer"].items(): lines.append(f"- Native code {key}: {value['count']} entries; examples `{', '.join(x['id'] for x in value['examples'])}`")
+        for key, value in data["sourceCensus"]["systementer"].items():
+            if isinstance(value, dict): lines.append(f"- Native code {key}: {value['count']} entries; examples `{', '.join(x['id'] for x in value['examples'])}`")
+            else: lines.append(f"- {value}")
         lines += ["", "## ECU table schemas", ""]
         for key, value in data["sourceCensus"]["ecuTables"].items(): lines.append(f"- `{key}`: {value['count']} sections / {value['uniqueTables']} unique tables across {value['ecuFiles']} ECU files; raw rows `{'; '.join(value['rows'])}`")
     rendered = "\n".join(lines) + "\n"
