@@ -18,7 +18,8 @@ jobs:
     permissions:
       contents: write # Publish immutable, content-addressed data objects on push; never on PRs.
       pull-requests: write # Publish bounded census summary on the associated PR.
-    timeout-minutes: 30
+      actions: read # Permit the downstream step-timing summary to read job metadata.
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -359,3 +360,38 @@ jobs:
           name: vehicle-packs-android24-results
           path: .local/device/reports/
           if-no-files-found: warn
+
+  build-timing-summary:
+    name: Android build step timings
+    if: always()
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Add Android build job and step durations to summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" > /tmp/jobs.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import datetime, json
+          data = json.load(open('/tmp/jobs.json'))
+          jobs = [j for j in data['jobs'] if j['name'] == 'Assemble, lint & test (debug)']
+          print('# Android build timing')
+          for job in jobs:
+              start = datetime.datetime.fromisoformat(job['started_at'].replace('Z', '+00:00'))
+              end = datetime.datetime.fromisoformat(job['completed_at'].replace('Z', '+00:00')) if job.get('completed_at') else None
+              print(f"\nJob: **{job['conclusion']}**, duration {(end-start).total_seconds():.1f}s" if end else f"\nJob: **{job['status']}**")
+              print('\n| Step | Result | Duration (s) |')
+              print('|---|---|---:|')
+              for step in job['steps']:
+                  if step.get('started_at') and step.get('completed_at'):
+                      a = datetime.datetime.fromisoformat(step['started_at'].replace('Z', '+00:00'))
+                      b = datetime.datetime.fromisoformat(step['completed_at'].replace('Z', '+00:00'))
+                      duration = f'{(b-a).total_seconds():.1f}'
+                  else:
+                      duration = 'n/a'
+                  print(f"| {step['name']} | {step['conclusion'] or step['status']} | {duration} |")
+          PY
