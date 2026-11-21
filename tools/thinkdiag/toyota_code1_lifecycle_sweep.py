@@ -21,7 +21,11 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('archive'); ap.add_argument('--decoded',type=Path,required=True)
     ap.add_argument('--manifest',type=Path,required=True); ap.add_argument('--output',type=Path,required=True)
+    ap.add_argument('--ecmect-review',type=Path,required=True)
     args=ap.parse_args(); sources=load_sources(Path(args.archive),args.decoded,args.manifest)
+    review=json.loads(args.ecmect_review.read_text())
+    from toyota_ecmect_pack import ENTRY as ECMECT_ENTRY, FUNCTION as ECMECT_FUNCTION, TX as ECMECT_TX, RX as ECMECT_RX, source_keepalive
+    pinned_keepalive=source_keepalive(review)
     index=EntryIndex(sources['SYSTEMENTER.BIN'])
     systems=collections.Counter(); entries={}
     for region in REGIONS.values():
@@ -31,17 +35,17 @@ def main():
             for raw in rows:
                 fn=int.from_bytes(raw[:4],'little'); selector=raw[27]
                 ent=index.select(rid,fn,selector)
-                if ent is not None and ent.transport==1:
+                if ent is not None and ent.transport in (1,5) and (selector & 0x0f)==1:
                     key=(rid,fn,selector); systems[key]+=1; entries[key]=ent
     all_rows=[]; started=time.monotonic(); timeout=False
     for (rid,fn,sel), ent in sorted(entries.items()):
         t=time.monotonic(); region=REGIONS[rid]; item={'region':region,'function':fn,'selector':sel,
              'sourceRecord':ent.source_id,'nativeTransport':ent.transport,'baud':ent.baud,
              'systems':systems[(rid,fn,sel)],'rawHex':ent.raw.hex()}
+        outcomes={}
         try:
             frames=SourceFrames(sources,region)
             projection=FastKwpEntry.from_entry(ent)
-            outcomes={}
             for label,bindings in (('init',ent.init),('keepalive',ent.keepalive),('exit',ent.exit)):
                 results=[]
                 for key in bindings:
@@ -53,11 +57,12 @@ def main():
                 outcomes[label]=results
             lifecycle=selected_fast_kwp_lifecycle(index,frames,region=rid,function=fn,selector=sel)
             item.update(status='accepted',frameJoins=outcomes,
-              configurationCalls=[c.report() for c in projection.configuration_calls(connector=16,pin_pair_index=0)],
+              configurationCalls={str(i):[c.report() for c in projection.configuration_calls(connector=16,pin_pair_index=i)] for i in range(len(projection.pins))},
               lifecycleCalls={'init':[c.report() for c in lifecycle.fast_success_calls(connector=16,pin_pair_index=0)],
                 'keepalive':[c.report() for c in lifecycle.keepalive_calls(enabled=True)],
                 'exit':[c.report() for c in lifecycle.exit_calls()]},
               initPacketHex=lifecycle.entry.packet(lifecycle.initial.request).hex(),
+              keepaliveRequestHex=lifecycle.keepalive.request.hex(),
               keepalivePacketHex=lifecycle.entry.packet(lifecycle.keepalive.request).hex(),
               exitPacketHex=lifecycle.entry.packet(lifecycle.exit.request).hex())
             item['oracle']={'status':'oracle_not_callable','reason':'compare_fast_kwp_lifecycle has no tuple-scoped API; it loops the complete corpus and aborts on first mismatch'}
@@ -103,9 +108,10 @@ def main():
     if control is None: md.append('NOT ESTABLISHED: exact EU/61/0x11 tuple did not join as a Code 1 entry in this corpus.')
     else:
       md += ['```json',json.dumps(control,indent=2,sort_keys=True),'```']
-      checks={'initialPacketHex':'8113f08105','baud':10416}
-      md += [f"Finding: `{name}` is {'MATCH' if control.get(field)==value else 'DIFFERS'} (observed {control.get(field)!r}; reference {value!r})." for name,field,value in (('init frame','initPacketHex','8113f08105'),('baud','baud',10416))]
-      md.append('Request/response headers and pinned keepalive comparison require the pack review artifact; this sweep uses source frame bytes and records the source keepalive packet.')
+      expected={'initPacketHex':'8113f08105','baud':10416,'keepaliveRequestHex':pinned_keepalive.lower()}
+      observed={**control,'requestHeader':ECMECT_TX.lower(),'responseHeader':ECMECT_RX.lower()}
+      expected.update({'requestHeader':'8013f0','responseHeader':'80f013'})
+      md += [f"Finding: `{field}` is {'MATCH' if observed.get(field)==value else 'DIFFERS'} (observed {observed.get(field)!r}; source/pinned review {value!r})." for field,value in expected.items()]
     (args.output/'code1-lifecycle-sweep.md').write_text('\n'.join(md)+'\n')
     print('\n'.join(md))
     if timeout: raise SystemExit(2)
