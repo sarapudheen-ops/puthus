@@ -24,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.bod3.app.bringup.BringUpController
 import com.bod3.app.bringup.BringUpState
@@ -49,7 +50,7 @@ fun ToyotaVehiclePacksScreen(
         TopAppBar(title = { Text(when (state.view) { PackView.PICKER -> "Toyota vehicle packs"; PackView.SYSTEMS -> "Vehicle systems"; PackView.FEATURES -> state.system?.name ?: "System features" }) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
     }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("toyotaPackContent"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (state.busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             item {
                 SectionCard(if (state.complete) "Source-verified conversion" else "Conversion incomplete — unresolved features disabled") {
@@ -66,7 +67,7 @@ fun ToyotaVehiclePacksScreen(
                         item {
                             Text("Make → Model → Generation → Variant", style = MaterialTheme.typography.titleSmall)
                             Text((state.trail + listOfNotNull(state.page)).filter { it.level != "root" }.joinToString(" / ") { it.name }, style = MaterialTheme.typography.bodySmall)
-                            Text("Only exact, reviewed source branches are listed here. Other source paths remain unresolved in the conversion report, not guessed catalog entries.", style = MaterialTheme.typography.bodySmall)
+                            Text("Browse source-derived vehicle paths. Unresolved hierarchy choices and feature mappings are recorded in the conversion report; they are not guessed.", style = MaterialTheme.typography.bodySmall)
                         }
                         items(state.page?.children.orEmpty(), key = { it.id }) { choice ->
                             OutlinedButton(onClick = { controller.browse(choice) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
@@ -135,28 +136,38 @@ fun ToyotaVehiclePacksScreen(
                         item {
                             SectionCard("Live data") {
                                 Button(onClick = onLive, enabled = connected && verified && data.pids.isNotEmpty()) { Text("Select values, graph and record") }
-                                if (!verified || data.pids.isEmpty()) Text("No executable PID request/byte-position/formula mapping is available for this system.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                when {
+                                    !system.enabled -> Text("No executable PID request/byte-position/formula mapping is available for this system.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    !verified -> Text("Run the read-only ECU bring-up above on this connection to unlock live data.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    data.pids.isEmpty() -> Text("No executable PID request/byte-position/formula mapping is available for this system.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                         item {
                             SectionCard("Fault codes") {
                                 val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadDtcs) == true
                                 OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("Read fault codes") }
-                                if (!available) Text("The selected system's DTC read request and record decoder have not been converted. No generic UDS or emissions request will be substituted here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                when {
+                                    !system.enabled -> Text("The selected system's DTC read request and record decoder have not been converted. No generic UDS or emissions request will be substituted here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    !verified -> Text("Run the read-only ECU bring-up above on this connection to unlock fault codes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    !available -> Text("The selected system's DTC read request and record decoder have not been converted. No generic UDS or emissions request will be substituted here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 Text("Clearing requires a documented group and a separate confirmation. Freeze frames remain disabled without an exact record mapping.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         item {
                             SectionCard("Active tests") {
                                 Button(onClick = onTests, enabled = verified && data.actuators.isNotEmpty()) { Text("View this system's tests") }
-                                if (data.actuators.isEmpty()) Text("Start/stop/status and safety mappings remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (system.enabled && !verified) Text("Run the read-only ECU bring-up above on this connection to check available tests. Read-only restrictions still apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                else if (data.actuators.isEmpty()) Text("Start/stop/status and safety mappings remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Execution still requires Expert mode, one-time confirmation and passing safety checks. Output-off cleanup and audit remain mandatory.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         item {
                             SectionCard("Customize / Coding") {
                                 Button(onClick = onCoding, enabled = verified && data.coding.isNotEmpty()) { Text("View this system's customizations") }
-                                if (data.coding.isEmpty()) Text("Read/write identifiers and value maps remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (system.enabled && !verified) Text("Run the read-only ECU bring-up above on this connection to check available customizations. Read-only restrictions still apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                else if (data.coding.isEmpty()) Text("Read/write identifiers and value maps remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Read → backup → diff → one-time confirmation → write → read-back. Rollback and audit use the existing guarded coding engine.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
@@ -164,7 +175,11 @@ fun ToyotaVehiclePacksScreen(
                             SectionCard("ECU information & special functions") {
                                 val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadIdentification) == true
                                 OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("ECU information") }
-                                if (!available) Text("The exact identification definitions for this system have not been converted.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                when {
+                                    !system.enabled -> Text("The exact identification definitions for this system have not been converted.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    !verified -> Text("Run the read-only ECU bring-up above on this connection to unlock ECU information.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    !available -> Text("The exact identification definitions for this system have not been converted.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 OutlinedButton(onClick = {}, enabled = false) { Text("Special functions") }
                                 Text("Special-function mappings remain unresolved. Unknown is not zero source support.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }

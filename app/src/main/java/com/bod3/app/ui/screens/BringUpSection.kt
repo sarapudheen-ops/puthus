@@ -31,8 +31,8 @@ fun BringUpSection(
         Text("For this manually selected vehicle and system only. Ranked by distinct supporting source records; tied ranks use source ID. Automatic probing stops at the first working setup.", style = MaterialTheme.typography.bodySmall)
         Text("Only exact identification, one live request and DTC read are probed. No clearing, active tests, session changes, security access or coding. Unknown setup fields stay blocked, not guessed.", style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(value = state.vehicleInstance, onValueChange = controller::vehicleInstance,
-            label = { Text("Unique vehicle instance (garage label or VIN)") }, enabled = !state.running,
-            supportingText = { Text("Enter manually. Use different labels for different cars of the same variant. VIN never selects configuration.") },
+            label = { Text("Unique vehicle instance (garage label or VIN) · required") }, enabled = !state.running,
+            supportingText = { Text("Required to start. Enter manually; use different labels for different cars of the same variant. VIN never selects configuration.") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
         Text(if (state.verifiedHere) "Verified on vehicle · this connection. Same-ECU identity is rechecked before each guarded operation."
             else "Not verified on this connection. Saved/imported evidence alone cannot unlock live definitions or writes.",
@@ -48,7 +48,9 @@ fun BringUpSection(
             Button(onClick = onStart, enabled = state.candidates.isNotEmpty() && state.vehicleInstance.isNotBlank() && (!probeable || connected)) {
                 Text(if (!probeable) "Report blocked candidates · no ECU traffic" else if (state.manualCandidateId == null) "Try ranked read-only candidates" else "Try selected candidate · read-only")
             }
-            if (probeable && !connected) Text("Connect the adapter first. Generic OBD detection need not succeed for an enhanced-only ECU.", style = MaterialTheme.typography.bodySmall)
+            if (state.candidates.isEmpty()) Text("Start is disabled: no candidates are available for this system.", style = MaterialTheme.typography.bodySmall)
+            if (state.vehicleInstance.isBlank()) Text("Start is disabled: enter the required vehicle instance above.", style = MaterialTheme.typography.bodySmall)
+            if (probeable && !connected) Text("Start is disabled: connect the adapter first. Generic OBD detection need not succeed for an enhanced-only ECU.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { controller.choose(null) }, enabled = state.manualCandidateId != null) { Text("Use automatic ranked order") }
         }
         OutlinedButton(onClick = share, enabled = !state.running && state.report != null) { Text("Share bring-up report") }
