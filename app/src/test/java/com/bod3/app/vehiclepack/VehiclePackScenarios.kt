@@ -48,7 +48,7 @@ object VehiclePackScenarios {
     }
     private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false,
                           referenced: Boolean = false, corruptReference: String? = null, corruptExecutable: String? = null,
-                          linkOverride: String? = null) {
+                          linkOverride: String? = null, categoryOverride: Map<String, String>? = null) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -98,8 +98,8 @@ object VehiclePackScenarios {
                 "functionKey" to if (corruptReference == "function") 2 else 1, "declaredLiveRows" to 1, "livePages" to emptyList<Any>()))) else null
         private val linkStatus = linkOverride ?: if (enabled) "proven" else "unproven"
         private val linkReasons = if (linkStatus == "proven") emptyList<String>() else (why.ifEmpty { listOf("ecu_entry_untranslated") })
-        private val categoryStatus = listOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions").associateWith { category ->
-            if (enabled && category != "specialFunctions") "executable" else if (enabled) "unknown" else "unknown"
+        private val categoryStatus = categoryOverride ?: listOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions").associateWith { category ->
+            if (enabled && category != "specialFunctions") "executable" else "unknown"
         }
         private val system = add(mapOf("kind" to "vehicle-system", "id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
             "linkStatus" to linkStatus, "linkReasons" to linkReasons, "categoryStatus" to categoryStatus,
@@ -266,6 +266,17 @@ object VehiclePackScenarios {
         } catch (expected: IllegalArgumentException) {
             check(expected.message.orEmpty().contains("Enabled status disagrees") || expected.message.orEmpty().contains("Enabled system requires linkStatus proven"))
         }
+    }
+
+    fun disabledProvenLinkWithUnresolvedCategoriesIsAccepted() = temporary { cache ->
+        val categories = listOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions")
+            .associateWith { "unresolved" }
+        val fixture = Fixture(enabled = false, linkOverride = "proven", categoryOverride = categories)
+        val client = fixture.client(cache)
+        val vehicle = client.selectedVehicle(listOf("make", "model", "generation", "variant"))
+        val system = client.system(vehicle, vehicle.systems.single())
+        check(!system.enabled && system.linkStatus == "proven" && system.data.count == 0)
+        check(system.categoryStatus == categories && system.reasons.isNotEmpty())
     }
 
     fun pinnedBringUpCandidatesAreSeparateFromExecutableSystemFlags() = temporary { cache ->
