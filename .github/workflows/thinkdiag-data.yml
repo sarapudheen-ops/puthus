@@ -121,10 +121,12 @@ jobs:
           python3 tools/thinkdiag/toyota_native_oracle.py run .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
-            --output .local/thinkdiag/report/native-oracle.json
+            --output .local/thinkdiag/report/native-oracle.json \
+            --evidence-output .local/thinkdiag/report/code1-link-evidence.json
       - name: Publish native comparison outcome (including failed reference gates)
         if: always() && hashFiles('.local/thinkdiag/report/native-oracle.md') != ''
         run: |
+          gh release upload ci-reports-v1 .local/thinkdiag/report/code1-link-evidence.json --clobber
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota offline native differential' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion='${{ steps.native_oracle.outcome }}' \

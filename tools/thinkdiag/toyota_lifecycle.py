@@ -6,6 +6,8 @@ fallback, malformed replies, MIC3313 mapping and production emission are separat
 Keepalive is NOT universally 3E: the exact function binding may be a read request.
 """
 from dataclasses import dataclass
+import hashlib
+import json
 
 from toyota_frames import SourceFrame, SourceFrames
 from toyota_transport import ConsumerCall, FastKwpEntry, selected_fast_kwp
@@ -88,6 +90,28 @@ class FastKwpLifecycle:
             ConsumerCall('KwpSendDataToEcuGetAnswer', (255, 255, 1, wire.hex())),
             ConsumerCall('usleep', (500,)),
         )
+
+    def evidence_projection(self):
+        """Stable, data-only lifecycle identity shared by CI and the converter."""
+        def source_ids(frame):
+            return list(frame.source_records)
+        return {
+            'configurationCalls': [call.report() for call in
+                self.entry.configuration_calls(connector=16, pin_pair_index=0)],
+            'initPacketHex': self.entry.packet(self.initial.request).hex(),
+            'keepalivePacketHex': self.entry.packet(self.keepalive.request).hex(),
+            'exitPacketHex': self.entry.packet(self.exit.request).hex(),
+            'entrySourceId': self.entry.source_record,
+            'frameSourceIds': {
+                'init': source_ids(self.initial),
+                'keepalive': source_ids(self.keepalive),
+                'exit': source_ids(self.exit),
+            },
+        }
+
+    def projection_digest(self):
+        encoded = json.dumps(self.evidence_projection(), sort_keys=True, separators=(',', ':')).encode('utf-8')
+        return hashlib.sha256(encoded).hexdigest()
 
     def report(self):
         def frame(template, value):
