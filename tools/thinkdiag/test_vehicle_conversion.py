@@ -326,6 +326,11 @@ class BundleVerificationTest(unittest.TestCase):
             self.assertEqual(0, verify(p)["executableDefinitions"])
             self.assertLess((p / "index.json").stat().st_size, 4096)
             self.assertEqual(index, load_index(p / "index.json"))
+            staged = p / 'staged-index.json'
+            staged.write_bytes((p / 'index.json').read_bytes())
+            verify(p, index_copy=staged)
+            staged.write_bytes(b'{}')
+            with self.assertRaises(ValueError): verify(p, index_copy=staged)
             for include_corpus in (False, True):
                 apk = p / "test.apk"
                 with zipfile.ZipFile(apk, "w") as archive:

@@ -156,10 +156,13 @@ def verify_enabled_policy(directory, enabled_objects, runnable_candidates, summa
                 "Enabled system or runnable candidate without pinned ECMECT artifacts")
 
 
-def verify(directory, *, index_only=False, apk=None, require_executable=False):
+def verify(directory, *, index_only=False, apk=None, require_executable=False, index_copy=None):
     index = load_index(directory / "index.json")
     summary = index["summary"]
     objects = 0
+    if index_copy is not None:
+        require(not index_only and index_copy.read_bytes() == (directory / "index.json").read_bytes(),
+                "Staged APK index differs from the fully verified pack")
     if index_only:
         require(apk is None, "APK verification requires full object and pinned artifact verification")
         require(summary.get("enabledSystems") == 0,
@@ -314,11 +317,12 @@ if __name__ == "__main__":
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--index-only", action="store_true")
     parser.add_argument("--apk", type=Path)
+    parser.add_argument("--index-copy", type=Path, help="Require an exact copy of the fully verified index")
     parser.add_argument("--require-executable", action="store_true", help="Reject index-only/zero-definition acceptance")
     args = parser.parse_args()
     try:
         print(json.dumps(verify(args.directory, index_only=args.index_only, apk=args.apk,
-                                require_executable=args.require_executable), sort_keys=True))
+                                require_executable=args.require_executable, index_copy=args.index_copy), sort_keys=True))
     except ValueError as error:
         # GitHub job-log storage redirects are not always reachable by an agent.
         # Surface the exact bounded validation failure in the ordinary annotations

@@ -56,11 +56,14 @@ android {
 // Actions performs heavy source conversion. An APK contains only the small, source-pinned
 // hash-tree index. Per-vehicle/system objects live in release storage, not assets or preferences.
 val verifyToyotaVehicleIndex by tasks.registering(Exec::class) {
-    val source = rootProject.file(".local/vehicle-pack-assets/toyota-vehicle-packs")
+    val source = rootProject.file(".local/toyota-vehicle-packs")
+    val stagedIndex = rootProject.file(".local/vehicle-pack-assets/toyota-vehicle-packs/index.json")
     inputs.file(source.resolve("index.json"))
+    inputs.file(stagedIndex)
     inputs.files(rootProject.fileTree("tools/thinkdiag") { include("vehicle_bundle.py", "verify_vehicle_bundle.py") })
     workingDir(rootProject.projectDir)
-    commandLine("python3", "tools/thinkdiag/verify_vehicle_bundle.py", "--directory", source.absolutePath, "--index-only")
+    commandLine("python3", "tools/thinkdiag/verify_vehicle_bundle.py", "--directory", source.absolutePath,
+        "--require-executable", "--index-copy", stagedIndex.absolutePath)
 }
 tasks.named("preBuild").configure { dependsOn(verifyToyotaVehicleIndex) }
 // Validate the real Actions conversion with the same Kotlin codecs used on the phone.
