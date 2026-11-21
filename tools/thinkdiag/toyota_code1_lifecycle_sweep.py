@@ -15,7 +15,7 @@ from toyota_lifecycle import selected_fast_kwp_lifecycle
 from toyota_transport import FastKwpEntry
 from vehicle_bundle import canonical
 
-REGION_IDS = {v:k for k,v in REGIONS.items()}
+REGION_IDS = {'EU':1,'NA':2,'JP':3}
 
 def main():
     ap=argparse.ArgumentParser()
