@@ -1034,7 +1034,7 @@ def main():
     if args.evidence_output:
         args.evidence_output.parent.mkdir(parents=True, exist_ok=True)
         rows = sorted(lifecycle_evidence, key=lambda r: (r['region'], r['function'], r['selector']))
-        args.evidence_output.write_bytes(canonical(rows) + b'\\n')
+        args.evidence_output.write_bytes(canonical(rows) + b'\n')
     print(summary(result))
 
 
