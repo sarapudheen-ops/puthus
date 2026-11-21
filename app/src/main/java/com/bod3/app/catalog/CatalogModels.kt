@@ -20,7 +20,8 @@ enum class CatalogLevel(val label: String) {
 }
 
 /** A reusable definition, not a permission to perform security access. */
-data class CatalogSecurity(val id: String, val name: String, val spec: SecurityAccessSpec, val verified: Boolean = false)
+data class CatalogSecurity(val id: String, val name: String, val spec: SecurityAccessSpec, val verified: Boolean = false,
+                           val provenMarker: String? = null, val reviewHash: String? = null)
 
 /** Keys suppressed here. A lower-level declaration may explicitly restore a key. */
 data class CatalogExclusions(

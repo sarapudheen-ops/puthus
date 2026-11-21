@@ -63,6 +63,8 @@ data class CodingRecipe(
     val writeService: Int = 0x2E,
     val sourceRecords: List<String> = emptyList(),
     val defaultSession: Int = WritePolicy.DEFAULT_SESSION,
+    val provenMarker: String? = null,
+    val reviewHash: String? = null,
 ) {
     val identifierBytes: List<Int> get() = if (readService == 0x21) listOf(did) else listOf(did shr 8, did and 255)
     val readRequest: List<Int> get() = listOf(readService) + identifierBytes

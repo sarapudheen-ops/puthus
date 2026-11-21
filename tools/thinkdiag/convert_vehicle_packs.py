@@ -23,6 +23,16 @@ from toyota_entries import EntryIndex
 from source_verification import load_verification, verify_archive
 
 REGIONS = {0xFEE9: "EU", 0xFEEA: "NA", 0xFEEB: "JP"}
+# Filled only by a separately audited native write-oracle review. Empty means
+# every write capability remains disabled; do not accept corpus-supplied pins.
+WRITE_ORACLE_REVIEW_HASHES = {}
+
+
+def verified_write(definition):
+    marker, digest = definition.get("provenMarker"), definition.get("reviewHash")
+    return isinstance(marker, str) and bool(marker) and WRITE_ORACLE_REVIEW_HASHES.get(marker) == digest
+
+
 REASONS = {
     "ecu_entry_untranslated": "Per-ECU SYSTEMENTER address/header, baud, init/session and selector are not fully translated.",
     "service_reply_untranslated": "Application service/identifier and reply-mask joins are not fully translated.",
@@ -311,9 +321,46 @@ class Converter:
                         enable(value, self.innova_2007_review, self.ecmect_review)
                         candidate = candidate_for(value, self.innova_2007_review)
                         value["bringUpPages"] = [self.writer.add({"kind": "bring-up-candidates", "candidates": [candidate]})]
+                    # Link and category status are explicit; legacy count fields are not
+                    # treated as proof. The two separately reviewed read-only systems
+                    # are the only proven link joins at present.
+                    value["linkStatus"] = "proven" if value.get("enabled") is True and not value.get("reasons") else "unproven"
+                    value["linkReasons"] = [] if value["linkStatus"] == "proven" else list(value.get("reasons") or ["ecu_entry_untranslated"])
+                    data = value.get("data", {})
+                    if isinstance(data, dict):
+                        # No actuator/coding/security oracle hash is currently
+                        # audited for production. Preserve proof slots, but fail closed.
+                        for write_kind in ("actuators", "coding", "security", "specialFunctions"):
+                            if isinstance(data.get(write_kind), list):
+                                for definition in data[write_kind]:
+                                    if isinstance(definition, dict):
+                                        definition["provenMarker"] = definition.get("provenMarker")
+                                        definition["reviewHash"] = definition.get("reviewHash")
+                                        definition["verified"] = verified_write(definition)
+                    category_keys = {"pids": "pids", "dtcs": "dtcs", "ecuInfo": "ecus",
+                                     "actuators": "actuators", "coding": "coding", "specialFunctions": "specialFunctions"}
+                    category_status = {}
+                    for category, field in category_keys.items():
+                        definitions = data.get(field, []) if isinstance(data, dict) else []
+                        count_key = "tests" if category == "actuators" else category
+                        converted = value.get("counts", {}).get(count_key, {}).get("converted", 0)
+                        if definitions:
+                            category_status[category] = "executable"
+                        elif converted:
+                            category_status[category] = "unresolved"
+                        elif category in ("pids", "dtcs", "ecuInfo") and value["linkStatus"] == "proven":
+                            category_status[category] = "unresolved"
+                        else:
+                            category_status[category] = "unknown"
+                        if category_status[category] != "executable" and isinstance(data, dict) and field in data:
+                            data[field] = []
+                    value["categoryStatus"] = category_status
+                    value["enabled"] = value["linkStatus"] == "proven" and "executable" in category_status.values()
                     ref = self.writer.add(value)
                     brief = {"id": identity, "name": value["name"], "counts": value["counts"],
-                             "enabled": value["enabled"], "reasons": value["reasons"], "object": ref,
+                             "enabled": value["enabled"], "reasons": value["reasons"],
+                             "linkStatus": value["linkStatus"], "linkReasons": value["linkReasons"],
+                             "categoryStatus": category_status, "object": ref,
                              "readOnly": bool(value.get("readOnly"))}
                     refs.append(brief)
                     self.systems[identity] = ref

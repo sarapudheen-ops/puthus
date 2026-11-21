@@ -11,6 +11,7 @@ class VehiclePackTest {
     @Test fun sharedSourceMetadataIsLazyScopedAndOffline() = VehiclePackScenarios.referencedSourcesAreScopedAndReopenOffline()
     @Test fun wrongVehicleEcuOrFunctionReferenceIsRejected() = VehiclePackScenarios.referencedSourcesCannotCrossVehicleEcuOrFunction()
     @Test fun onlyPinnedConversionMayEnableWriteDefinitions() = VehiclePackScenarios.trustedConversionNotImportedFlags()
+    @Test fun enabledSystemRequiresProvenLinkStatus() = VehiclePackScenarios.unprovenEnabledSystemIsRejectedWithExplicitLinkError()
     @Test fun bringUpCandidatesHaveIndependentPinnedProvenanceNotImportTrust() = VehiclePackScenarios.pinnedBringUpCandidatesAreSeparateFromExecutableSystemFlags()
     @Test fun crossEcuDefinitionIsRejectedAtomically() = VehiclePackScenarios.crossEcuDefinitionRejected()
     @Test fun convertedEcuCannotSubstituteLegacyGenericReads() = VehiclePackScenarios.convertedEcuCannotSubstituteLegacyGenericReads()

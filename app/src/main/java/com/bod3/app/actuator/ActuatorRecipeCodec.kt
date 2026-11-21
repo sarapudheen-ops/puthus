@@ -83,6 +83,7 @@ object ActuatorRecipeCodec {
             "partNumbers" to r.applicability.partNumbers, "softwareVersions" to r.applicability.softwareVersions,
         ),
         "source" to r.source, "notes" to r.notes, "verified" to r.verified,
+        "provenMarker" to r.provenMarker, "reviewHash" to r.reviewHash,
         "sourceRecords" to r.sourceRecords.takeIf { it.isNotEmpty() }, "defaultSession" to "%02X".format(r.defaultSession),
     ).filterValues { it != null }
 
@@ -174,7 +175,10 @@ object ActuatorRecipeCodec {
         } ?: Applicability()
         val source = f.string(m, "source", p, required = false)
         val notes = f.string(m, "notes", p, required = false)
-        val verified = f.boolean(m, "verified", p) ?: false
+        f.boolean(m, "verified", p) // Type-check only; input assertion is not trusted.
+        val provenMarker = f.string(m, "provenMarker", p, required = false)
+        val reviewHash = f.string(m, "reviewHash", p, required = false)
+        val verified = com.bod3.app.catalog.WriteOracleProof.verified(provenMarker, reviewHash)
         if (f.errors.size > before || id == null || name == null || module == null || start == null || stop == null) return null
         return ActuatorRecipe(
             id = id, name = name, description = description, module = module, session = session, security = security,
@@ -182,6 +186,7 @@ object ActuatorRecipeCodec {
             preconditions = preconditions, safetyNotes = safety, applicability = applicability, source = source,
             notes = notes, verified = verified, sourceRecords = f.strings(m, "sourceRecords", p),
             defaultSession = f.hexInt(m, "defaultSession", p, false, 0xFF) ?: 0x01,
+            provenMarker = provenMarker, reviewHash = reviewHash,
         )
     }
 }
