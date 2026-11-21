@@ -274,9 +274,10 @@ object VehiclePackScenarios {
         val fixture = Fixture(enabled = false, linkOverride = "proven", categoryOverride = categories)
         val client = fixture.client(cache)
         val vehicle = client.selectedVehicle(listOf("make", "model", "generation", "variant"))
-        val system = client.system(vehicle, vehicle.systems.single())
-        check(!system.enabled && system.linkStatus == "proven" && system.data.count == 0)
-        check(system.categoryStatus == categories && system.reasons.isNotEmpty())
+        val choice = vehicle.systems.single()
+        val system = client.system(vehicle, choice)
+        check(!system.enabled && choice.linkStatus == "proven" && system.data.count == 0)
+        check(choice.categoryStatus == categories && system.reasons.isNotEmpty())
     }
 
     fun pinnedBringUpCandidatesAreSeparateFromExecutableSystemFlags() = temporary { cache ->
