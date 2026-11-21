@@ -11,8 +11,10 @@ is `SYSTEMENTER.BIN@00002f96` (transport 5, flags `33`, baud 10416, pin bytes
 `07 07`, source timing `05 3c 00 19 19`). The source fast-init packet is
 `8110F08102`; the source keepalive request is `3E` (wire `8110F03EBF`), from
 `EU/Toyota_bin_12.BIN@0000401a` and `EU/Toyota_bin_11.BIN@0000050a`.
-Transport 5 also requires the source ISO-fallback path. These bytes do not prove
-an app response header or a MIC3313 configuration. Do not enable the system.
+Transport 5 also has a source ISO-fallback path, which the app does not implement.
+The read-only FAST-only system uses the owner-provided complementary response
+header `81F010` and init address `10`; failed FAST initialization remains a
+failure and never falls back to another entry or header.
 
 ## Adapter equivalence work remaining
 

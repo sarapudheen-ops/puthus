@@ -25,6 +25,13 @@ SUMMARY_COUNTS = ("systems", "enabledSystems", "unresolvedSourceRecords", "manua
                   "manualLeavesWithSystemJoin", "normalizedVehicleChoices", "unresolvedHierarchyChoices")
 
 
+def require_enabled_ecmect_set(ids):
+    from toyota_ecmect_pack import MANDATORY_SYSTEM
+    from toyota_innova_2007_pack import SYSTEM
+    require(set(ids) == {MANDATORY_SYSTEM, SYSTEM} and len(ids) == 2,
+            'Enabled systems differ from the two pinned read-only ECMECT slices')
+
+
 def valid_range(ref, total):
     require(isinstance(ref, dict) and set(ref) == {"offset", "bytes", "jsonBytes", "sha256"}, "Invalid range fields")
     integer(ref["offset"], "range.offset", len(MAGIC), total)
@@ -262,11 +269,18 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
                     (directory / "mandatory-ecmect-live-omissions.json").is_file(),
                     "Enabled ECMECT pack is missing staged compiler artifacts or the omissions ledger")
             review = load_review(directory)
-            require(sorted(enabled_objects) == [review["systemId"]],
-                    "Enabled systems differ from the single pinned read-only ECMECT slice")
-            verify_enabled(enabled_objects[review["systemId"]], review)
-            require(runnable_candidates == [candidate_for(enabled_objects[review["systemId"]], review)],
-                    "Runnable bring-up candidate differs from the pinned ECMECT slice")
+            from toyota_innova_2007_pack import (SYSTEM as INNOVA_SYSTEM, candidate_for as candidate_2007,
+                                                 load_candidate, verify_enabled as verify_2007)
+            second = load_candidate(directory)
+            require_enabled_ecmect_set(enabled_objects)
+            pilot_object, second_object = enabled_objects[review['systemId']], enabled_objects[INNOVA_SYSTEM]
+            require(INNOVA_SYSTEM not in json.dumps(pilot_object) and review['systemId'] not in json.dumps(second_object),
+                    'ECMECT definitions cross system provenance')
+            verify_enabled(pilot_object, review)
+            verify_2007(second_object, second, review)
+            expected_candidates = [candidate_for(pilot_object, review), candidate_2007(second_object, second)]
+            require(sorted(runnable_candidates, key=lambda c: c['id']) == sorted(expected_candidates, key=lambda c: c['id']),
+                    "Runnable bring-up candidates differ from the pinned ECMECT slices")
             omissions = json.loads((directory / "mandatory-ecmect-live-omissions.json").read_bytes())
             require(isinstance(omissions, dict) and omissions.get("kind") == "ecmect-live-omissions" and
                     omissions.get("systemId") == review["systemId"] and

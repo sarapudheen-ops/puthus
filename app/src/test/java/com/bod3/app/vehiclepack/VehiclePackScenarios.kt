@@ -494,19 +494,20 @@ object VehiclePackScenarios {
         }
         visit(client.root(), emptyList())
         check(variants == (index.summary["normalizedVehicleChoices"] as Number).toInt() && recoveredCandidates > 0)
-        // Exactly the one reviewed read-only ECMECT slice: 1 ECU · 30 PIDs · 1,414 DTCs · 1 calibration-ID read.
-        val enabled = enabledSystems.singleOrNull() ?: error("The pinned ECMECT slice must be the only enabled system")
-        check(enabled.id == "SYSLIST_EU.BIN@0009d8f2" && enabled.readOnly)
-        check(enabled.coverage == "1 ECU · 30 PIDs · 1,414 DTCs · 1 ECU info read") { enabled.coverage ?: "null coverage" }
-        val ecu = enabled.data.ecus.single()
-        check(enabled.data.pids.size == 30 && enabled.counts.getValue("pids").converted == 30)
-        check(enabled.counts.getValue("dtcs").converted == 1414 && enabled.counts.getValue("ecuInfo").converted == 1)
-        check(enabled.counts.getValue("tests").converted == 0 && enabled.counts.getValue("coding").converted == 0 &&
-            enabled.counts.getValue("specialFunctions").converted == 0)
-        check(enabled.data.actuators.isEmpty() && enabled.data.coding.isEmpty() && enabled.data.security.isEmpty())
-        val faults = checkNotNull(ecu.diagnostics?.faults)
-        check(faults.clear == null && ecu.diagnostics!!.identification.size == 1)
-        val candidate = client.bringUpCandidates(enabled).single()
-        check(candidate.runnable && candidate.runtime != null && candidate.blockers.isEmpty() && candidate.sourceRecords.isNotEmpty())
+        check(enabledSystems.map { it.id }.toSet() == setOf("SYSLIST_EU.BIN@0009d8f2", "SYSLIST_EU.BIN@00023a75"))
+        for (enabled in enabledSystems) {
+            check(enabled.readOnly)
+            check(enabled.coverage == "1 ECU · 30 PIDs · 1,414 DTCs · 1 ECU info read") { enabled.coverage ?: "null coverage" }
+            val ecu = enabled.data.ecus.single()
+            check(enabled.data.pids.size == 30 && enabled.counts.getValue("pids").converted == 30)
+            check(enabled.counts.getValue("dtcs").converted == 1414 && enabled.counts.getValue("ecuInfo").converted == 1)
+            check(enabled.counts.getValue("tests").converted == 0 && enabled.counts.getValue("coding").converted == 0 &&
+                enabled.counts.getValue("specialFunctions").converted == 0)
+            check(enabled.data.actuators.isEmpty() && enabled.data.coding.isEmpty() && enabled.data.security.isEmpty())
+            val faults = checkNotNull(ecu.diagnostics?.faults)
+            check(faults.clear == null && ecu.diagnostics!!.identification.size == 1)
+            val candidate = client.bringUpCandidates(enabled).single()
+            check(candidate.runnable && candidate.runtime != null && candidate.blockers.isEmpty() && candidate.sourceRecords.isNotEmpty())
+        }
     }
 }
