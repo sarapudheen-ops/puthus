@@ -20,6 +20,19 @@ from vehicle_bundle import SOURCE_SHA256, canonical
 SYSTEM = 'SYSLIST_EU.BIN@00023a75'
 ENTRY = 'SYSTEMENTER.BIN@00002f96'
 ECU = 'EU/Ecu_Data_0081.BIN'
+PIN = Path(__file__).parent / 'schema' / 'innova-2007-source-read-candidate-v1.json'
+
+
+def verify_candidate_bytes(raw, filename):
+    from toyota_runtime_compile import strict_json
+    pin = json.loads(PIN.read_text())
+    if (filename != pin['file'] or pin['sourceSha256'] != SOURCE_SHA256 or
+            len(raw) != pin['bytes'] or hashlib.sha256(raw).hexdigest() != pin['sha256']):
+        raise ValueError('2007 source-read candidate does not match its pinned bytes')
+    value = strict_json(raw)
+    if raw != canonical(value) + b'\n' or value.get('systemId') != SYSTEM or value.get('entryId') != ENTRY:
+        raise ValueError('2007 source-read candidate has invalid canonical source identity')
+    return value
 
 
 def rebind_live(live):
@@ -89,6 +102,7 @@ def main():
     first = canonical(compile_review(sources, libraries, pilot)) + b'\n'
     if first != canonical(compile_review(sources, libraries, pilot)) + b'\n':
         raise ValueError('Nondeterministic 2007 read-review compilation')
+    verify_candidate_bytes(first, args.output.name)
     args.output.write_bytes(first)
     print(json.dumps({'file': args.output.name, 'bytes': len(first), 'sha256': hashlib.sha256(first).hexdigest(),
                       'sourceSystem': SYSTEM, 'entry': ENTRY, 'executableDefinitions': 0}, sort_keys=True))
