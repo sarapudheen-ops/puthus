@@ -197,9 +197,11 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          set +e
           gh release upload ci-reports-v1 \
             .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md \
             .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json --clobber
+          upload_status=$?
           PR_NUMBER="${PR_NUMBER:-$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)}"
           if [ -n "$PR_NUMBER" ]; then
             tuples=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("{} tuples; {} completed; timedOut={}".format(d["tupleCount"],d["completed"],d["timedOut"])+("; ERROR: "+d["fatalError"] if d.get("fatalError") else ""))' .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json)
