@@ -15,8 +15,9 @@ on:
       - 'app/src/main/assets/datapacks/toyota-lexus-dtcs.json'
 
 permissions:
-  contents: read
+  contents: write
   checks: write
+  pull-requests: write
 
 jobs:
   recover-source-inputs:
@@ -129,6 +130,26 @@ jobs:
             -f status=completed -f conclusion='${{ steps.native_oracle.outcome }}' \
             -f 'output[title]=Bounded offline semantic comparison; no adapter or ECU' \
             -F 'output[summary]=@.local/thinkdiag/report/native-oracle.md'
+      - name: Run read-only Code 1 lifecycle join sweep
+        id: code1_lifecycle_sweep
+        continue-on-error: true
+        run: |
+          python3 tools/thinkdiag/toyota_code1_lifecycle_sweep.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/report/code1-lifecycle-sweep
+      - name: Publish Code 1 lifecycle sweep reports
+        if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh release upload ci-reports-v1 \
+            .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md \
+            .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json --clobber
+          PR_NUMBER="${PR_NUMBER:-$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)}"
+          if [ -n "$PR_NUMBER" ]; then
+            tuples=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("{} tuples; {} completed; timedOut={}".format(d["tupleCount"],d["completed"],d["timedOut"]))' .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json)
+            gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="Code 1 lifecycle sweep: $tuples. Full reports: code1-lifecycle-sweep.md and code1-lifecycle-sweep.json in ci-reports-v1."
+          fi
       - name: Sweep every diagnostic-table family and native reader
         run: |
           python3 tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \
