@@ -38,7 +38,9 @@ jobs:
         uses: ./.github/actions/prepare-vehicle-packs
 
       - name: Report generated Toyota pack enablement (observational)
+        id: pack_report
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p .local
           set +e
@@ -47,15 +49,18 @@ jobs:
           if [ "$status" -eq 0 ]; then
             cat .local/toyota-pack-report.md >> "$GITHUB_STEP_SUMMARY"
           else
-            echo '## Toyota generated pack report' >> "$GITHUB_STEP_SUMMARY"
-            echo 'Report generation failed (non-fatal):' >> "$GITHUB_STEP_SUMMARY"
-            cat .local/pack-report.stderr >> "$GITHUB_STEP_SUMMARY"
-            printf '\nReport exit status: %s\n' "$status" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo '## Toyota generated pack report'
+              echo 'Report generation failed (non-fatal):'
+              cat .local/pack-report.stderr
+              printf '\nReport exit status: %s\n' "$status"
+            } >> "$GITHUB_STEP_SUMMARY"
             cp .local/pack-report.stderr .local/toyota-pack-report.md
           fi
 
       - name: Upload Toyota pack report
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: toyota-pack-report
@@ -64,7 +69,9 @@ jobs:
           retention-days: 14
 
       - name: Census generated Toyota packs (non-fatal report)
+        id: census
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p .local/toyota-census
           set +e
@@ -84,6 +91,7 @@ jobs:
 
       - name: Upload Toyota census and pack report
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: toyota-phase0-census
@@ -93,23 +101,110 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Comment bounded census and pack report on PR
-        if: always() && github.event_name == 'pull_request' && hashFiles('.local/toyota-census/pack-census.md') != ''
+      - name: Publish sectioned census comments on PR
+        id: census_comments
+        if: github.event_name == 'pull_request' && hashFiles('.local/toyota-census/pack-census.md') != ''
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          parts = []
-          for filename in ('.local/toyota-census/pack-census.md', '.local/toyota-pack-report.md'):
-              path = Path(filename)
-              if path.exists():
-                  parts.append(path.read_text()[:30_000])
-          body = '\n\n---\n\n'.join(parts)[:60_000]
-          Path('.local/toyota-census/pr-comment.md').write_text(body)
+          report = Path('.local/toyota-census/pack-census.md').read_text()
+          title = '## Ecu_Data typed tables'
+          if title not in report:
+              raise SystemExit('Ecu_Data typed tables section missing from census')
+          start = report.index(title)
+          next_heading = report.find('\n## ', start + len(title))
+          end = len(report) if next_heading < 0 else next_heading + 1
+          section = report[start:end].strip()
+          body = '<!-- toyota-ecu-tables -->\n# Ecu_Data typed tables\n\n' + section + '\n'
+          if len(body) > 55_000:
+              raise SystemExit(f'Ecu_Data comment exceeds 55000 chars: {len(body)}')
+          Path('.local/toyota-census/ecu-tables-pr-comment.md').write_text(body)
+          Path('.local/toyota-census/pack-census-pr.md').write_text(report[:start] + report[end:])
           PY
-          gh pr comment "$PR_NUMBER" --body-file .local/toyota-census/pr-comment.md
+          python3 tools/thinkdiag/publish_census.py .local/toyota-census/pack-census-pr.md .local/toyota-census/comments
+          mapfile -t prior_ecu < <(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.body | contains("<!-- toyota-ecu-tables -->")) | .id')
+          ecu_body=$(cat .local/toyota-census/ecu-tables-pr-comment.md)
+          if [ "${#prior_ecu[@]}" -gt 0 ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/${prior_ecu[0]}" -F "body=$ecu_body" >/dev/null
+            for ((i=1; i<${#prior_ecu[@]}; i++)); do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/${prior_ecu[$i]}" >/dev/null
+            done
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F "body=$ecu_body" >/dev/null
+          fi
+          mapfile -t prior < <(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select((.body | contains("<!-- toyota-census -->")) or (.body | startswith("# Toyota pack census"))) | .id')
+          mapfile -t parts < <(printf '%s\n' .local/toyota-census/comments/census-part-*.md | sort)
+          for i in "${!parts[@]}"; do
+            body=$(cat "${parts[$i]}")
+            if [ "$i" -lt "${#prior[@]}" ]; then
+              gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/${prior[$i]}" -F "body=$body" >/dev/null
+            else
+              gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F "body=$body" >/dev/null
+            fi
+          done
+          for ((i=${#parts[@]}; i<${#prior[@]}; i++)); do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/${prior[$i]}" >/dev/null
+          done
+
+      - name: Publish and verify census release assets
+        id: census_release
+        continue-on-error: true
+        if: github.event_name == 'pull_request' && hashFiles('.local/toyota-census/pack-census.md') != '' && hashFiles('.local/toyota-census/exit-status.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(cat .local/toyota-census/exit-status.txt)" = 0
+          test -s .local/toyota-pack-report.md
+          test -s .local/toyota-census/pack-census.json
+          tag=ci-reports-v1
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title 'Toyota CI reports' --notes 'Generated, bounded, data-only Toyota pack census and reports.'
+          fi
+          gh release upload "$tag" \
+            .local/toyota-census/pack-census.md \
+            .local/toyota-census/pack-census.json \
+            .local/toyota-pack-report.md \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets > .local/toyota-census/release-assets.json
+          python3 - <<'PY'
+          import json
+          assets = {a['name'] for a in json.load(open('.local/toyota-census/release-assets.json'))['assets']}
+          expected = {'pack-census.md', 'pack-census.json', 'toyota-pack-report.md'}
+          missing = expected - assets
+          if missing: raise SystemExit(f'Release read-back missing assets: {sorted(missing)}')
+          PY
+          mkdir -p .local/toyota-census/release-readback
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern 'pack-census.*' --pattern toyota-pack-report.md --dir .local/toyota-census/release-readback
+          for asset in pack-census.md pack-census.json toyota-pack-report.md; do
+            cmp ".local/toyota-census/$asset" ".local/toyota-census/release-readback/$asset"
+          done
+          echo '## Release asset read-back: first 40 lines of pack-census.md'
+          head -40 .local/toyota-census/release-readback/pack-census.md
+
+      - name: Summarise Toyota report publication outcomes
+        if: always()
+        env:
+          PACK_REPORT: ${{ steps.pack_report.outcome }}
+          CENSUS: ${{ steps.census.outcome }}
+          CENSUS_COMMENTS: ${{ steps.census_comments.outcome }}
+          CENSUS_RELEASE: ${{ steps.census_release.outcome }}
+        run: |
+          for item in PACK_REPORT CENSUS CENSUS_COMMENTS CENSUS_RELEASE; do
+            value="${!item:-not-run}"
+            if [ "$value" != success ]; then
+              printf '::warning title=Toyota report publication::%s concluded %s; the APK build/data publication remains enabled.\n' "$item" "$value"
+              printf -- '- **%s:** %s (reporting-only; build/data publication continues)\n' "$item" "$value" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - name: Test converters, pack bounds, source provenance and delivery contract
         run: python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py' -v
