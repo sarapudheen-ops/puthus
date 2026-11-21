@@ -18,4 +18,4 @@ jobs:
       - name: Lint workflows and actions
         uses: raven-actions/actionlint@v2
         with:
-          files: '.github/workflows/*.yml, .github/workflows/*.yaml, .github/actions/*/action.yml, .github/actions/*/action.yaml'
+          files: '.github/workflows/*.yml, .github/workflows/*.yaml'

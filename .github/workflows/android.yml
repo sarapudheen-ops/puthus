@@ -49,10 +49,12 @@ jobs:
           if [ "$status" -eq 0 ]; then
             cat .local/toyota-pack-report.md >> "$GITHUB_STEP_SUMMARY"
           else
-            echo '## Toyota generated pack report' >> "$GITHUB_STEP_SUMMARY"
-            echo 'Report generation failed (non-fatal):' >> "$GITHUB_STEP_SUMMARY"
-            cat .local/pack-report.stderr >> "$GITHUB_STEP_SUMMARY"
-            printf '\nReport exit status: %s\n' "$status" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo '## Toyota generated pack report'
+              echo 'Report generation failed (non-fatal):'
+              cat .local/pack-report.stderr
+              printf '\nReport exit status: %s\n' "$status"
+            } >> "$GITHUB_STEP_SUMMARY"
             cp .local/pack-report.stderr .local/toyota-pack-report.md
           fi
 
