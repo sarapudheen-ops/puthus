@@ -450,6 +450,39 @@ object VehiclePackScenarios {
         }
     }
 
+    fun explicitCarSelectionLoadsOnlyItsEnabledSystem() = runBlocking {
+        temporary { cache ->
+            val fixture = Fixture(enabled = true)
+            val client = fixture.client(cache)
+            val selected = AtomicReference<String?>(null)
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            var allowChange = false
+            val controller = VehiclePacksController(owner, { client }, { selected.get() },
+                { selected.set(it.variantId) }, { check(allowChange) }, {})
+            suspend fun settled() = withTimeout(10_000) { controller.state.first { !it.busy } }
+            try {
+                controller.picker()
+                var state = settled()
+                repeat(3) {
+                    controller.browse(state.page!!.children.single())
+                    state = settled()
+                }
+                val car = state.page!!.children.single()
+                controller.selectCar(car)
+                check(selected.get() == null && controller.state.value.error != null)
+                allowChange = true
+                controller.selectCar(car)
+                state = settled()
+                check(state.error == null) { state.error.orEmpty() }
+                check(selected.get() == "variant" && state.view == PackView.FEATURES)
+                check(controller.selectedSystem()?.id == "synthetic-system")
+                check(controller.selectedData().pids.size == 1)
+                selected.set("different-car")
+                check(controller.selectedSystem() == null && controller.selectedData().count == 0)
+            } finally { owner.cancel() }
+        }
+    }
+
     /** CI supplies the full Actions output, using the exact production Kotlin validator. */
     fun generatedBundle(directory: File) = temporary { cache ->
         val index = VehiclePackIndex.fromBundledJson(File(directory, "index.json").readText())

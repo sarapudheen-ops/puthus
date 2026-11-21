@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -76,6 +77,7 @@ fun DevicePickerScreen(
     onOpenAppSettings: () -> Unit = {},
     onOpenDataPacks: () -> Unit = {},
     onShowIntro: () -> Unit = {},
+    onBackToCars: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
@@ -90,6 +92,7 @@ fun DevicePickerScreen(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.select_adapter_title)) },
+                navigationIcon = { IconButton(onClick = onBackToCars) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cars") } },
                 actions = {
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh paired devices")

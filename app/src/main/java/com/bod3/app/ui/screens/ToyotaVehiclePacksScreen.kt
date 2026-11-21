@@ -65,7 +65,7 @@ fun ToyotaVehiclePacksScreen(
                     state.coverage?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
                 }
             }
-            state.error?.let { message -> item { SectionCard("Pack not loaded") { Text(message, color = MaterialTheme.colorScheme.error); Text("No generic ECU, PID or write template was substituted.", style = MaterialTheme.typography.bodySmall) } } }
+            state.error?.let { message -> item { SectionCard("Cars unavailable") { Text(message, color = MaterialTheme.colorScheme.error) } } }
             when (state.view) {
                 PackView.PICKER -> {
                     item {
@@ -168,7 +168,7 @@ fun ToyotaVehiclePacksScreen(
                             }
                         }
                         item {
-                            SectionCard("ECU information") {
+                            SectionCard("Information") {
                                 val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadIdentification) == true
                                 OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("ECU information") }
                                 when {

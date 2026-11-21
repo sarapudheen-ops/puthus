@@ -82,6 +82,7 @@ fun Bod3App(viewModel: ObdViewModel = viewModel()) {
             onOpenAppSettings = viewModel::openAppSettings,
             onOpenDataPacks = viewModel::openDataPacks,
             onShowIntro = viewModel::showOnboarding,
+            onBackToCars = viewModel::openCars,
         )
 
         Screen.DASHBOARD -> {

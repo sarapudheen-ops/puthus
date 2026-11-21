@@ -477,10 +477,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
                 appendLog("Connected with profile \"${result.profile.name}\"")
                 _state.update { it.copy(screen = Screen.TOYOTA_PACKS) }
                 onConnected(device, result)
-                if (vehiclePacks.selectedSystem()?.enabled == true) {
-                    bringUp.vehicleInstance("Read session ${UUID.randomUUID()}")
-                    refreshDownloadedSystem()
-                }
+                if (vehiclePacks.selectedSystem()?.enabled == true) refreshDownloadedSystem()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1414,7 +1411,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
         refreshData(); actuators.refresh(); coding.refresh()
         // A random read-session scope is not a vehicle or ECU identity. Verification remains
         // bound to the current Session and write operations still require an ECU serial.
-        if (selected.system?.readOnly == true && bringUp.state.value.vehicleInstance.isBlank()) {
+        if (selected.system?.readOnly == true) {
             bringUp.vehicleInstance("Read session ${UUID.randomUUID()}")
         }
         if (selected.system?.enabled == true && _state.value.isConnected && !bringUp.state.value.running &&
@@ -1489,7 +1486,7 @@ class ObdViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeToyotaPacks() {
         if (bringUp.state.value.running) { bringUp.stop(); return }
-        if (!vehiclePacks.back()) {
+        if (!vehiclePacks.back() && toyotaPacksReturn != Screen.VEHICLES) {
             refreshData()
             _state.update { it.copy(screen = toyotaPacksReturn) }
         }
