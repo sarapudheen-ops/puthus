@@ -96,13 +96,6 @@ fun VehiclesScreen(state: UiState, actions: CatalogActions) {
                     if (active != null) TextButton(onClick = { actions.onSelect(null) }, enabled = state.offline) { Text("Clear manual selection") }
                 }
             }
-            item {
-                SectionCard("Recovered Toyota · on-demand vehicle packs") {
-                    Text("Choose an exact reviewed source branch, then load only that vehicle's systems. Unresolved mappings stay disabled with source IDs and reasons. The full source corpus is not bundled in the APK.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = actions.onToyotaPacks, modifier = Modifier.fillMaxWidth()) { Text("Choose Toyota vehicle pack") }
-                    if (catalog.downloadedSelection) Button(onClick = actions.onSystems, modifier = Modifier.fillMaxWidth()) { Text("Open selected vehicle's systems") }
-                }
-            }
             catalog.message?.let { message -> item { MessageCard(message, actions.onDismissMessage) } }
             if (catalog.errors.isNotEmpty()) item { SectionCard("Catalog problems — original data preserved") { catalog.errors.forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } } }
             item {

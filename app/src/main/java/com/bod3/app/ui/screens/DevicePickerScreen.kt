@@ -95,7 +95,6 @@ fun DevicePickerScreen(
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh paired devices")
                     }
                     TextButton(onClick = onOpenGarage) { Text("Saved") }
-                    TextButton(onClick = onOpenVehicles) { Text("Catalog") }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Connection settings")
                     }
@@ -103,7 +102,6 @@ fun DevicePickerScreen(
                         IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(text = { Text("App settings") }, onClick = { menu = false; onOpenAppSettings() })
-                            DropdownMenuItem(text = { Text("Data packs (import / export)") }, onClick = { menu = false; onOpenDataPacks() })
                             DropdownMenuItem(text = { Text("Introduction") }, onClick = { menu = false; onShowIntro() })
                         }
                     }

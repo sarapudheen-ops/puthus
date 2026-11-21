@@ -86,6 +86,17 @@ class VehiclePacksController(
             }
         }
     }
+    /** Change generation within the car page; selection of a variant remains explicit. */
+    fun changeGeneration(choice: PackChoice) {
+        if (_state.value.busy || _state.value.page?.level != "generation") return
+        val model = _state.value.trail.lastOrNull()?.takeIf { it.level == "model" } ?: return
+        if (choice !in model.children) return
+        fetch { client, check ->
+            val page = withContext(Dispatchers.IO) { client.open(choice, check) }
+            _state.update { it.copy(page = page, preview = null) }
+        }
+    }
+
     fun selectPreview() {
         if (_state.value.busy) return
         val preview = _state.value.preview ?: return
@@ -98,6 +109,32 @@ class VehiclePacksController(
             systemChanged()
         } catch (e: Exception) { _state.update { it.copy(error = e.message) } }
     }
+    /**
+     * One tap on an exact variant: install the vehicle and open its one enabled read-only system.
+     * No review screen, no pack picker and no candidate menu are shown to the driver.
+     */
+    fun selectCar(choice: PackChoice) {
+        if (_state.value.busy) return
+        try { beforeSystemChange() } catch (e: Exception) { _state.update { it.copy(error = e.message) }; return }
+        fetch { client, check ->
+            val vehicle = withContext(Dispatchers.IO) { client.vehicle(choice, check) }
+            require(vehicle.hierarchyResolved) { "This source path has not been normalized; it cannot select diagnostic configuration" }
+            selectManually(vehicle)
+            _state.update { it.copy(vehicle = vehicle, preview = null, trail = emptyList(), page = null,
+                system = null, coverage = null, bringUpCandidates = emptyList(),
+                unresolvedItems = emptyList(), unresolvedPage = null, error = null, view = PackView.SYSTEMS) }
+            systemChanged()
+            val enabled = vehicle.systems.filter { it.enabled }.singleOrNull()
+            if (enabled != null) {
+                val system = withContext(Dispatchers.IO) { client.system(vehicle, enabled, check) }
+                val candidates = withContext(Dispatchers.IO) { client.bringUpCandidates(system, check) }
+                require(vehicle.variantId == selectedId()) { "Vehicle selection changed while its system was loading" }
+                _state.update { it.copy(system = system, bringUpCandidates = candidates, view = PackView.FEATURES, coverage = system.coverage) }
+                systemChanged()
+            }
+        }
+    }
+
     fun openSelected(pathIds: List<String>) {
         _state.update { it.copy(view = PackView.SYSTEMS, error = null) }
         if (_state.value.vehicle?.variantId == selectedId() && _state.value.vehicle != null) return
@@ -142,7 +179,7 @@ class VehiclePacksController(
         val s = _state.value
         when {
             s.view == PackView.FEATURES -> _state.update { it.copy(view = PackView.SYSTEMS, unresolvedItems = emptyList(), unresolvedPage = null) }
-            s.view == PackView.SYSTEMS -> return false
+            s.view == PackView.SYSTEMS -> { picker(); return true }
             s.preview != null -> _state.update { it.copy(preview = null, error = null) }
             s.trail.isNotEmpty() -> _state.update { it.copy(page = it.trail.last(), trail = it.trail.dropLast(1), error = null) }
             else -> return false
