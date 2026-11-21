@@ -332,8 +332,8 @@ class BundleVerificationTest(unittest.TestCase):
                     archive.writestr("assets/toyota-vehicle-packs/index.json", (p / "index.json").read_bytes())
                     if include_corpus: archive.writestr("assets/toyota-source/toyota-source.zip", b"large corpus is forbidden")
                 if include_corpus:
-                    with self.assertRaises(ValueError): verify(p, index_only=True, apk=apk)
-                else: verify(p, index_only=True, apk=apk)
+                    with self.assertRaises(ValueError): verify(p, apk=apk)
+                else: verify(p, apk=apk)
 
     def test_index_never_accepts_unpinned_or_out_of_bounds_metadata(self):
         with tempfile.TemporaryDirectory() as d:

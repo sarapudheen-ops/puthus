@@ -53,7 +53,8 @@ fun ToyotaVehiclePacksScreen(
             if (state.busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             item {
                 SectionCard(if (state.complete) "Source-verified conversion" else "Conversion incomplete — unresolved features disabled") {
-                    Text("${state.executableDefinitions} executable recovered definitions in this build. Source verification is not physical vehicle testing.", style = MaterialTheme.typography.bodySmall)
+                    Text("${state.executableDefinitions} executable recovered definitions in this build.", style = MaterialTheme.typography.bodySmall)
+                    Text("MIC3313 adapter equivalence and physical validation are unproven; source-exact values are not adapter-verified.", style = MaterialTheme.typography.bodySmall)
                     Text("Only the chosen vehicle path and system are downloaded. Cached objects work offline. Browsing and downloading never send ECU requests.", style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -102,8 +103,6 @@ fun ToyotaVehiclePacksScreen(
                                 Text(if (system.enabled) "Enabled · read-only · source verified" else "Disabled · mapping incomplete",
                                     color = if (system.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                 system.counts.forEach { (kind, count) -> InfoRow(kind, count.label) }
-                                if (system.enabled) Text("Read-only converted slice. Physical vehicle validation is still pending and remains a separate step.",
-                                    style = MaterialTheme.typography.bodySmall)
                                 system.reasons.forEach { Text(reason(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                 OutlinedButton(onClick = { controller.openSystem(system) }, enabled = !state.busy) {
                                     Text(if (system.enabled) "Open this system" else "Inspect disabled features and source IDs")
@@ -126,8 +125,6 @@ fun ToyotaVehiclePacksScreen(
                                 state.coverage?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
                                 if (system.enabled) {
                                     Text("Read-only: clearing, coding, actuators, security access and flashing are excluded from this system.",
-                                        style = MaterialTheme.typography.bodySmall)
-                                    Text("Physical vehicle validation: PENDING. Source verification is not physical vehicle testing.",
                                         style = MaterialTheme.typography.bodySmall)
                                 }
                                 system.counts.forEach { (kind, count) -> InfoRow(kind, count.label) }

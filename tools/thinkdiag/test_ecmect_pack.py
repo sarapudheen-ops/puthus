@@ -66,6 +66,23 @@ class EcmectPackTest(unittest.TestCase):
         self.assertEqual((61, 0x51, ENTRY_2007), (value['functionKey'], value['entrySelector'], value['entrySource']['sourceRecord']))
         self.assertEqual({'pids': 30, 'dtcs': 1414, 'ecuInfo': 1, 'tests': 0, 'coding': 0, 'specialFunctions': 0}, validate_system(value))
         self.assertTrue(verify_2007(value, self.review_2007, self.review))
+        self.assertEqual(1, len(value['data']['ecus']))
+        self.assertIn(SYSTEM_2007, value['sourceRecords'])
+        self.assertIn(ENTRY_2007, value['sourceRecords'])
+        self.assertNotIn(MANDATORY_SYSTEM, value['sourceRecords'])
+        self.assertNotIn(ENTRY, value['sourceRecords'])
+        def check_records(item):
+            if isinstance(item, dict):
+                for key, child in item.items():
+                    if key == 'sourceRecords':
+                        self.assertIn(SYSTEM_2007, child)
+                        self.assertIn(ENTRY_2007, child)
+                        self.assertNotIn(MANDATORY_SYSTEM, child)
+                        self.assertNotIn(ENTRY, child)
+                    else: check_records(child)
+            elif isinstance(item, list):
+                for child in item: check_records(child)
+        check_records(value['data'])
         ecu = value['data']['ecus'][0]
         self.assertEqual(('8110F0', '81F010', 16, 10416, '3E'),
                          (ecu['requestId'], ecu['responseId'], ecu['link']['kLine']['initAddress'], ecu['link']['kLine']['baud'], ecu['link']['testerPresent']))
@@ -90,6 +107,36 @@ class EcmectPackTest(unittest.TestCase):
                 (path / name).write_bytes((self.directory / name).read_bytes())
             with self.assertRaisesRegex(ValueError, 'ECMECT'):
                 verify(path, require_executable=True)
+
+    def test_policy_rejects_missing_corrupt_selector_and_third_system(self):
+        import tempfile
+        from toyota_ecmect_pack import candidate_for
+        from toyota_innova_2007_pack import candidate_for as candidate_2007
+        from verify_vehicle_bundle import verify_enabled_policy
+        objects = {MANDATORY_SYSTEM: self.system, SYSTEM_2007: self.system_2007}
+        candidates = [candidate_for(self.system, self.review), candidate_2007(self.system_2007, self.review_2007)]
+        summary = self.index['summary']
+        names = ('mandatory-ecmect-source-reads.json', 'mandatory-ecmect-diagnostics.json',
+                 'innova-2007-source-read-candidate.json', 'mandatory-ecmect-live-omissions.json')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            for name in names:
+                (path / name).write_bytes((self.directory / name).read_bytes())
+            verify_enabled_policy(path, objects, candidates, summary)
+            for name in ('mandatory-ecmect-source-reads.json', 'innova-2007-source-read-candidate.json'):
+                file = path / name; original = file.read_bytes()
+                file.unlink()
+                with self.subTest(missing=name), self.assertRaises(ValueError):
+                    verify_enabled_policy(path, objects, candidates, summary)
+                file.write_bytes(original + b' ')
+                with self.subTest(corrupt=name), self.assertRaises(ValueError):
+                    verify_enabled_policy(path, objects, candidates, summary)
+                file.write_bytes(original)
+            wrong = copy.deepcopy(objects)
+            wrong[SYSTEM_2007]['entrySelector'] = 0x11
+            with self.assertRaises(ValueError): verify_enabled_policy(path, wrong, candidates, summary)
+            wrong = dict(objects, **{'SYSLIST_EU.BIN@00000000': {}})
+            with self.assertRaises(ValueError): verify_enabled_policy(path, wrong, candidates, summary)
 
     def test_pilot_artifact_cannot_be_swapped_into_2007_pin(self):
         from toyota_innova_2007_reads import verify_candidate_bytes
