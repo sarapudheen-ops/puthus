@@ -19,6 +19,10 @@ def main():
         baseline = json.loads(args.baseline_index.read_text())
         report['containerBytesBefore'] = baseline['containerBytes']
         report['containerBytesAdded'] = report['containerBytesAfter'] - baseline['containerBytes']
+        report['containerBytesAddedPerEligibleSystem'] = (
+            report['containerBytesAdded'] / report['eligibleSystemRecords'] if report['eligibleSystemRecords'] else 0)
+        report['containerBytesAddedPerProvenSystem'] = (
+            report['containerBytesAdded'] / max(1, sum(r['systems'] for r in report['systemsByLinkStatusRegionTransportBaud'] if r['linkStatus'] == 'proven')))
         path.write_text(json.dumps(report, sort_keys=True, separators=(',', ':')) + '\n')
     if args.sweep_json:
         sweep = json.loads(args.sweep_json.read_text())
@@ -72,7 +76,9 @@ def main():
         [[k, v] for k, v in report['provenanceFields'].items()])
     lines += ['## E. ECMECT and feature totals', '',
         f"Enabled systems: {report['enabledSystems']}; feature counts: `{json.dumps(report['featureCounts'], sort_keys=True)}`.",
-        f"Container bytes before / after / added: {report['containerBytesBefore']} / {report['containerBytesAfter']} / {report['containerBytesAdded']}.", '']
+        f"Container bytes before / after / added: {report['containerBytesBefore']} / {report['containerBytesAfter']} / {report['containerBytesAdded']}; "
+        f"added per eligible system: {report.get('containerBytesAddedPerEligibleSystem', 'n/a')}.",
+        'Top-10 link reason histogram:', '', *[f'- `{reason}`: {count}' for reason, count in report['top10Reasons']], '']
     lines += ['## F. 9600-baud systems', '', '| Status | Systems |', '|---|---:|']
     lines += [f'| {k} | {v} |' for k, v in report['9600Systems'].items()]
     (args.directory / 'code1-link-promotion.md').write_text('\n'.join(lines) + '\n')

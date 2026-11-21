@@ -127,7 +127,9 @@ jobs:
       - name: Publish native comparison outcome (including failed reference gates)
         if: always() && hashFiles('.local/thinkdiag/report/native-oracle.md') != ''
         run: |
-          gh release upload ci-reports-v1 .local/thinkdiag/report/code1-link-evidence.json --clobber
+          if [ -f .local/thinkdiag/report/code1-link-evidence.json ]; then
+            gh release upload ci-reports-v1 .local/thinkdiag/report/code1-link-evidence.json --clobber
+          fi
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota offline native differential' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion='${{ steps.native_oracle.outcome }}' \
