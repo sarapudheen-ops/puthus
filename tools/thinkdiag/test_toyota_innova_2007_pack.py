@@ -45,6 +45,14 @@ class Innova2007PackTest(unittest.TestCase):
             with self.subTest(mutation=mutate), self.assertRaises(ValueError):
                 enable(system, review, pilot)
 
+    def test_verifier_rejects_a_third_or_missing_system(self):
+        from verify_vehicle_bundle import require_enabled_ecmect_set
+        require_enabled_ecmect_set([SYSTEM, MANDATORY_SYSTEM])
+        for ids in ([SYSTEM], [SYSTEM, MANDATORY_SYSTEM, 'SYSLIST_EU.BIN@00000000'],
+                    [SYSTEM, SYSTEM]):
+            with self.subTest(ids=ids), self.assertRaises(ValueError):
+                require_enabled_ecmect_set(ids)
+
     def test_pilot_identity_cannot_enter_2007_definitions(self):
         _, review, _ = fixtures()
         altered = copy.deepcopy(review)

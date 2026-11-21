@@ -18,7 +18,10 @@ TX, RX = '8110F0', '81F010'
 
 def load_candidate(directory):
     path = Path(directory) / FILENAME
-    return verify_candidate_bytes(path.read_bytes(), path.name)
+    try:
+        return verify_candidate_bytes(path.read_bytes(), path.name)
+    except OSError as error:
+        raise ValueError('2007 ECMECT source artifact is missing or unreadable') from error
 
 
 def data_for(review):

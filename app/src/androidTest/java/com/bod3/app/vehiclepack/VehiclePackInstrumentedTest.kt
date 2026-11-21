@@ -26,11 +26,38 @@ class VehiclePackInstrumentedTest {
         assertEquals(1307, (index.summary["ecuFiles"] as Number).toInt())
         assertEquals(24653, (index.summary["normalizedVehicleChoices"] as Number).toInt())
         assertEquals(9, (index.summary["unresolvedHierarchyChoices"] as Number).toInt())
-        assertEquals(1445, (index.summary["executableDefinitions"] as Number).toInt())
-        assertEquals(1, (index.summary["enabledSystems"] as Number).toInt())
+        assertEquals(2890, (index.summary["executableDefinitions"] as Number).toInt())
+        assertEquals(2, (index.summary["enabledSystems"] as Number).toInt())
         val sourceVerification = index.summary["sourceVerification"] as Map<*, *>
         assertEquals(true, (sourceVerification["verification"] as Map<*, *>)["verified"])
         assertTrue(index.containerBytes > 100 * 1024 * 1024L) // external corpus, not an APK asset
+    }
+
+    @Test fun exact2007SystemIsReadOnlyAndOtherVariantRemainsDisabled() {
+        val index = AssetVehiclePacks.load(app).index
+        val cache = File(app.noBackupFilesDir, "pack-2007-${UUID.randomUUID()}")
+        try {
+            val client = VehiclePackCatalog(index, PackObjectStore(cache, PackHttpSource()))
+            fun select(generation: String, variant: String): PackVehicle {
+                var page = client.root()
+                for (name in listOf("Toyota", "Kijang Innova", generation)) {
+                    page = client.open(page.children.single { it.name == name })
+                }
+                return client.vehicle(page.children.single { it.name == variant })
+            }
+            val vehicle = select("TGN · -2009.07", "MINI VAN · w/o VSC (Vehicle Stability Control)")
+            val system = client.system(vehicle, vehicle.systems.single { it.id == "SYSLIST_EU.BIN@00023a75" })
+            assertTrue(system.enabled && system.readOnly)
+            assertEquals("1 ECU · 30 PIDs · 1,414 DTCs · 1 ECU info read", system.coverage)
+            assertEquals(30, system.data.pids.size)
+            assertEquals(1414, system.counts.getValue("dtcs").converted)
+            assertNull(system.data.ecus.single().diagnostics!!.faults!!.clear)
+            assertTrue(system.data.actuators.isEmpty() && system.data.coding.isEmpty())
+            val other = select("TGN · 2009.07-2017.07", "MINI VAN · w/o VSC (Vehicle Stability Control)")
+            val disabled = client.system(other, other.systems.single { it.id == "SYSLIST_EU.BIN@0009d732" })
+            assertFalse(disabled.enabled)
+            assertEquals(0, disabled.data.count)
+        } finally { cache.deleteRecursively() }
     }
 
     @Test fun exactSelectedPathDownloadsByRangeThenWorksWithoutNetworkAndDoesNotSelectAVehicle() {

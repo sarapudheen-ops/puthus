@@ -306,6 +306,11 @@ class Converter:
                         # read-only candidate carrying the exact translated runtime.
                         candidate = candidate_for(value, self.ecmect_review)
                         value["bringUpPages"] = [self.writer.add({"kind": "bring-up-candidates", "candidates": [candidate]})]
+                    elif self.innova_2007_review is not None and identity == self.innova_2007_review["systemId"]:
+                        from toyota_innova_2007_pack import candidate_for, enable
+                        enable(value, self.innova_2007_review, self.ecmect_review)
+                        candidate = candidate_for(value, self.innova_2007_review)
+                        value["bringUpPages"] = [self.writer.add({"kind": "bring-up-candidates", "candidates": [candidate]})]
                     ref = self.writer.add(value)
                     brief = {"id": identity, "name": value["name"], "counts": value["counts"],
                              "enabled": value["enabled"], "reasons": value["reasons"], "object": ref,
@@ -425,6 +430,16 @@ class Converter:
             self.omissions_ref = self.writer.add(self.omissions)
             (self.output / "mandatory-ecmect-live-omissions.json").write_bytes(canonical(self.omissions) + b"\n")
             stage_review(self.ecmect_review, self.output)
+            from toyota_innova_2007_pack import FILENAME, SYSTEM, verify_enabled as verify_2007
+            from toyota_innova_2007_reads import verify_candidate_bytes
+            second_ref = self.systems.get(SYSTEM)
+            if second_ref is None:
+                raise ValueError("2007 ECMECT system record is missing")
+            self.writer.stream.flush()
+            verify_2007(read_object(self.writer.path, second_ref), self.innova_2007_review, self.ecmect_review)
+            raw_review = canonical(self.innova_2007_review) + b'\n'
+            verify_candidate_bytes(raw_review, FILENAME)
+            (self.output / FILENAME).write_bytes(raw_review)
             self.census["ecmectOmittedLiveRows"] = self.omissions["omittedLiveRows"]
         # The source has SYSLIST blocks not reached by ordinary manual MENU paths.
         # Keep ALL source systems/ECUs/functions in a separate audit root. They are
@@ -442,11 +457,14 @@ class Converter:
 
     def finish(self):
         self.ecmect_review = None
+        self.innova_2007_review = None
         self.omissions = None
         if self.read_artifacts is not None:
             _, artifact_dir = self.read_artifacts
             from toyota_ecmect_pack import live_omissions, load_review
+            from toyota_innova_2007_pack import load_candidate
             self.ecmect_review = load_review(artifact_dir)
+            self.innova_2007_review = load_candidate(artifact_dir)
             self.omissions = live_omissions(self.sources, self.english, self.ecmect_review)
         self.convert_entries()
         self.convert_ecus()
@@ -508,7 +526,7 @@ class Converter:
                 report.append(f'| {title} | `{system["id"]}` {system["name"].replace("|", " ")} | {count("pids")} | '
                               f'{count("dtcs")} | {count("tests")} | {count("coding")} | '
                               f'{", ".join(system["reasons"]) or ("enabled read-only; physical validation PENDING" if system["enabled"] else "")} |')
-        report += ["", "Exactly one reviewed system is enabled, read-only: clearing, coding, actuators, security access and flashing are excluded.",
+        report += ["", f"{enabled} reviewed systems are enabled, read-only: clearing, coding, actuators, security access and flashing are excluded.",
                    "No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.",
                    "Source verification is distinct from completed conversion and from physical vehicle testing.", ""]
         (self.output / "conversion-report.md").write_text("\n".join(report))
@@ -528,9 +546,8 @@ def main():
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--read-artifacts", type=Path,
-                        help="Directory with mandatory-ecmect-source-reads.json and "
-                             "mandatory-ecmect-diagnostics.json compiled by toyota_runtime_compile.py. "
-                             "When given, the single reviewed ECMECT system is enabled read-only; "
+                        help="Directory with both pinned ECMECT source-read artifacts. "
+                             "When given, exactly the two reviewed systems are enabled read-only; "
                              "everything else stays disabled.")
     args = parser.parse_args()
     sources = load_sources(args.archive, args.decoded, args.manifest)
