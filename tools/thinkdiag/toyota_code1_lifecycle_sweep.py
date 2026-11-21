@@ -16,6 +16,7 @@ from toyota_transport import FastKwpEntry
 from vehicle_bundle import canonical
 
 REGION_IDS = {'EU':1,'NA':2,'JP':3}
+REGION_NAMES = {1:'EU',2:'NA',3:'JP'}
 
 def main():
     ap=argparse.ArgumentParser()
@@ -39,7 +40,7 @@ def main():
                     key=(rid,fn,selector); systems[key]+=1; entries[key]=ent
     all_rows=[]; started=time.monotonic(); timeout=False
     for (rid,fn,sel), ent in sorted(entries.items()):
-        t=time.monotonic(); region=REGIONS[rid]; item={'region':region,'function':fn,'selector':sel,
+        t=time.monotonic(); region=REGION_NAMES[rid]; item={'region':region,'function':fn,'selector':sel,
              'sourceRecord':ent.source_id,'nativeTransport':ent.transport,'baud':ent.baud,
              'systems':systems[(rid,fn,sel)],'rawHex':ent.raw.hex()}
         outcomes={}
@@ -124,6 +125,6 @@ if __name__=='__main__':
         out.mkdir(parents=True,exist_ok=True)
         detail=''.join(traceback.format_exception(type(exc),exc,exc.__traceback__))
         payload={'format':'code1-lifecycle-sweep-v1','fatalError':f'{type(exc).__name__}: {exc}','traceback':detail,'tupleCount':0,'completed':0,'timedOut':False,'tuples':[]}
-        (out/'code1-lifecycle-sweep.json').write_bytes(canonical(payload)+b'\\n')
-        (out/'code1-lifecycle-sweep.md').write_text('# Code 1 lifecycle sweep failed\\n\\n```text\\n'+detail+'\\n```\\n')
+        (out/'code1-lifecycle-sweep.json').write_bytes(canonical(payload)+b'\n')
+        (out/'code1-lifecycle-sweep.md').write_text('# Code 1 lifecycle sweep failed\n\n```text\n'+detail+'\n```\n')
         raise
