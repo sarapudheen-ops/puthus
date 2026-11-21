@@ -47,7 +47,8 @@ object VehiclePackScenarios {
         try { block(folder) } finally { folder.deleteRecursively() }
     }
     private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false,
-                          referenced: Boolean = false, corruptReference: String? = null, corruptExecutable: String? = null) {
+                          referenced: Boolean = false, corruptReference: String? = null, corruptExecutable: String? = null,
+                          linkOverride: String? = null) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -95,12 +96,19 @@ object VehiclePackScenarios {
         private val functionSource = if (referenced) mapOf("sourceRecord" to "synthetic:function", "functionKey" to 1, "declaredLiveRows" to 1,
             "object" to add(mapOf("kind" to "function-source", "sourceRecord" to "synthetic:function",
                 "functionKey" to if (corruptReference == "function") 2 else 1, "declaredLiveRows" to 1, "livePages" to emptyList<Any>()))) else null
+        private val linkStatus = linkOverride ?: if (enabled) "proven" else "unproven"
+        private val linkReasons = if (linkStatus == "proven") emptyList<String>() else (why.ifEmpty { listOf("ecu_entry_untranslated") })
+        private val categoryStatus = listOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions").associateWith { category ->
+            if (enabled && category != "specialFunctions") "executable" else if (enabled) "unknown" else "unknown"
+        }
         private val system = add(mapOf("kind" to "vehicle-system", "id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
+            "linkStatus" to linkStatus, "linkReasons" to linkReasons, "categoryStatus" to categoryStatus,
             "reasons" to why, "sourceVerified" to true, "sourceRecords" to listOf("synthetic:system"), "counts" to counts,
             "ecuSource" to ecuSource, "functionSource" to functionSource,
             "readOnly" to (enabled && corruptExecutable != "writable"),
             "bringUpPages" to listOfNotNull(bringUpPage), "data" to CatalogCodec.dataMap(original)))
-        private val systemChoice = mapOf("id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled, "reasons" to why, "counts" to counts,
+        private val systemChoice = mapOf("id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
+            "linkStatus" to linkStatus, "linkReasons" to linkReasons, "categoryStatus" to categoryStatus, "reasons" to why, "counts" to counts,
             "readOnly" to enabled, "object" to system)
         val path = CatalogPack("synthetic-path", "Synthetic path", nodes = listOf(
             CatalogNode("make", null, CatalogLevel.MAKE, "Synthetic make"), CatalogNode("model", "make", CatalogLevel.MODEL, "Synthetic model"),
@@ -236,10 +244,28 @@ object VehiclePackScenarios {
     fun trustedConversionNotImportedFlags() = temporary { cache ->
         val f = Fixture(enabled = true); check(f.original.problems().isEmpty()) { f.original.problems().toString() }
         val c = f.client(cache); val v = c.selectedVehicle(listOf("make", "model", "generation", "variant")); val s = c.system(v, v.systems.single())
-        check(s.enabled && s.data.actuators.single().verified && s.data.coding.single().verified)
+        check(s.enabled && !s.data.actuators.single().verified && !s.data.coding.single().verified)
         check(s.data.pids.single().decode(listOf(0x62, 0x12, 0x34, 0x10, 0)) == 1024.0)
         val imported = CatalogCodec.dataOrThrow(JsonWriter.write(CatalogCodec.dataMap(s.data)))
         check(!imported.actuators.single().verified && !imported.coding.single().verified)
+        val supplied = com.bod3.app.catalog.CatalogData(security = listOf(com.bod3.app.catalog.CatalogSecurity(
+            "unmarked-security", "Synthetic", com.bod3.app.obd.uds.SecurityAccessSpec(1,
+                com.bod3.app.obd.uds.SecurityAlgorithm.STATIC_KEY, listOf(1)), verified = true,
+            provenMarker = "corpus-assertion", reviewHash = "0".repeat(64))))
+        val checked = CatalogCodec.dataOrThrow(JsonWriter.write(CatalogCodec.dataMap(supplied)))
+        check(!checked.security.single().verified)
+    }
+
+    fun unprovenEnabledSystemIsRejectedWithExplicitLinkError() = temporary { cache ->
+        val f = Fixture(enabled = true, linkOverride = "unproven")
+        val c = f.client(cache)
+        try {
+            val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
+            c.system(v, v.systems.single())
+            error("Expected unproven enabled system to fail validation")
+        } catch (expected: IllegalArgumentException) {
+            check(expected.message.orEmpty().contains("Enabled status disagrees") || expected.message.orEmpty().contains("Enabled system requires linkStatus proven"))
+        }
     }
 
     fun pinnedBringUpCandidatesAreSeparateFromExecutableSystemFlags() = temporary { cache ->
@@ -292,17 +318,15 @@ object VehiclePackScenarios {
         }
     }
 
-    fun enabledSystemMustBeReadOnlyAndReportsExactCoverage() = temporary { cache ->
+    fun enabledSystemReportsExactCoverageWithoutReadOnlyFlagCoupling() = temporary { cache ->
         val f = Fixture(enabled = true); val c = f.client(cache)
         val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
         val s = c.system(v, v.systems.single())
         check(s.enabled && s.readOnly && s.coverage == "1 ECU · 1 PIDs · 1 DTCs · 1 ECU info read") { s.coverage ?: "null coverage" }
-        // An enabled system whose pinned object drops the read-only declaration is rejected.
-        val bad = Fixture(enabled = true, corruptExecutable = "writable").client(cache)
-        rejects {
-            val bv = bad.selectedVehicle(listOf("make", "model", "generation", "variant"))
-            bad.system(bv, bv.systems.single())
-        }
+        // `readOnly` is no longer a substitute for independently validated link/category status.
+        val withoutLegacyFlag = Fixture(enabled = true, corruptExecutable = "writable").client(cache)
+        val wv = withoutLegacyFlag.selectedVehicle(listOf("make", "model", "generation", "variant"))
+        check(withoutLegacyFlag.system(wv, wv.systems.single()).enabled)
     }
 
     fun cancelledDownloadNeverInstalls() = temporary { cache ->

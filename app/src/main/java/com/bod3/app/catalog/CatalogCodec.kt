@@ -40,7 +40,8 @@ object CatalogCodec {
         "dtcGroups" to d.dtcGroups.map { linkedMapOf("id" to it.id, "makes" to it.makes, "source" to it.source, "dtcs" to it.dtcs.toSortedMap()) },
         "actuators" to d.actuators.map(ActuatorRecipeCodec::encodeRecipe), "coding" to d.coding.map(CodingRecipeCodec::encodeRecipe),
         "security" to d.security.map { linkedMapOf("id" to it.id, "name" to it.name, "level" to "%02X".format(it.spec.level),
-            "algorithm" to it.spec.algorithm.name, "constant" to Hex.format(it.spec.constant), "verified" to it.verified) },
+            "algorithm" to it.spec.algorithm.name, "constant" to Hex.format(it.spec.constant), "verified" to it.verified,
+            "provenMarker" to it.provenMarker, "reviewHash" to it.reviewHash) },
         "connection" to d.connection.values,
         "exclude" to linkedMapOf("ecus" to d.exclude.ecus.sorted(), "pids" to d.exclude.pids.sorted(), "dtcs" to d.exclude.dtcs.sorted(),
             "actuators" to d.exclude.actuators.sorted(), "coding" to d.exclude.coding.sorted(), "security" to d.exclude.security.sorted(),
@@ -128,14 +129,17 @@ object CatalogCodec {
         } else emptyList()
         val security = f.list(m, "security", p).mapIndexedNotNull { i, rawSpec ->
             val sp = "$p.security[$i]"; val s = f.asObject(rawSpec, sp) ?: return@mapIndexedNotNull null
-            unknown(s, setOf("id", "name", "level", "algorithm", "constant", "verified"), sp, errors)
+            unknown(s, setOf("id", "name", "level", "algorithm", "constant", "verified", "provenMarker", "reviewHash"), sp, errors)
             val id = f.string(s, "id", sp); val name = f.string(s, "name", sp); val level = f.hexInt(s, "level", sp, max = 0xFF)
             val algorithm = f.string(s, "algorithm", sp)?.let { text -> SecurityAlgorithm.entries.firstOrNull { it.name == text }
                 ?: run { errors += "$sp.algorithm: unknown security algorithm"; null } }
             val constant = f.hex(s, "constant", sp)
             f.boolean(s, "verified", sp) // Type check, but never trust this assertion.
+            val marker = f.string(s, "provenMarker", sp, required = false)
+            val reviewHash = f.string(s, "reviewHash", sp, required = false)
             if (id == null || name == null || level == null || algorithm == null || constant == null) null
-            else CatalogSecurity(id, name, SecurityAccessSpec(level, algorithm, constant), verified = false)
+            else CatalogSecurity(id, name, SecurityAccessSpec(level, algorithm, constant),
+                verified = WriteOracleProof.verified(marker, reviewHash), provenMarker = marker, reviewHash = reviewHash)
         }
         val connection = f.obj(m, "connection", p, false)?.entries?.associate { (k, v) -> k.toString() to v }.orEmpty()
         val exclude = f.obj(m, "exclude", p, false).orEmpty()

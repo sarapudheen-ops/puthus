@@ -104,6 +104,8 @@ data class ActuatorRecipe(
     val verified: Boolean = false,
     val sourceRecords: List<String> = emptyList(),
     val defaultSession: Int = WritePolicy.DEFAULT_SESSION,
+    val provenMarker: String? = null,
+    val reviewHash: String? = null,
 ) {
     val kind: ActuatorKind? get() = when (start.firstOrNull()) {
         WritePolicy.IO_CONTROL -> ActuatorKind.IO_CONTROL

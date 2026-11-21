@@ -55,7 +55,8 @@ data class FeatureCount(val converted: Int, val unresolved: Int?) {
     val label: String get() = "$converted converted / ${unresolved?.toString() ?: "unknown"} unresolved"
 }
 data class PackSystemChoice(val id: String, val name: String, val enabled: Boolean, val reasons: List<String>,
-                            val counts: Map<String, FeatureCount>, val range: PackRange, val readOnly: Boolean = false)
+                            val counts: Map<String, FeatureCount>, val range: PackRange, val readOnly: Boolean = false,
+                            val linkStatus: String, val linkReasons: List<String>, val categoryStatus: Map<String, String>)
 class PackVehicle internal constructor(
     val id: String, val path: CatalogPack, val sourceSelection: List<String>,
     val hierarchyResolved: Boolean, val reasons: List<String>, val systems: List<PackSystemChoice>,
@@ -144,11 +145,20 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         val systems = (systemRows as? List<*>)?.map { raw ->
             val s = raw as? Map<*, *> ?: error("Invalid vehicle system")
             val enabled = s["enabled"] as? Boolean ?: error("Missing system status")
+            val linkStatus = s["linkStatus"] as? String ?: error("Missing link status")
+            require(linkStatus in setOf("proven", "unproven")) { "Invalid link status" }
+            val linkReasons = s.strings("linkReasons")
+            val categoryStatus = s["categoryStatus"] as? Map<*, *> ?: error("Missing category status")
+            val requiredCategories = setOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions")
+            require(categoryStatus.keys == requiredCategories && categoryStatus.values.all { it in setOf("executable", "unresolved", "unknown") }) { "Invalid category status" }
+            require(enabled == (linkStatus == "proven" && categoryStatus.values.any { it == "executable" })) { "Enabled status disagrees with proven link and executable categories" }
+            require((linkStatus == "proven") == linkReasons.isEmpty()) { "Link reasons disagree with link status" }
             val readOnly = s["readOnly"] == true
-            require(enabled == readOnly) { "Enabled and read-only pack declarations differ" }
             val disabled = reasons(s)
             require(!enabled || (resolved && disabled.isEmpty())) { "Unresolved system cannot be enabled" }
-            PackSystemChoice(s.text("id"), s.text("name"), enabled, disabled, counts(s["counts"]), range(s["object"]), readOnly)
+            val categories = categoryStatus.entries.associate { (k, v) -> (k as String) to (v as String) }
+            PackSystemChoice(s.text("id"), s.text("name"), enabled, disabled, counts(s["counts"]), range(s["object"]), readOnly,
+                linkStatus, linkReasons, categories)
         } ?: error("Missing vehicle systems")
         require(systems.distinctBy { it.id }.size == systems.size && systems.size <= 1024)
         return PackVehicle(choice.id, path, m.strings("sourceSelection"), resolved, why, systems)
@@ -162,45 +172,75 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
         val why = reasons(m)
         val counts = counts(m["counts"])
         require(why == choice.reasons && counts == choice.counts)
+        val linkStatus = m["linkStatus"] as? String ?: error("Missing link status")
+        val linkReasons = m.strings("linkReasons")
+        val categoryStatus = m["categoryStatus"] as? Map<*, *> ?: error("Missing category status")
+        require(linkStatus == "proven" || linkStatus == "unproven") { "Invalid link status" }
+        require(linkStatus == choice.linkStatus && linkReasons == choice.linkReasons && categoryStatus == choice.categoryStatus) { "Link/category status differs from its pinned descriptor" }
         val readOnly = m["readOnly"] == true
-        require(readOnly == choice.readOnly && (!choice.enabled || readOnly)) { "Enabled pack system must be explicitly read-only" }
         val sources = m.strings("sourceRecords"); require(sources.isNotEmpty())
         val errors = mutableListOf<String>()
         val data = CatalogCodec.readData(m["data"], "vehicle-system.data", errors)
         errors += data.problems()
         require(errors.isEmpty()) { errors.joinToString("\n") }
+        fun faultLabelCount(ecu: com.bod3.app.datapack.EcuDefinition): Int = when (val layout = ecu.diagnostics?.faults?.layout) {
+            is com.bod3.app.diagnostics.ToyotaFaultLayout -> layout.labels.size
+            is com.bod3.app.diagnostics.ToyotaP5FaultLayout -> layout.labels.size
+            else -> 0
+        }
+        val definitionCounts = mapOf(
+            "pids" to data.pids.size,
+            "dtcs" to (data.dtcs.size + data.ecus.sumOf(::faultLabelCount)),
+            "ecuInfo" to data.ecus.sumOf { it.diagnostics?.identification?.size ?: 0 },
+            "actuators" to data.actuators.size,
+            "coding" to data.coding.size,
+            "specialFunctions" to 0,
+        )
+        for ((category, status) in choice.categoryStatus) {
+            val definitions = definitionCounts[category] ?: error("Unknown diagnostic category")
+            require(if (status == "executable") definitions > 0 else definitions == 0) {
+                "Category $category status $status disagrees with $definitions definitions"
+            }
+        }
+        if (choice.enabled) require(choice.linkStatus == "proven") { "Enabled system requires linkStatus proven" }
         if (!choice.enabled) {
             require(data.count == 0 && counts.values.all { it.converted == 0 } && why.isNotEmpty()) { "Disabled system contains executable definitions" }
         } else {
-            require(vehicle.hierarchyResolved && why.isEmpty() && data.ecus.size == 1) { "No exact vehicle/ECU mapping" }
-            val ecu = data.ecus.single()
-            require(ecu.link != null && data.pids.isNotEmpty()) { "Enabled systems need an explicit link and nonempty executable live data" }
+            require(vehicle.hierarchyResolved && why.isEmpty() && data.ecus.isNotEmpty()) { "No exact vehicle/ECU mapping" }
+            val ecus = data.ecus
+            val targets = ecus.map { it.target }.toSet()
+            require(ecus.all { it.link != null && it.sourceRecords.isNotEmpty() } && data.pids.isNotEmpty()) {
+                "Enabled systems need exact ECU links and nonempty executable live data"
+            }
             require(data.dtcs.isEmpty() && data.dtcGroups.isEmpty() && data.moduleNames.isEmpty() && data.security.isEmpty() &&
-                data.connection.values.isEmpty() && data.exclude == com.bod3.app.catalog.CatalogExclusions()) { "An executable system is closed to one ECU, not a global catalog/configuration fallback" }
-            val diagnostics = requireNotNull(ecu.diagnostics) { "Enabled ECU needs explicit nonempty identification and fault reads" }
-            val faults = requireNotNull(diagnostics.faults) { "Enabled ECU has no executable fault read" }
-            require(diagnostics.identification.isNotEmpty() && diagnostics.identification.all { it.read.minBytes > 0 && it.read.sourceRecords.isNotEmpty() &&
-                it.read.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } } &&
-                faults.read.sourceRecords.isNotEmpty() && faults.read.supportChecks.all { it.sourceRecords.isNotEmpty() } &&
-                faults.layout.sourceRecords.isNotEmpty() && (faults.clear == null || faults.clear.sourceRecords.isNotEmpty())) { "Converted diagnostic reads/layouts lack nonempty data or independent source records" }
-            val labels = when (val layout = faults.layout) {
+                data.connection.values.isEmpty() && data.exclude == com.bod3.app.catalog.CatalogExclusions()) { "Executable system has unsupported global catalog/configuration definitions" }
+            val diagnostics = ecus.map { requireNotNull(it.diagnostics) { "Enabled ECU needs explicit identification and fault reads" } }
+            val faults = diagnostics.map { requireNotNull(it.faults) { "Enabled ECU has no executable fault read" } }
+            require(diagnostics.all { d -> d.identification.isNotEmpty() && d.identification.all { it.read.minBytes > 0 && it.read.sourceRecords.isNotEmpty() &&
+                it.read.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } } } &&
+                faults.all { f -> f.read.sourceRecords.isNotEmpty() && f.read.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } &&
+                    f.layout.sourceRecords.isNotEmpty() && (f.clear == null || f.clear.sourceRecords.isNotEmpty()) }) {
+                "Converted diagnostic reads/layouts lack nonempty data or independent source records"
+            }
+            val labels = faults.flatMap { fault -> when (val layout = fault.layout) {
                 is com.bod3.app.diagnostics.ToyotaFaultLayout -> layout.labels
                 is com.bod3.app.diagnostics.ToyotaP5FaultLayout -> layout.labels
                 else -> error("Enabled Toyota faults require the exact source-specific layout, not an inferred UDS/OBD layout")
-            }
+            } }
             require(labels.isNotEmpty() && labels.all { it.sourceRecords.isNotEmpty() }) { "Enabled ECU has no nonempty source-key fault definitions" }
-            require(counts.getValue("ecuInfo").converted == diagnostics.identification.size &&
+            require(counts.getValue("ecuInfo").converted == diagnostics.sumOf { it.identification.size } &&
                 counts.getValue("dtcs").converted == labels.size && counts.getValue("specialFunctions").converted == 0) { "Feature counts disagree with actual diagnostic definitions" }
-            require(ecu.sourceRecords.isNotEmpty() && data.pids.all { it.sourceRecords.isNotEmpty() && it.target == ecu.target &&
+            require(data.pids.all { it.sourceRecords.isNotEmpty() && it.target in targets &&
                 it.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } } &&
-                data.actuators.all { it.sourceRecords.isNotEmpty() && it.module.target == ecu.target } &&
-                data.coding.all { it.sourceRecords.isNotEmpty() && it.module.target == ecu.target }) { "Definitions are missing provenance or cross ECU boundaries" }
+                data.actuators.all { it.sourceRecords.isNotEmpty() && it.module.target in targets } &&
+                data.coding.all { it.sourceRecords.isNotEmpty() && it.module.target in targets }) { "Definitions are missing provenance or cross ECU boundaries" }
             require(counts.getValue("pids").converted == data.pids.size &&
                 counts.getValue("tests").converted == data.actuators.size && counts.getValue("coding").converted == data.coding.size)
             // Arbitrary catalog imports still call unverified(). Only this pinned path may enable them.
         }
-        val trusted = data.copy(actuators = data.actuators.map { it.copy(verified = true) },
-            coding = data.coding.map { it.copy(verified = true) }, security = data.security.map { it.copy(verified = true) })
+        // Source presence alone is not write-oracle evidence. Never elevate write
+        // capability verification here; only a separately pinned reviewed oracle may do so.
+        val trusted = data.unverified()
         fun sourceObject(key: String, kind: String, fields: List<String>): Map<*, *>? {
             val stub = m[key] as? Map<*, *> ?: return null
             val ref = stub["object"] ?: return stub // Earlier pinned bundles stored inline metadata.

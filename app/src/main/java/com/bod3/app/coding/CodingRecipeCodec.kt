@@ -87,6 +87,7 @@ object CodingRecipeCodec {
             "partNumbers" to r.applicability.partNumbers, "softwareVersions" to r.applicability.softwareVersions,
         ),
         "source" to r.source, "notes" to r.notes, "verified" to r.verified,
+        "provenMarker" to r.provenMarker, "reviewHash" to r.reviewHash,
         "sourceRecords" to r.sourceRecords.takeIf { it.isNotEmpty() }, "defaultSession" to "%02X".format(r.defaultSession),
     ).filterValues { it != null }
 
@@ -191,6 +192,9 @@ object CodingRecipeCodec {
             val ap = f.path(p, "applicability")
             Applicability(f.strings(a, "makes", ap), f.strings(a, "models", ap), f.strings(a, "partNumbers", ap), f.strings(a, "softwareVersions", ap))
         } ?: Applicability()
+        f.boolean(m, "verified", p) // Type-check only; input assertion is not trusted.
+        val provenMarker = f.string(m, "provenMarker", p, required = false)
+        val reviewHash = f.string(m, "reviewHash", p, required = false)
         val recipe = CodingRecipe(
             id = id ?: "", name = name ?: "", description = f.string(m, "description", p, required = false) ?: "",
             module = module ?: ActuatorModule("", null, "", ""), method = method ?: CodingMethod.DID_VALUE,
@@ -202,7 +206,8 @@ object CodingRecipeCodec {
             session = f.hexInt(m, "session", p, required = false, max = 0xFF) ?: 0x03,
             security = security, preconditions = preconditions, applicability = applicability,
             source = f.string(m, "source", p, required = false), notes = f.string(m, "notes", p, required = false),
-            verified = f.boolean(m, "verified", p) ?: false,
+            verified = com.bod3.app.catalog.WriteOracleProof.verified(provenMarker, reviewHash),
+            provenMarker = provenMarker, reviewHash = reviewHash,
             readService = f.hexInt(m, "readService", p, false, 0xFF) ?: 0x22,
             writeService = f.hexInt(m, "writeService", p, false, 0xFF) ?: 0x2E,
             sourceRecords = f.strings(m, "sourceRecords", p),
