@@ -19,7 +19,7 @@ FUNCTION = 'FUNCDATA_EU.BIN@000005e9'
 # only by FIVE_BAUD init: 00 is an unused FAST-only configuration placeholder,
 # NOT a decoded Toyota slow-init address. No FIVE_BAUD fallback is enabled.
 LINK = {
-    'protocol': 'ISO_14230_4_KWP_FAST', 'dialect': 'KWP2000', 'testerPresent': '3E',
+    'protocol': 'ISO_14230_4_KWP_FAST', 'dialect': 'KWP2000',
     'kLine': {'init': 'FAST', 'initAddress': 0, 'baud': 10416,
               'p1MaxMs': 20, 'p2MaxMs': 50, 'p2StarMs': 5000,
               'p3MinMs': 55, 'p3MaxMs': 5000, 'p4Ms': 5,
@@ -72,11 +72,24 @@ def live_omissions(sources, english, review):
             'omittedLiveRows': 985, 'reasons': dict(sorted(Counter(r['reasons'][0] for r in omitted).items())), 'items': omitted}
 
 
-def data_for(review):
+def source_keepalive(review):
+    """Use only the pinned lifecycle compiler output for this exact entry."""
     verify_source_read_review(review)
+    plan = review['transportPlan']
+    require(plan['region'] == 1 and plan['function'] == 61 and
+            plan['entry']['sourceRecord'] == ENTRY and plan['entry']['selector'] == 0x11,
+            'ECMECT keepalive is not from the exact source entry')
+    request = plan['keepalive']['requestHex']
+    require(isinstance(request, str) and len(request) in (2, 4) and
+            all(c in '0123456789abcdef' for c in request), 'Invalid source keepalive request')
+    return request.upper()
+
+
+def data_for(review):
+    keepalive = source_keepalive(review)
     diagnostics = copy.deepcopy(review['diagnostics'])
     diagnostics['faults'].pop('clear', None)  # This slice never exposes clearing.
-    link = copy.deepcopy(LINK)
+    link = {**copy.deepcopy(LINK), 'testerPresent': keepalive}
     provenance = list(dict.fromkeys([MANDATORY_SYSTEM, FUNCTION, ENTRY,
         *review['transportPlan']['sourceRecords']]))
     ecu = {'address': '0081', 'name': 'ECMECT (Engine and ECT)', 'protocol': 'KWP',
@@ -92,14 +105,14 @@ def transport_for(review):
     return {'driver': 'MIC3313_KWP', 'physicalValidation': 'PENDING',
             'nativeFirmwareEquivalenceRequired': False,
             'timingBasis': 'Existing app KLineConfig policy; not native Toyota firmware equivalence',
+            'sourceKeepalive': copy.deepcopy(review['transportPlan']['keepalive']),
             'policyDefaults': {
-                'testerPresent': LINK['testerPresent'],
                 **{field: LINK['kLine'][field] for field in
                    ('p1MaxMs', 'p2MaxMs', 'p2StarMs', 'p3MinMs', 'p3MaxMs', 'p4Ms')},
                 'initAddress': LINK['kLine']['initAddress'],
             },
             'blockers': [
-                'MIC3313 keepalive and timing policy defaults are not established as equivalent to the source lifecycle',
+                'MIC3313 keepalive scheduling and timing policy defaults are not established as equivalent to the source lifecycle',
                 'FAST initAddress 00 is an app placeholder, not a decoded source address',
                 'Physical vehicle and adapter equivalence validation is pending',
             ],

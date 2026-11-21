@@ -34,6 +34,12 @@ class EcmectPackTest(unittest.TestCase):
         self.assertEqual((61, 17, ENTRY), (s['functionKey'], s['entrySelector'], s['entrySource']['sourceRecord']))
         self.assertEqual({'pids': 30, 'dtcs': 1414, 'ecuInfo': 1, 'tests': 0, 'coding': 0, 'specialFunctions': 0}, validate_system(s))
         self.assertTrue(verify_enabled(s, self.review))
+        expected_keepalive = self.review['transportPlan']['keepalive']['requestHex'].upper()
+        self.assertEqual(expected_keepalive, s['data']['ecus'][0]['link']['testerPresent'])
+        changed = copy.deepcopy(s)
+        changed['data']['ecus'][0]['link']['testerPresent'] = '2100' if expected_keepalive != '2100' else '3E'
+        with self.assertRaises(ValueError):
+            verify_enabled(changed, self.review)
         ecu, = s['data']['ecus']
         self.assertEqual(('0081', '8013F0', '80F013', 10416),
                          (ecu['address'], ecu['requestId'], ecu['responseId'], ecu['link']['kLine']['baud']))
@@ -99,6 +105,7 @@ class EcmectPackTest(unittest.TestCase):
             lambda s: s['sourceRecords'].append('SYSLIST_EU.BIN@00000000'),
             lambda s: s['ecuSource'].update(sha256='0' * 64),
             lambda s: s['data']['ecus'][0]['link']['kLine'].update(baud=10400),
+            lambda s: s['data']['ecus'][0]['link'].update(testerPresent='FF'),
             lambda s: s['data']['pids'][0].update(formula='A+40'),
             lambda s: s['data']['pids'][0].update(header='8014F0'),
             lambda s: s['data']['ecus'][0]['diagnostics']['faults']['layout']['labels'][0].update(description='Fake label'),
