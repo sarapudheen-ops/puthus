@@ -110,7 +110,34 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          python3 tools/thinkdiag/publish_census.py .local/toyota-census/pack-census.md .local/toyota-census/comments
+          python3 - <<'PY'
+          from pathlib import Path
+          report = Path('.local/toyota-census/pack-census.md').read_text()
+          title = '## Ecu_Data typed tables'
+          if title not in report:
+              raise SystemExit('Ecu_Data typed tables section missing from census')
+          start = report.index(title)
+          next_heading = report.find('\n## ', start + len(title))
+          end = len(report) if next_heading < 0 else next_heading + 1
+          section = report[start:end].strip()
+          body = '<!-- toyota-ecu-tables -->\n# Ecu_Data typed tables\n\n' + section + '\n'
+          if len(body) > 55_000:
+              raise SystemExit(f'Ecu_Data comment exceeds 55000 chars: {len(body)}')
+          Path('.local/toyota-census/ecu-tables-pr-comment.md').write_text(body)
+          Path('.local/toyota-census/pack-census-pr.md').write_text(report[:start] + report[end:])
+          PY
+          python3 tools/thinkdiag/publish_census.py .local/toyota-census/pack-census-pr.md .local/toyota-census/comments
+          mapfile -t prior_ecu < <(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.body | contains("<!-- toyota-ecu-tables -->")) | .id')
+          ecu_body=$(cat .local/toyota-census/ecu-tables-pr-comment.md)
+          if [ "${#prior_ecu[@]}" -gt 0 ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/${prior_ecu[0]}" -F "body=$ecu_body" >/dev/null
+            for ((i=1; i<${#prior_ecu[@]}; i++)); do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/${prior_ecu[$i]}" >/dev/null
+            done
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F "body=$ecu_body" >/dev/null
+          fi
           mapfile -t prior < <(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
             --jq '.[] | select((.body | contains("<!-- toyota-census -->")) or (.body | startswith("# Toyota pack census"))) | .id')
           mapfile -t parts < <(printf '%s\n' .local/toyota-census/comments/census-part-*.md | sort)

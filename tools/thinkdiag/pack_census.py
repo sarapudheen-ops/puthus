@@ -132,42 +132,85 @@ def census(pack_dir: Path, decoded: Path | None = None) -> dict:
         raw_index = json.loads((pack_dir / "entry-index.json").read_text())
         entries = [e for listing in raw_index.get("lists", []) for e in listing.get("entries", [])]
 
-    tables = defaultdict(lambda: {"count": 0, "files": set(), "hashes": set(), "rows": []})
-    if decoded is not None:
-        for path in decoded.rglob("Ecu_Data_*.BIN"):
+    tables = defaultdict(lambda: {"sections": 0, "files": set(), "hashes": set(), "rows": [], "rowCount": 0})
+    pairs = defaultdict(lambda: {"tableInstances": 0, "rowCount": 0, "hashes": set(), "rawRows": []})
+    tag0_first, tag0_last = Counter(), Counter()
+    tag0_tables = set()
+    decoded_files = []
+    if decoded is not None and decoded.is_dir():
+        decoded_files = [p for p in decoded.rglob("Ecu_Data_*.BIN")
+                         if re.fullmatch(ECU_FILE, p.relative_to(decoded).as_posix())]
+    if decoded_files:
+        for path in decoded_files:
             rel = path.relative_to(decoded).as_posix()
-            if not re.fullmatch(ECU_FILE, rel): continue
             raw_file = path.read_bytes(); region = rel.split("/", 1)[0]
             for section in section_directory(raw_file):
                 raw_table = raw_file[section.offset:section.end]; table = typed_table(raw_table)
-                bucket = _row_bucket(table.count)
-                key = (region, section.identity, table.identity, table.stride, bucket)
-                row = tables[key]; row["count"] += 1; row["files"].add(rel); row["hashes"].add(hashlib.sha256(raw_table).hexdigest())
-                if table.stride:
-                    row["rows"].extend(table.body[i:i + table.stride].hex() for i in range(0, min(len(table.body), 3 * table.stride), table.stride))
+                bucket = _row_bucket(table.count); stride = table.stride
+                key = (region, section.identity, table.identity, stride, bucket)
+                row = tables[key]; row["sections"] += 1; row["files"].add(rel); row["hashes"].add(hashlib.sha256(raw_table).hexdigest())
+                row["rowCount"] += table.count
+                pair = pairs[(table.identity, stride)]
+                pair["tableInstances"] += 1; pair["rowCount"] += table.count
+                pair["hashes"].add(hashlib.sha256(raw_table).hexdigest())
+                if stride:
+                    for i in range(table.count):
+                        raw_hex = table.body[i * stride:(i + 1) * stride].hex()
+                        if raw_hex not in row["rows"] and len(row["rows"]) < 2: row["rows"].append(raw_hex)
+                        if raw_hex not in pair["rawRows"] and len(pair["rawRows"]) < 2: pair["rawRows"].append(raw_hex)
+                        if table.identity == 0 and stride == 12:
+                            tag0_tables.add(hashlib.sha256(raw_table).hexdigest())
+                            tag0_first[raw_hex[:8]] += 1; tag0_last[raw_hex[-8:]] += 1
     else:
+        # Cache-hit packs retain exact ECU row bytes in their source-inventory objects.
         for obj in objects.values():
             if obj.get("kind") != "ecu-source": continue
-            region = str(obj.get("sourceFile", "unknown")).split("/", 1)[0]
+            source_file = str(obj.get("sourceFile", "unknown")); region = source_file.split("/", 1)[0]
             for sec in obj.get("sections", []):
-                key = (region, sec.get("slot"), sec.get("tag"), sec.get("stride"), _row_bucket(sec.get("rows", 0)))
-                row = tables[key]; row["count"] += 1; row["files"].add(obj.get("sourceFile"))
+                slot, tag, stride = sec.get("slot"), sec.get("tag"), sec.get("stride")
+                bucket = _row_bucket(sec.get("rows", 0)); key = (region, slot, tag, stride, bucket)
+                row = tables[key]; row["sections"] += 1; row["files"].add(source_file); row["rowCount"] += int(sec.get("rows", 0))
+                pair = pairs[(tag, stride)]; pair["tableInstances"] += 1; pair["rowCount"] += int(sec.get("rows", 0))
             for ref in obj.get("pages", []):
                 page = objects.get(ref.get("sha256")) or visit(ref)
                 for item in page.get("items", []):
-                    tag = item.get("tableTag")
-                    raw_hex = item.get("rawHex", "")
-                    if tag is not None:
-                        for key, row in tables.items():
-                            if (key[0] == region and key[2] == tag and key[3] == len(raw_hex) // 2
-                                    and len(row["rows"]) < 3):
-                                row["rows"].append(raw_hex[:256])
+                    raw_hex, tag = item.get("rawHex", ""), item.get("tableTag")
+                    ident = item.get("id", "")
+                    match = re.search(r"#slot(\d+):row\d+$", ident)
+                    if tag is None or not match: continue
+                    slot, stride = int(match.group(1)), len(raw_hex) // 2
+                    for key, row in tables.items():
+                        if key[0] == region and key[1] == slot and key[2] == tag and key[3] == stride:
+                            if raw_hex not in row["rows"] and len(row["rows"]) < 2: row["rows"].append(raw_hex)
+                    pair = pairs[(tag, stride)]
+                    if raw_hex not in pair["rawRows"] and len(pair["rawRows"]) < 2: pair["rawRows"].append(raw_hex)
+                    if tag == 0 and stride == 12:
+                        tag0_first[raw_hex[:8]] += 1; tag0_last[raw_hex[-8:]] += 1
+        for key, row in tables.items():
+            pair = pairs[(key[2], key[3])]
+            # Exact byte-string uniqueness is not recoverable from cached row metadata.
+            row["hashes"] = set()
+    schemas = [{"region": k[0], "slot": k[1], "tableTag": k[2], "stride": k[3], "rowBucket": k[4],
+                "sections": v["sections"], "tableInstances": v["sections"], "ecuFiles": len(v["files"]),
+                "uniqueTables": len(v["hashes"]) if v["hashes"] else None, "rowCount": v["rowCount"],
+                "rawRows": v["rows"][:2]} for k, v in tables.items()]
+    pair_rows = [{"tableTag": k[0], "stride": k[1], "tableInstances": v["tableInstances"], "rowCount": v["rowCount"],
+                  "uniqueTables": len(v["hashes"]) if v["hashes"] else None, "rawRows": v["rawRows"][:2]}
+                 for k, v in pairs.items()]
+    total_rows = sum(p["rowCount"] for p in pair_rows)
+    top_pairs = sorted(pair_rows, key=lambda p: (-p["rowCount"], p["tableTag"] if p["tableTag"] is not None else -1,
+                                                p["stride"] if p["stride"] is not None else -1))
+    top10_rows = sum(p["rowCount"] for p in top_pairs[:10])
+    ecu_stats = {"distinctTagStridePairs": len(pair_rows), "totalRows": total_rows,
+                 "top10Rows": top10_rows, "top10RowShare": top10_rows / total_rows if total_rows else None,
+                 "topPairs": top_pairs[:15], "tag0Stride12": {"rowCount": sum(tag0_first.values()),
+                 "tableInstances": sum(p["tableInstances"] for p in pair_rows if p["tableTag"] == 0 and p["stride"] == 12),
+                 "uniqueTables": len(tag0_tables) if tag0_tables else None,
+                 "first4Bytes": dict(tag0_first.most_common()), "last4Bytes": dict(tag0_last.most_common())}}
     report["sourceCensus"] = {
         "systementer": _entry_layout_census(entries),
-        "ecuTables": [{"region": k[0], "slot": k[1], "tableTag": k[2], "stride": k[3], "rowBucket": k[4],
-                       "sections": v["count"], "ecuFiles": len(v["files"]),
-                       "uniqueTables": len(v["hashes"]) if decoded is not None else None,
-                       "rawRows": list(dict.fromkeys(v["rows"]))[:3]} for k, v in sorted(tables.items(), key=lambda p: str(p[0]))],
+        "ecuTables": sorted(schemas, key=lambda s: (-s["sections"], s["region"], s["slot"], s["tableTag"], str(s["stride"]), s["rowBucket"])),
+        "ecuTableStats": ecu_stats,
         "tableTagSymbolEvidence": {"status": "partial static evidence only; generic typed-table readers do not identify a unique semantic consumer per table tag",
             "knownGenericReaders": ["GetToyotaTblData@0x103F8", "GetEcuTblData@0x105C0"],
             "perTagConsumers": "NOT ESTABLISHED by current symbol inspection"}}
@@ -199,12 +242,28 @@ def markdown(data):
         for number, layout in enumerate(census_row["layouts"], 1):
             lines += ["", f"#### Layout {number} ({layout['count']} entries)", "", "Fields:", "", "```json", json.dumps(layout["fields"], indent=2, sort_keys=True), "```", "Raw hex examples:", ""]
             lines += [f"- `{value}` (`{layout['entryExamples'][i]}`)" for i, value in enumerate(layout["rawExamples"])]
-    lines += ["", "## Ecu_Data table schemas by region", ""]
-    for schema in src["ecuTables"]:
-        lines += [f"### {schema['region']} · slot {schema['slot']} · tag {schema['tableTag']} · stride {schema['stride']} · rows {schema['rowBucket']}", "",
-            f"Sections: {schema['sections']}; ECU files: {schema['ecuFiles']}; unique table byte strings: {schema['uniqueTables'] if schema['uniqueTables'] is not None else 'not available from cached source metadata'}", "Raw rows:"]
-        lines += [f"- `{row}`" for row in schema["rawRows"]]
-        lines.append("")
+    stats = src["ecuTableStats"]
+    lines += ["", "## Ecu_Data typed tables", "",
+        f"Distinct (tableTag, stride) pairs: {stats['distinctTagStridePairs']}; total source rows: {stats['totalRows']}; "
+        f"top ten pairs: {stats['top10Rows']} rows ({100 * stats['top10RowShare']:.4f}% of all rows)" if stats["top10RowShare"] is not None else "No typed-table rows were present in the inspected source.", "",
+        "Top 60 region/slot/tag/stride/row-bucket groups by table instances. A table instance is one section in one ECU file; exact distinct table byte strings are reported separately when source bytes are available.", "",
+        "| Region | Slot | tableTag | Stride | Row-count bucket | ECU files | Table instances | Distinct table byte strings | Rows | Two raw rows |",
+        "|---|---:|---:|---:|---|---:|---:|---:|---:|---|"]
+    for schema in src["ecuTables"][:60]:
+        raw_rows = "<br>".join(f"`{row}`" for row in schema["rawRows"][:2])
+        unique = schema["uniqueTables"] if schema["uniqueTables"] is not None else "NOT AVAILABLE from cached row metadata"
+        lines.append(f"| {schema['region']} | {schema['slot']} | {schema['tableTag']} | {schema['stride']} | {schema['rowBucket']} | {schema['ecuFiles']} | {schema['tableInstances']} | {unique} | {schema['rowCount']} | {raw_rows} |")
+    lines += ["", "### Top (tableTag, stride) pairs and two raw rows", "",
+        "| tableTag | Stride | Table instances | Rows | Distinct table byte strings | Two raw rows |", "|---:|---:|---:|---:|---:|---|"]
+    for pair in stats["topPairs"]:
+        unique = pair["uniqueTables"] if pair["uniqueTables"] is not None else "NOT AVAILABLE from cached row metadata"
+        raw_rows = "<br>".join(f"`{row}`" for row in pair["rawRows"][:2])
+        lines.append(f"| {pair['tableTag']} | {pair['stride']} | {pair['tableInstances']} | {pair['rowCount']} | {unique} | {raw_rows} |")
+    tag0 = stats["tag0Stride12"]
+    lines += ["", "### 12-byte tableTag 0 row byte distributions", "",
+        f"Rows: {tag0['rowCount']}; table instances: {tag0['tableInstances']}; distinct full tables: {tag0['uniqueTables'] if tag0['uniqueTables'] is not None else 'NOT AVAILABLE from cached row metadata'}", "",
+        "First four bytes (hex) and counts: " + (", ".join(f"`{value}` × {count}" for value, count in tag0["first4Bytes"].items()) or "none"), "",
+        "Last four bytes (hex) and counts: " + (", ".join(f"`{value}` × {count}" for value, count in tag0["last4Bytes"].items()) or "none"), ""]
     lines += ["## Native symbol-to-table-tag evidence", "", src["tableTagSymbolEvidence"]["status"], "",
         "Known generic readers: " + ", ".join(src["tableTagSymbolEvidence"]["knownGenericReaders"]), "",
         "Per-tag consumers: " + src["tableTagSymbolEvidence"]["perTagConsumers"] + ". Static symbol names do not identify a per-tag semantic consumer.", ""]
@@ -222,6 +281,5 @@ def main():
     args.json.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
     text = markdown(data)
     args.markdown.write_text(text + "\n")
-    print(text)
 
 if __name__ == "__main__": main()
