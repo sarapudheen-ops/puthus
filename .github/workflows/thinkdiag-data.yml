@@ -137,7 +137,7 @@ jobs:
             --output .local/thinkdiag/sweep --report .local/thinkdiag/report
       - name: Convert source-bound, on-demand vehicle packs in Actions
         run: |
-          set -uo pipefail
+          set -euo pipefail
           LOG=.local/thinkdiag/report/convert-step.log
           exec > >(tee "$LOG") 2>&1
           set -x
@@ -171,6 +171,13 @@ jobs:
             -f 'output[title]=Typed source artifacts and computed checks; not production definitions' \
             -F 'output[summary]=@.local/thinkdiag/vehicle-packs/compiled-source-read-validation.json'
           python3 tools/thinkdiag/verify_vehicle_bundle.py --directory .local/thinkdiag/vehicle-packs --require-executable
+          TOYOTA_PACK_DIRECTORY=.local/thinkdiag/vehicle-packs python3 tools/thinkdiag/verify_ecmect_evidence.py > .local/thinkdiag/report/ecmect-acceptance.json
+          cat .local/thinkdiag/report/ecmect-acceptance.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota exact two-system acceptance evidence' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Verified counts, identities and 2007 provenance; physical validation pending' \
+            -F 'output[summary]=@.local/thinkdiag/report/ecmect-acceptance.json'
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota vehicle conversion accounting' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion=success \

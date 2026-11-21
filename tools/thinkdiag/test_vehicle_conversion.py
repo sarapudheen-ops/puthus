@@ -326,14 +326,19 @@ class BundleVerificationTest(unittest.TestCase):
             self.assertEqual(0, verify(p)["executableDefinitions"])
             self.assertLess((p / "index.json").stat().st_size, 4096)
             self.assertEqual(index, load_index(p / "index.json"))
+            staged = p / 'staged-index.json'
+            staged.write_bytes((p / 'index.json').read_bytes())
+            verify(p, index_copy=staged)
+            staged.write_bytes(b'{}')
+            with self.assertRaises(ValueError): verify(p, index_copy=staged)
             for include_corpus in (False, True):
                 apk = p / "test.apk"
                 with zipfile.ZipFile(apk, "w") as archive:
                     archive.writestr("assets/toyota-vehicle-packs/index.json", (p / "index.json").read_bytes())
                     if include_corpus: archive.writestr("assets/toyota-source/toyota-source.zip", b"large corpus is forbidden")
                 if include_corpus:
-                    with self.assertRaises(ValueError): verify(p, index_only=True, apk=apk)
-                else: verify(p, index_only=True, apk=apk)
+                    with self.assertRaises(ValueError): verify(p, apk=apk)
+                else: verify(p, apk=apk)
 
     def test_index_never_accepts_unpinned_or_out_of_bounds_metadata(self):
         with tempfile.TemporaryDirectory() as d:

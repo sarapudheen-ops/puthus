@@ -122,10 +122,51 @@ def system_brief(value):
     return {field: value.get(field) for field in ("id", "name", "enabled", "counts", "reasons")}
 
 
-def verify(directory, *, index_only=False, apk=None, require_executable=False):
+def verify_enabled_policy(directory, enabled_objects, runnable_candidates, summary):
+    """Independently bind all enabled objects to both pinned artifact sets."""
+    artifact = directory / "mandatory-ecmect-source-reads.json"
+    if artifact.is_file():
+        from toyota_ecmect_pack import ARTIFACTS, candidate_for, load_review, verify_enabled
+        require(all((directory / name).is_file() for name in ARTIFACTS) and
+                (directory / "mandatory-ecmect-live-omissions.json").is_file(),
+                "Enabled ECMECT pack is missing staged compiler artifacts or the omissions ledger")
+        review = load_review(directory)
+        from toyota_innova_2007_pack import (SYSTEM as INNOVA_SYSTEM, candidate_for as candidate_2007,
+                                             load_candidate, verify_enabled as verify_2007)
+        second = load_candidate(directory)
+        require_enabled_ecmect_set(enabled_objects)
+        pilot_object, second_object = enabled_objects[review['systemId']], enabled_objects[INNOVA_SYSTEM]
+        require(INNOVA_SYSTEM not in json.dumps(pilot_object) and review['systemId'] not in json.dumps(second_object),
+                'ECMECT definitions cross system provenance')
+        verify_enabled(pilot_object, review)
+        verify_2007(second_object, second, review)
+        expected_candidates = [candidate_for(pilot_object, review), candidate_2007(second_object, second)]
+        require(sorted(runnable_candidates, key=lambda c: c['id']) == sorted(expected_candidates, key=lambda c: c['id']),
+                "Runnable bring-up candidates differ from the pinned ECMECT slices")
+        omissions = json.loads((directory / "mandatory-ecmect-live-omissions.json").read_bytes())
+        require(isinstance(omissions, dict) and omissions.get("kind") == "ecmect-live-omissions" and
+                omissions.get("systemId") == review["systemId"] and
+                omissions.get("omittedLiveRows") == review["uncompiledLiveRows"] ==
+                    summary.get("ecmectOmittedLiveRows") and
+                isinstance(omissions.get("items"), list) and
+                len(omissions["items"]) == omissions["omittedLiveRows"],
+                "Omissions ledger differs from the pinned review/summary")
+    else:
+        require(not enabled_objects and not runnable_candidates,
+                "Enabled system or runnable candidate without pinned ECMECT artifacts")
+
+
+def verify(directory, *, index_only=False, apk=None, require_executable=False, index_copy=None):
     index = load_index(directory / "index.json")
     summary = index["summary"]
     objects = 0
+    if index_copy is not None:
+        require(not index_only and index_copy.read_bytes() == (directory / "index.json").read_bytes(),
+                "Staged APK index differs from the fully verified pack")
+    if index_only:
+        require(apk is None, "APK verification requires full object and pinned artifact verification")
+        require(summary.get("enabledSystems") == 0,
+                "Enabled systems require full object and pinned artifact verification")
     if require_executable:
         require(not index_only, "Executable acceptance requires checking the actual data objects")
         require(summary["executableDefinitions"] > 0,
@@ -258,39 +299,7 @@ def verify(directory, *, index_only=False, apk=None, require_executable=False):
         complete = (executable > 0 and bool(systems) and not incomplete and not ledger and
                     unresolved_choices == 0 and len(joined_leaves) == len(manual_leaves) == len(normalized_leaves) and bool(manual_leaves))
         require(summary["complete"] is complete, "Summary complete differs from computed source/feature coverage")
-        # A pack carrying the staged mandatory-ECMECT compiler artifacts is the production
-        # single-slice pack: the enabled set must be exactly that one pinned, read-only
-        # system, re-verified against the artifact allowlist. Packs without the staged
-        # artifacts (synthetic test fixtures) keep the generic per-system validation.
-        artifact = directory / "mandatory-ecmect-source-reads.json"
-        if artifact.is_file():
-            from toyota_ecmect_pack import ARTIFACTS, candidate_for, load_review, verify_enabled
-            require(all((directory / name).is_file() for name in ARTIFACTS) and
-                    (directory / "mandatory-ecmect-live-omissions.json").is_file(),
-                    "Enabled ECMECT pack is missing staged compiler artifacts or the omissions ledger")
-            review = load_review(directory)
-            from toyota_innova_2007_pack import (SYSTEM as INNOVA_SYSTEM, candidate_for as candidate_2007,
-                                                 load_candidate, verify_enabled as verify_2007)
-            second = load_candidate(directory)
-            require_enabled_ecmect_set(enabled_objects)
-            pilot_object, second_object = enabled_objects[review['systemId']], enabled_objects[INNOVA_SYSTEM]
-            require(INNOVA_SYSTEM not in json.dumps(pilot_object) and review['systemId'] not in json.dumps(second_object),
-                    'ECMECT definitions cross system provenance')
-            verify_enabled(pilot_object, review)
-            verify_2007(second_object, second, review)
-            expected_candidates = [candidate_for(pilot_object, review), candidate_2007(second_object, second)]
-            require(sorted(runnable_candidates, key=lambda c: c['id']) == sorted(expected_candidates, key=lambda c: c['id']),
-                    "Runnable bring-up candidates differ from the pinned ECMECT slices")
-            omissions = json.loads((directory / "mandatory-ecmect-live-omissions.json").read_bytes())
-            require(isinstance(omissions, dict) and omissions.get("kind") == "ecmect-live-omissions" and
-                    omissions.get("systemId") == review["systemId"] and
-                    omissions.get("omittedLiveRows") == review["uncompiledLiveRows"] ==
-                        summary.get("ecmectOmittedLiveRows") and
-                    isinstance(omissions.get("items"), list) and
-                    len(omissions["items"]) == omissions["omittedLiveRows"],
-                    "Omissions ledger differs from the pinned review/summary")
-        else:
-            require(not runnable_candidates, "Runnable bring-up candidate without the pinned ECMECT artifacts")
+        verify_enabled_policy(directory, enabled_objects, runnable_candidates, summary)
     if apk:
         with zipfile.ZipFile(apk) as archive:
             names = archive.namelist()
@@ -308,11 +317,12 @@ if __name__ == "__main__":
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--index-only", action="store_true")
     parser.add_argument("--apk", type=Path)
+    parser.add_argument("--index-copy", type=Path, help="Require an exact copy of the fully verified index")
     parser.add_argument("--require-executable", action="store_true", help="Reject index-only/zero-definition acceptance")
     args = parser.parse_args()
     try:
         print(json.dumps(verify(args.directory, index_only=args.index_only, apk=args.apk,
-                                require_executable=args.require_executable), sort_keys=True))
+                                require_executable=args.require_executable, index_copy=args.index_copy), sort_keys=True))
     except ValueError as error:
         # GitHub job-log storage redirects are not always reachable by an agent.
         # Surface the exact bounded validation failure in the ordinary annotations

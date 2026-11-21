@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from source_verification import load_verification
 from vehicle_bundle import BundleWriter, canonical
@@ -151,6 +152,14 @@ class SystemValidationTest(unittest.TestCase):
 
 
 class IndependentBundleAccountingTest(unittest.TestCase):
+    # Synthetic graphs test accounting independently of production identity policy.
+    # The production policy itself is exercised without mocks below and against
+    # real staged artifacts in test_ecmect_pack.
+    def setUp(self):
+        policy = patch('verify_vehicle_bundle.verify_enabled_policy')
+        policy.start()
+        self.addCleanup(policy.stop)
+
     def test_positive_nonempty_graph_and_recomputed_completeness(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp); make_bundle(path)
@@ -193,6 +202,31 @@ class IndependentBundleAccountingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp); make_bundle(path, complete=False, ledger_items=[item, item])
             with self.assertRaises(ValueError): verify(path)
+
+
+class EnabledArtifactPolicyTest(unittest.TestCase):
+    def test_enabled_without_artifacts_fails_directory_and_apk(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp); make_bundle(path)
+            apk = path / 'test.apk'
+            with zipfile.ZipFile(apk, 'w') as archive:
+                archive.writestr('assets/toyota-vehicle-packs/index.json', (path / 'index.json').read_bytes())
+            for kwargs in ({}, {'apk': apk}, {'index_only': True}, {'index_only': True, 'apk': apk}):
+                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                    verify(path, **kwargs)
+
+    def test_only_one_artifact_and_corrupt_artifact_fail(self):
+        from verify_vehicle_bundle import verify_enabled_policy
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            (path / 'mandatory-ecmect-source-reads.json').write_text('{}')
+            with self.assertRaises(ValueError):
+                verify_enabled_policy(path, {'fake': {}}, [], {})
+            (path / 'mandatory-ecmect-diagnostics.json').write_text('{}')
+            (path / 'mandatory-ecmect-live-omissions.json').write_text('{}')
+            with self.assertRaises(ValueError):
+                verify_enabled_policy(path, {'fake': {}}, [], {})
 
 
 if __name__ == '__main__': unittest.main()
