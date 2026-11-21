@@ -85,6 +85,16 @@ jobs:
         run: |
           python3 tools/thinkdiag/extract_english.py .local/thinkdiag/TOYOTA.zip \
             --output .local/thinkdiag/english --report .local/thinkdiag/report
+      - name: Inspect exact 2007 Innova source join (no link approval)
+        run: |
+          python3 tools/thinkdiag/inspect_innova_2007.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --english .local/thinkdiag/english --output .local/thinkdiag/report/innova-2007-join.json
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota 2007 Innova source join' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Exact source join; adapter equivalence not approved' \
+            -F 'output[summary]=@.local/thinkdiag/report/innova-2007-join.json'
       - name: Publish checksummed ECU program-dispatch input for exact reader work
         # The agent workspace cannot follow the release-asset storage redirect. Keep
         # this small, owner-verified source input in research evidence, never Git/APK.
