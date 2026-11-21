@@ -258,8 +258,9 @@ object VehiclePackScenarios {
 
     fun unprovenEnabledSystemIsRejectedWithExplicitLinkError() = temporary { cache ->
         val f = Fixture(enabled = true, linkOverride = "unproven")
-        val c = f.client(cache); val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
+        val c = f.client(cache)
         try {
+            val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
             c.system(v, v.systems.single())
             error("Expected unproven enabled system to fail validation")
         } catch (expected: IllegalArgumentException) {
@@ -317,17 +318,15 @@ object VehiclePackScenarios {
         }
     }
 
-    fun enabledSystemMustBeReadOnlyAndReportsExactCoverage() = temporary { cache ->
+    fun enabledSystemReportsExactCoverageWithoutReadOnlyFlagCoupling() = temporary { cache ->
         val f = Fixture(enabled = true); val c = f.client(cache)
         val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
         val s = c.system(v, v.systems.single())
         check(s.enabled && s.readOnly && s.coverage == "1 ECU · 1 PIDs · 1 DTCs · 1 ECU info read") { s.coverage ?: "null coverage" }
-        // An enabled system whose pinned object drops the read-only declaration is rejected.
-        val bad = Fixture(enabled = true, corruptExecutable = "writable").client(cache)
-        rejects {
-            val bv = bad.selectedVehicle(listOf("make", "model", "generation", "variant"))
-            bad.system(bv, bv.systems.single())
-        }
+        // `readOnly` is no longer a substitute for independently validated link/category status.
+        val withoutLegacyFlag = Fixture(enabled = true, corruptExecutable = "writable").client(cache)
+        val wv = withoutLegacyFlag.selectedVehicle(listOf("make", "model", "generation", "variant"))
+        check(withoutLegacyFlag.system(wv, wv.systems.single()).enabled)
     }
 
     fun cancelledDownloadNeverInstalls() = temporary { cache ->

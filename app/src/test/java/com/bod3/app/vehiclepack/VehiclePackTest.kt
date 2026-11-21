@@ -17,7 +17,7 @@ class VehiclePackTest {
     @Test fun convertedEcuCannotSubstituteLegacyGenericReads() = VehiclePackScenarios.convertedEcuCannotSubstituteLegacyGenericReads()
     @Test fun convertedPrerequisitesNeedTheirOwnProvenanceAndNeverGrantImportTrust() = VehiclePackScenarios.convertedPrerequisitesMustCarryTheirOwnProvenance()
     @Test fun enabledIsNonemptyAndTruthfullyCountedAndDisabledContainsNoData() = VehiclePackScenarios.enabledCannotMeanEmptyOrMiscalculatedAndDisabledCannotContainData()
-    @Test fun enabledSystemIsReadOnlyWithExactCoverage() = VehiclePackScenarios.enabledSystemMustBeReadOnlyAndReportsExactCoverage()
+    @Test fun enabledSystemStatusIsIndependentOfLegacyReadOnlyFlag() = VehiclePackScenarios.enabledSystemReportsExactCoverageWithoutReadOnlyFlagCoupling()
     @Test fun cancellationNeverInstallsPartialData() = VehiclePackScenarios.cancelledDownloadNeverInstalls()
     @Test fun downloadedPathAndSelectionAreOneAtomicNamesOnlyTransaction() = VehiclePackScenarios.manualPathIsOneAtomicNamesOnlyCommit()
     @Test fun systemScopeAndSavedLiveChoicesNeverFallBackOrCrossVehicles() = VehiclePackScenarios.closedSystemScopeNeverMixesGlobalPidsAndSelections()

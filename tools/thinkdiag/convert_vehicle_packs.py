@@ -33,6 +33,21 @@ def verified_write(definition):
     return isinstance(marker, str) and bool(marker) and WRITE_ORACLE_REVIEW_HASHES.get(marker) == digest
 
 
+def category_definitions(data, category, field):
+    definitions = data.get(field, []) if isinstance(data, dict) else []
+    if category in ("dtcs", "ecuInfo") and isinstance(data, dict):
+        definitions = []
+        for ecu_definition in data.get("ecus", []):
+            diag = ecu_definition.get("diagnostics", {}) if isinstance(ecu_definition, dict) else {}
+            if category == "dtcs":
+                faults = diag.get("faults", {}) if isinstance(diag, dict) else {}
+                layout = faults.get("layout", {}) if isinstance(faults, dict) else {}
+                definitions.extend(layout.get("labels", []) if isinstance(layout, dict) else [])
+            else:
+                definitions.extend(diag.get("identification", []) if isinstance(diag, dict) else [])
+    return definitions
+
+
 REASONS = {
     "ecu_entry_untranslated": "Per-ECU SYSTEMENTER address/header, baud, init/session and selector are not fully translated.",
     "service_reply_untranslated": "Application service/identifier and reply-mask joins are not fully translated.",
@@ -341,7 +356,7 @@ class Converter:
                                      "actuators": "actuators", "coding": "coding", "specialFunctions": "specialFunctions"}
                     category_status = {}
                     for category, field in category_keys.items():
-                        definitions = data.get(field, []) if isinstance(data, dict) else []
+                        definitions = category_definitions(data, category, field)
                         count_key = "tests" if category == "actuators" else category
                         converted = value.get("counts", {}).get(count_key, {}).get("converted", 0)
                         if definitions:
