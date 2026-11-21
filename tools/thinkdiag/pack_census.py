@@ -46,6 +46,11 @@ def census(pack_dir: Path, decoded: Path | None = None) -> dict:
         if index.get(key): visit(index[key])
     # Source inventory pages are referenced from the inventory root and are traversed above.
     kinds = Counter(obj.get("kind", "<missing>") for obj in objects.values())
+    entry_transport = {}
+    if decoded is not None and (decoded / "SYSTEMENTER.BIN").is_file():
+        for listing in EntryIndex((decoded / "SYSTEMENTER.BIN").read_bytes()).lists.values():
+            for entry in listing.entries:
+                entry_transport[entry.source_id] = entry.transport
     system_classes = Counter()
     class_counts = Counter()
     reason_counts = Counter()
@@ -53,7 +58,7 @@ def census(pack_dir: Path, decoded: Path | None = None) -> dict:
     for s in systems:
         src = next((x for x in s.get("sourceRecords", []) if x.startswith("SYSLIST_")), "")
         region = src.split("_", 1)[1].split(".", 1)[0] if src else "unknown"
-        native_transport = "unknown"
+        native_transport = next((entry_transport[x] for x in s.get("sourceRecords", []) if x in entry_transport), "unknown")
         entry = s.get("entrySource") or {}
         for page in entry.get("pages", []):
             pobj = objects.get(page.get("sha256"))
@@ -61,7 +66,7 @@ def census(pack_dir: Path, decoded: Path | None = None) -> dict:
                 pobj = visit(page)
             for c in pobj.get("items", []):
                 if c.get("id") == entry.get("sourceRecord"):
-                    native_transport = c.get("transportCode", "unknown")
+                    native_transport = c.get("transportCode", native_transport)
         signature = (region, s.get("transportLabel", "unknown"), str(native_transport), str(s.get("entrySelector", "unknown")))
         system_classes[signature] += 1
         class_counts[signature] += int(s.get("enabled") is True)
