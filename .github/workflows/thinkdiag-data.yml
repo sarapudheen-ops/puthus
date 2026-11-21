@@ -200,14 +200,9 @@ jobs:
           gh release upload ci-reports-v1 \
             .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md \
             .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json --clobber
-          gh api --method POST "repos/$GH_REPO/check-runs" \
-            -f name='Toyota Code 1 lifecycle sweep report' -f head_sha="$GITHUB_SHA" \
-            -f status=completed -f conclusion=success \
-            -f 'output[title]=Code 1 lifecycle sweep; read-only' \
-            -F 'output[summary]=@.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md'
           PR_NUMBER="${PR_NUMBER:-$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)}"
           if [ -n "$PR_NUMBER" ]; then
-            tuples=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("{} tuples; {} completed; timedOut={}".format(d["tupleCount"],d["completed"],d["timedOut"]))' .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json)
+            tuples=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("{} tuples; {} completed; timedOut={}".format(d["tupleCount"],d["completed"],d["timedOut"])+("; ERROR: "+d["fatalError"] if d.get("fatalError") else ""))' .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json)
             gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="Code 1 lifecycle sweep: $tuples. Full reports: code1-lifecycle-sweep.md and code1-lifecycle-sweep.json in ci-reports-v1."
           fi
       - name: Publish conversion step log (captures the exact failing command)
