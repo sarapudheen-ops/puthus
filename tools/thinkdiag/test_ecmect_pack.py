@@ -91,6 +91,12 @@ class EcmectPackTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'ECMECT'):
                 verify(path, require_executable=True)
 
+    def test_pilot_artifact_cannot_be_swapped_into_2007_pin(self):
+        from toyota_innova_2007_reads import verify_candidate_bytes
+        pilot_raw = (self.directory / 'mandatory-ecmect-source-reads.json').read_bytes()
+        with self.assertRaises(ValueError):
+            verify_candidate_bytes(pilot_raw, 'innova-2007-source-read-candidate.json')
+
     def test_all_985_omitted_live_rows_have_their_exact_first_implementation_blocker(self):
         from collections import Counter
         omissions = json.loads((self.directory / 'mandatory-ecmect-live-omissions.json').read_bytes())
