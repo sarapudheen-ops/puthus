@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # Publish immutable, content-addressed data objects on push; never on PRs.
+      pull-requests: write # Publish bounded census summary on the associated PR.
     timeout-minutes: 30
 
     steps:
@@ -61,6 +62,54 @@ jobs:
           path: .local/toyota-pack-report.md
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Census generated Toyota packs (non-fatal report)
+        if: always()
+        run: |
+          mkdir -p .local/toyota-census
+          set +e
+          python3 tools/thinkdiag/pack_census.py .local/toyota-vehicle-packs \
+            --decoded .local/toyota-conversion/decoded \
+            --json .local/toyota-census/pack-census.json \
+            --markdown .local/toyota-census/pack-census.md \
+            > .local/toyota-census/stdout.md 2> .local/toyota-census/error.txt
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            cat .local/toyota-census/pack-census.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '## Toyota pack census failed (non-fatal)' >> "$GITHUB_STEP_SUMMARY"
+            cat .local/toyota-census/error.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "$status" > .local/toyota-census/exit-status.txt
+
+      - name: Upload Toyota census and pack report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: toyota-phase0-census
+          path: |
+            .local/toyota-census/
+            .local/toyota-pack-report.md
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Comment bounded census and pack report on PR
+        if: always() && github.event_name == 'pull_request' && hashFiles('.local/toyota-census/pack-census.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          parts = []
+          for filename in ('.local/toyota-census/pack-census.md', '.local/toyota-pack-report.md'):
+              path = Path(filename)
+              if path.exists():
+                  parts.append(path.read_text()[:30_000])
+          body = '\n\n---\n\n'.join(parts)[:60_000]
+          Path('.local/toyota-census/pr-comment.md').write_text(body)
+          PY
+          gh pr comment "$PR_NUMBER" --body-file .local/toyota-census/pr-comment.md
 
       - name: Test converters, pack bounds, source provenance and delivery contract
         run: python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py' -v
