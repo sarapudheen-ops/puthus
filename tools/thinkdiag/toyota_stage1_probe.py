@@ -13,6 +13,7 @@ import resource
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from functools import lru_cache
 
 from toyota_calc import REVIEWED
 from convert_vehicle_packs import REASONS
@@ -36,30 +37,44 @@ def ecmect_reference(pack_dir):
     return read_object(container, ref)
 
 
+@lru_cache(maxsize=None)
+def _function_blocks(path):
+    from toyota_functions import FunctionBlocks
+    return FunctionBlocks(Path(path).read_bytes())
+
+
+@lru_cache(maxsize=None)
+def _ecu_table_count(path):
+    raw = Path(path).read_bytes()
+    return len([typed_table(raw[s.offset:s.end]) for s in section_directory(raw)])
+
+
+@lru_cache(maxsize=1)
+def _program_index(path):
+    from toyota_ecuprogram import EcuProgramIndex
+    return EcuProgramIndex(Path(path).read_bytes())
+
+
 def candidate_parse_group(decoded, region, function, ecu_file):
     """Mode B structural-only candidate parse; never authorizes definitions."""
-    from toyota_functions import FunctionBlocks
-    from toyota_ecuprogram import EcuProgramIndex
     try:
         fun_path = decoded / f"FUNCDATA_{region}.BIN"
-        block = FunctionBlocks(fun_path.read_bytes()).faults(function)
+        block = _function_blocks(str(fun_path)).faults(function)
         if block is None:
             return {"status":"rejected", "reason":"Not a source P3/P4 fault block",
                     "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
         program_path = decoded / "ECUPROGRAM.BIN"
         if program_path.is_file():
-            EcuProgramIndex(program_path.read_bytes()).select({"EU":1,"NA":2,"JP":3}[region], function)
+            _program_index(str(program_path)).select({"EU":1,"NA":2,"JP":3}[region], function)
         if not ecu_file:
             return {"status":"rejected", "reason":"not_parameterizable:missing_ecu_file",
                     "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
-        # Parse framing only; no category semantics are inferred.
-        ecu_path = decoded / ecu_file
-        raw = ecu_path.read_bytes()
-        sections = section_directory(raw)
-        typed = [typed_table(raw[s.offset:s.end]) for s in sections]
+        # Parse framing only; no category semantics are inferred. Cache by ECU
+        # file because many system groups reuse one source file.
+        table_count = _ecu_table_count(str(decoded / ecu_file))
         return {"status":"structurally parsed", "reason":None,
-                "faultQueries":len(block.queries) if block is not None else 0,
-                "ecuTables":len(typed), "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
+                "faultQueries":len(block.queries), "ecuTables":table_count,
+                "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
     except Exception as exc:
         return {"status":"rejected", "reason":str(exc),
                 "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
