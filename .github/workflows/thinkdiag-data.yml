@@ -253,6 +253,41 @@ jobs:
           print(f'Posted and verified {len(comments)-1} report parts and one key-numbers comment on PR #25')
           PY
           rm -rf .local/thinkdiag/vehicle-packs-baseline
+      - name: Run Stage 1 no-write K-Line category probe
+        run: |
+          set -euo pipefail
+          python3 tools/thinkdiag/toyota_stage1_probe.py \
+            --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --native-oracle .local/thinkdiag/report/native-oracle.json \
+            --output .local/thinkdiag/report/stage-1-probe.md \
+            --json-output .local/thinkdiag/report/stage-1-probe.json
+          gh release upload ci-reports-v1 .local/thinkdiag/report/stage-1-probe.md \
+            .local/thinkdiag/report/stage-1-probe.json --clobber
+          PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
+          export PR_NUMBER
+          python3 - .local/thinkdiag/report/stage-1-probe.md "$GITHUB_SHA" > .local/thinkdiag/report/stage-1-comments.json <<'PY'
+          import datetime,json,pathlib,sys
+          text=pathlib.Path(sys.argv[1]).read_text()
+          size=20000
+          chunks=[text[i:i+size] for i in range(0,len(text),size)] or ['(empty probe)']
+          out=[]
+          for i,chunk in enumerate(chunks,1):
+              header=f"# Stage 1 probe - part {i}/{len(chunks)}"
+              if i==1: header+=f"\n\nHead: {sys.argv[2]}\nUTC: {datetime.datetime.now(datetime.timezone.utc).isoformat()}"
+              out.append(header+'\n\n'+chunk)
+          print(json.dumps(out))
+          PY
+          python3 - <<'PY'
+          import json,os,subprocess
+          bodies=json.load(open('.local/thinkdiag/report/stage-1-comments.json'))
+          pr=os.environ['PR_NUMBER']
+          for body in bodies:
+              subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments",'-F',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
+          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments",'--jq','.[].body'],text=True)
+          assert all(body in existing for body in bodies), 'Stage 1 probe comments were not verified'
+          print(f'Posted and verified {len(bodies)} Stage 1 probe comment(s)')
+          PY
       - name: Publish Code 1 lifecycle sweep reports
         if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''
         env:
@@ -387,5 +422,6 @@ jobs:
           PY
           gh release upload ci-reports-v1 .local/thinkdiag/report/stage-0-report.md --clobber
           PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
+          export PR_NUMBER
           gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
             -F body=@.local/thinkdiag/report/stage-0-report.md
