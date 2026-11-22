@@ -23,10 +23,16 @@ def main():
     ap.add_argument('archive'); ap.add_argument('--decoded',type=Path,required=True)
     ap.add_argument('--manifest',type=Path,required=True); ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--ecmect-review',type=Path,required=True)
+    ap.add_argument('--native-evidence',type=Path)
     args=ap.parse_args(); sources=load_sources(Path(args.archive),args.decoded,args.manifest)
     review=json.loads(args.ecmect_review.read_text())
     from toyota_ecmect_pack import ENTRY as ECMECT_ENTRY, FUNCTION as ECMECT_FUNCTION, TX as ECMECT_TX, RX as ECMECT_RX, source_keepalive
     pinned_keepalive=source_keepalive(review)
+    native_rows=[]
+    if args.native_evidence and args.native_evidence.is_file():
+        native_rows=json.loads(args.native_evidence.read_text())
+        if not isinstance(native_rows,list): raise ValueError('Native lifecycle evidence must be an array')
+    native_by_key={(r['region'],r['function'],r['selector']):r for r in native_rows}
     index=EntryIndex(sources['SYSTEMENTER.BIN'])
     systems=collections.Counter(); entries={}
     for region in REGIONS.values():
@@ -66,10 +72,18 @@ def main():
               keepaliveRequestHex=lifecycle.keepalive.request.hex(),
               keepalivePacketHex=lifecycle.entry.packet(lifecycle.keepalive.request).hex(),
               exitPacketHex=lifecycle.entry.packet(lifecycle.exit.request).hex())
-            item['oracle']={'status':'oracle_not_callable','reason':'compare_fast_kwp_lifecycle has no tuple-scoped API; it loops the complete corpus and aborts on first mismatch'}
+            oracle=native_by_key.get((rid,fn,sel))
+            expected_calls=item['lifecycleCalls']['init']
+            if oracle is not None and oracle.get('nativeCalls') == expected_calls:
+                item['oracle']={'status':'matched','matchedFields':['fastPositiveEntry.callTrace','keepaliveOn.callTrace','keepaliveOff.callTrace','exit.callTrace','contextExitFlag'],
+                    'scope':'whole-corpus oracle; successful tuple evidence emitted only after all lifecycle comparisons passed'}
+            elif oracle is not None:
+                item['oracle']={'status':'mismatched','firstMismatchingField':'fastPositiveEntry.callTrace'}
+            else:
+                item['oracle']={'status':'oracle_not_callable','reason':'no successful tuple evidence from compare_fast_kwp_lifecycle; it exposes only a whole-corpus API and stops on first mismatch'}
         except Exception as exc:
-            item.update(status='rejected',rejection=f'{type(exc).__name__}: {exc}',frameJoins=locals().get('outcomes',{}),
-              oracle={'status':'oracle_not_callable','reason':'No tuple-scoped native-oracle API'})
+            item.update(status='rejected',rejection=f'{type(exc).__name__}: {exc}',frameJoins=outcomes,
+              oracle={'status':'oracle_not_callable','reason':'Rejected before a successful tuple-scoped oracle evidence record'})
         item['wallSeconds']=round(time.monotonic()-t,6); all_rows.append(item)
         if time.monotonic()-started>1200: timeout=True; break
     args.output.mkdir(parents=True,exist_ok=True)
@@ -94,7 +108,13 @@ def main():
       if label in ('Keepalive','Exit'):
        first=collections.Counter((r[key][:2] if r[key] else 'empty') for r in accepted)
        md += [f'- First-byte distribution: `{dict(sorted(first.items()))}`']
-    md += ['', '## E. Native oracle', '', 'Matched: 0; mismatched: 0; not callable: all tuples. The current comparator exposes no tuple-scoped invocation; no workaround was added.']
+    oracle_counts=collections.Counter(r.get('oracle',{}).get('status','oracle_not_callable') for r in all_rows)
+    mismatches=[r for r in all_rows if r.get('oracle',{}).get('status')=='mismatched']
+    md += ['', '## E. Native oracle', '',
+      f"Matched: {oracle_counts['matched']}; mismatched: {oracle_counts['mismatched']}; not callable: {oracle_counts['oracle_not_callable']}.",
+      'Tuple pass evidence is correlated from the same-run whole-corpus native oracle output; the oracle still has no tuple-selecting invocation. Per-field call-trace matches are listed below; mismatches carry the first differing field.', '']
+    md += ['| Tuple | Status | First mismatching field | Matched fields |','|---|---|---|---|']
+    md += [f"| {r['region']}/{r['function']}/0x{r['selector']:02x} | {r['oracle']['status']} | {r['oracle'].get('firstMismatchingField','')} | {', '.join(r['oracle'].get('matchedFields',[]))} |" for r in all_rows]
     # Greedy distinct-region/baud/address-byte samples, followed by first distinct rows.
     samples=[]; seen=set()
     for r in accepted:

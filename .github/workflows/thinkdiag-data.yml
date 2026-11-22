@@ -204,7 +204,8 @@ jobs:
           python3 tools/thinkdiag/toyota_code1_lifecycle_sweep.py .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/report/code1-lifecycle-sweep \
-            --ecmect-review .local/thinkdiag/vehicle-packs/mandatory-ecmect-source-reads.json
+            --ecmect-review .local/thinkdiag/vehicle-packs/mandatory-ecmect-source-reads.json \
+            --native-evidence .local/thinkdiag/report/code1-link-evidence.json
       - name: Audit Code 1 native lifecycle evidence against the sweep tuple set
         run: |
           python3 tools/thinkdiag/report_code1_link_evidence.py \
