@@ -46,7 +46,6 @@ def main():
         outcomes={}
         try:
             frames=SourceFrames(sources,region)
-            projection=FastKwpEntry.from_entry(ent)
             for label,bindings in (('init',ent.init),('keepalive',ent.keepalive),('exit',ent.exit)):
                 results=[]
                 for key in bindings:
@@ -56,6 +55,7 @@ def main():
                     except Exception as exc:
                         results.append({'template':key,'count':'error','error':f'{type(exc).__name__}: {exc}'})
                 outcomes[label]=results
+            projection=FastKwpEntry.from_entry(ent)
             lifecycle=selected_fast_kwp_lifecycle(index,frames,region=rid,function=fn,selector=sel)
             item.update(status='accepted',frameJoins=outcomes,
               configurationCalls={str(i):[c.report() for c in projection.configuration_calls(connector=16,pin_pair_index=i)] for i in range(len(projection.pins))},
