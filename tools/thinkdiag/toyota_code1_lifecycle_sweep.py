@@ -115,12 +115,19 @@ def main():
       'Tuple pass evidence is correlated from the same-run whole-corpus native oracle output; the oracle still has no tuple-selecting invocation. Per-field call-trace matches are listed below; mismatches carry the first differing field.', '']
     md += ['| Tuple | Status | First mismatching field | Matched fields |','|---|---|---|---|']
     md += [f"| {r['region']}/{r['function']}/0x{r['selector']:02x} | {r['oracle']['status']} | {r['oracle'].get('firstMismatchingField','')} | {', '.join(r['oracle'].get('matchedFields',[]))} |" for r in all_rows]
-    # Greedy distinct-region/baud/address-byte samples, followed by first distinct rows.
-    samples=[]; seen=set()
+    # First cover every observed region/baud combination, then add unique target
+    # address bytes so the sample set demonstrates regional, baud and address variation.
+    samples=[]; seen_pairs=set(); seen_addresses=set()
+    for region in ('EU','NA','JP'):
+      for baud in (9600,10416):
+        row=next((r for r in accepted if r['region']==region and r['baud']==baud),None)
+        if row is not None:
+          samples.append(row); seen_pairs.add((region,baud)); seen_addresses.add(row.get('initPacketHex','')[2:4])
     for r in accepted:
-      ident=(r['region'],r['baud'],r.get('initPacketHex','')[2:4])
-      if ident not in seen: samples.append(r); seen.add(ident)
-      if len(samples)==10: break
+      address=r.get('initPacketHex','')[2:4]
+      if address not in seen_addresses:
+        samples.append(r); seen_addresses.add(address)
+      if len(samples)>=10: break
     if len(samples)<10: samples += [r for r in accepted if r not in samples][:10-len(samples)]
     md += ['', '## F. Accepted sample projections', '']
     for r in samples: md += [f"### {r['region']} / {r['function']} / 0x{r['selector']:02x}", '```json', json.dumps(r,indent=2,sort_keys=True), '```']
