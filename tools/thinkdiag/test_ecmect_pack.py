@@ -39,6 +39,22 @@ class EcmectPackTest(unittest.TestCase):
         manual_2007 = read_object(cls.container, page['systemsSource'])
         cls.system_2007 = read_object(cls.container, next(s for s in manual_2007['systems'] if s['id'] == SYSTEM_2007)['object'])
 
+    def test_stage1_category_translator_serializes_exact_ecmect_control(self):
+        from toyota_category_translation import translate_categories
+        from vehicle_bundle import canonical
+        row = {"id": MANDATORY_SYSTEM, "region": "EU", "functionKey": 61,
+               "entrySelector": 0x11, "ecuFile": "EU/Ecu_Data_0081.BIN"}
+        outcome = translate_categories("EU", 61, 0x11, row, ecmect_review=self.review,
+                                       reference_data=self.system["data"])
+        self.assertEqual({"pids": 30, "dtcs": 1414, "ecuInfo": 1},
+                         {k: outcome["counts"][k] for k in ("pids", "dtcs", "ecuInfo")})
+        self.assertTrue(outcome["ecmectControlByteIdentical"])
+        self.assertEqual("executable", outcome["categories"]["pids"])
+        self.assertEqual("executable", outcome["categories"]["dtcs"])
+        self.assertEqual("executable", outcome["categories"]["ecuInfo"])
+        self.assertEqual(canonical(outcome["definitions"]["pids"]),
+                         canonical(self.system["data"]["pids"]))
+
     def test_real_selected_system_has_nonempty_exact_read_definitions(self):
         s = self.system
         self.assertTrue(s['enabled']); self.assertTrue(s['readOnly']); self.assertEqual([], s['reasons'])

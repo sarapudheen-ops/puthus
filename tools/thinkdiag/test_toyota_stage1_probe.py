@@ -1,46 +1,44 @@
 import copy
 import unittest
+from unittest.mock import patch
 
-from toyota_stage1_probe import translate_categories as classify_existing_status
 from toyota_category_translation import translate_categories
 
 
-class Stage1ProbeTests(unittest.TestCase):
-    def test_exact_row_and_statuses_are_classified_without_mutation(self):
-        row = {"region":"EU", "functionKey":61, "entrySelector":0x11,
-               "categoryStatus":{"pids":"executable", "dtcs":"unresolved", "ecuInfo":"unknown"},
-               "categoryReasons":{"dtcs":"translator_not_ported:dtcs"}}
+class Stage1TranslatorTests(unittest.TestCase):
+    def test_only_exact_ecmect_identity_uses_pinned_translator(self):
+        row = {"id":"SYSLIST_NA.BIN@00000001", "region":"NA", "functionKey":61,
+               "entrySelector":0x11, "ecuFile":"NA/Ecu_Data_0081.BIN"}
         before = copy.deepcopy(row)
-        got = classify_existing_status("EU",61,0x11,row)
-        self.assertEqual(got["pids"], ("executable",None))
-        self.assertEqual(got["dtcs"], ("rejected","translator_not_ported:dtcs"))
-        self.assertEqual(got["ecuInfo"], ("rejected","translator_not_ported"))
-        self.assertEqual(row,before)
+        got = translate_categories("NA", 61, 0x11, row, ecmect_review={})
+        self.assertEqual(got["categories"]["pids"], "rejected")
+        self.assertEqual(got["reasons"]["pids"], "ecmect_specific:mandatory_system_and_live_read_review")
+        self.assertEqual(got["reasons"]["dtcs"], "ecmect_specific:mandatory_system_and_p3p4_workflow")
+        self.assertEqual(got["reasons"]["ecuInfo"], "ecmect_specific:mandatory_system_and_ecu_identification")
+        self.assertEqual(row, before)
 
-    def test_sibling_selector_never_inherits_status(self):
-        row = {"region":"EU", "functionKey":61, "entrySelector":0x11, "categoryStatus":{}}
-        with self.assertRaisesRegex(ValueError,"system_identity_mismatch"):
-            classify_existing_status("EU",61,0x51,row)
+    def test_exact_ecmect_calls_existing_data_builder_and_counts(self):
+        row = {"id":"SYSLIST_EU.BIN@0009d8f2", "region":"EU", "functionKey":61,
+               "entrySelector":0x11, "ecuFile":"EU/Ecu_Data_0081.BIN"}
+        data = {"pids":[{"id":str(i)} for i in range(30)], "ecus":[{
+            "diagnostics":{"faults":{"layout":{"labels":[{"id":str(i)} for i in range(1414)]}},
+                           "identification":[{"id":"ecu"}]}}]}
+        with patch("toyota_category_translation.verify_source_read_review"), \
+             patch("toyota_category_translation.data_for", return_value=data):
+            got = translate_categories("EU", 61, 0x11, row, ecmect_review={})
+        self.assertEqual({"pids":30,"dtcs":1414,"ecuInfo":1},
+                         {c:got["counts"][c] for c in ("pids","dtcs","ecuInfo")})
+        self.assertEqual("executable", got["categories"]["pids"])
+        self.assertFalse(got["oracleApproved"])
 
-    def test_missing_status_fails_closed(self):
-        row = {"region":"EU", "functionKey":61, "entrySelector":0x11}
-        with self.assertRaisesRegex(ValueError,"category_status_missing"):
-            classify_existing_status("EU",61,0x11,row)
-
-    def test_compiled_candidate_requires_exact_category_oracle_evidence(self):
-        row={"region":"EU", "functionKey":61, "entrySelector":0x11,
-             "data":{"pids":[{"id":"pid-1"}]}}
-        before=copy.deepcopy(row)
-        missing=translate_categories("EU",61,0x11,row)
-        self.assertEqual(missing["categories"]["pids"],"rejected")
-        self.assertEqual(missing["reasons"]["pids"],"oracle_record_comparison_missing_or_mismatched")
-        self.assertEqual(row,before)
-        evidence={"pids":{"region":"EU","function":61,"selector":0x11,"category":"pids",
-                          "conclusion":"success","evidenceSha256":"a"*64}}
-        passed=translate_categories("EU",61,0x11,row,oracle_comparisons=evidence)
-        self.assertEqual(passed["categories"]["pids"],"executable")
-        evidence["pids"]["selector"]=0x51
-        self.assertEqual(translate_categories("EU",61,0x11,row,oracle_comparisons=evidence)["categories"]["pids"],"rejected")
+    def test_selector_mismatch_is_rejected_without_mutation(self):
+        row = {"id":"SYSLIST_EU.BIN@0009d8f2", "region":"EU", "functionKey":61,
+               "entrySelector":0x11, "ecuFile":"EU/Ecu_Data_0081.BIN"}
+        before = copy.deepcopy(row)
+        with self.assertRaisesRegex(ValueError, "system_identity_mismatch"):
+            translate_categories("EU", 61, 0x51, row)
+        self.assertEqual(row, before)
 
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()

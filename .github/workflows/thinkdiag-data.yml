@@ -260,6 +260,7 @@ jobs:
             --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --native-oracle .local/thinkdiag/report/native-oracle.json \
+            --ecmect-review-dir .local/thinkdiag/vehicle-packs \
             --output .local/thinkdiag/report/stage-1-probe.md \
             --json-output .local/thinkdiag/report/stage-1-probe.json
           gh release upload ci-reports-v1 .local/thinkdiag/report/stage-1-probe.md \

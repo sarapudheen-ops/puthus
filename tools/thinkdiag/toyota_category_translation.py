@@ -1,61 +1,72 @@
-"""No-write classifier for source-bound Toyota category compiler candidates.
+"""No-write Stage 1 category translation using only existing verified compilers.
 
-This module never creates pack objects, interprets raw source as commands, or
-approves a category from counts alone. `oracle_comparisons` must carry exact
-region/function/full-selector identity, a successful same-row result and a
-SHA-256 evidence digest for the category before any candidate is executable.
+Mode A is deliberately pinned to the existing ECMECT compiler artifact. Results
+are translation status, not oracle approval or enablement. Candidate-parse is a
+separate, non-enabling structural path in the CI probe.
 """
-import re
 from copy import deepcopy
 
 from convert_vehicle_packs import category_definitions
+from toyota_ecmect_pack import MANDATORY_SYSTEM, MANDATORY_ECU, ENTRY, FUNCTION, data_for
+from toyota_runtime_compile import verify_source_read_review
+from vehicle_bundle import canonical
 
-CATEGORY_FIELDS = {
-    "pids": ("pids", "pids"),
-    "dtcs": ("dtcs", "dtcs"),
-    "ecuInfo": ("ecus", "ecuInfo"),
-    "actuators": ("actuators", "tests"),
-    "coding": ("coding", "coding"),
-    "specialFunctions": ("specialFunctions", "specialFunctions"),
-}
+CATEGORIES = ("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions")
+FIELDS = {"pids": "pids", "dtcs": "ecus", "ecuInfo": "ecus", "actuators": "actuators", "coding": "coding", "specialFunctions": "specialFunctions"}
 
 
-def translate_categories(region, function, selector, system_row, *, oracle_comparisons=None):
-    """Classify one exact system row and return candidate definitions, without mutation."""
+def translate_categories(region, function, selector, system_row, *, ecmect_review=None,
+                         reference_data=None):
+    """Translate one exact source system without mutation or IO.
+
+    The only existing all-category data path is ECMECT's pinned data_for(review).
+    An optional reference_data lets the caller compare the serialized output with
+    the exact selected system from the current bundle; it never grants oracle
+    approval.
+    """
     if region not in ("EU", "NA", "JP") or type(function) is not int or type(selector) is not int:
         raise ValueError("exact_region_function_selector_required")
     if not isinstance(system_row, dict):
         raise TypeError("system_row_must_be_object")
-    row_region = system_row.get("region", region)
-    if (row_region, system_row.get("functionKey"), system_row.get("entrySelector")) != (region, function, selector):
+    if (system_row.get("region"), system_row.get("functionKey"), system_row.get("entrySelector")) != (region, function, selector):
         raise ValueError("system_identity_mismatch")
-    data = system_row.get("data", {})
-    if not isinstance(data, dict):
-        raise TypeError("system_data_must_be_object")
-    comparisons = oracle_comparisons or {}
-    if not isinstance(comparisons, dict):
-        raise TypeError("oracle_comparisons_must_be_object")
 
-    statuses, reasons, definitions_by_category = {}, {}, {}
-    for category, (field, count_key) in CATEGORY_FIELDS.items():
-        definitions = category_definitions(data, category, field)
-        definitions_by_category[category] = deepcopy(definitions)
-        if not definitions:
-            statuses[category] = "rejected"
-            reasons[category] = "no_translated_definitions"
-            continue
-        evidence = comparisons.get(category)
-        valid = (isinstance(evidence, dict)
-            and evidence.get("region") == region
-            and evidence.get("function") == function
-            and evidence.get("selector") == selector
-            and evidence.get("category") == category
-            and evidence.get("conclusion") == "success"
-            and isinstance(evidence.get("evidenceSha256"), str)
-            and re.fullmatch(r"[0-9a-f]{64}", evidence["evidenceSha256"]) is not None)
-        if valid:
-            statuses[category] = "executable"
-        else:
-            statuses[category] = "rejected"
-            reasons[category] = "oracle_record_comparison_missing_or_mismatched"
-    return {"categories": statuses, "reasons": reasons, "definitions": definitions_by_category}
+    exact_ecmect = (region, function, selector, system_row.get("id"), system_row.get("ecuFile")) == (
+        "EU", 61, 0x11, MANDATORY_SYSTEM, MANDATORY_ECU)
+    translated = {}
+    statuses, reasons, counts = {}, {}, {}
+    if exact_ecmect and ecmect_review is not None:
+        verify_source_read_review(ecmect_review)
+        # The ECMECT builder checks the pinned SYSLIST/FUNCDATA/SYSTEMENTER/ECU
+        # provenance and produces the same PIDs, DTC workflow and ECU info used
+        # by convert_vehicle_packs.py's enabled path.
+        data = data_for(ecmect_review)
+        for cat in CATEGORIES:
+            defs = category_definitions(data, cat, FIELDS[cat])
+            translated[cat] = deepcopy(defs)
+            counts[cat] = len(defs)
+            if defs:
+                statuses[cat] = "executable"
+            else:
+                statuses[cat] = "rejected"
+                reasons[cat] = "ecmect_compiler_returned_no_definitions"
+    else:
+        for cat in CATEGORIES:
+            translated[cat] = []
+            counts[cat] = 0
+            statuses[cat] = "rejected"
+            if cat in ("pids", "dtcs", "ecuInfo"):
+                dep = {"pids": "mandatory_system_and_live_read_review", "dtcs": "mandatory_system_and_p3p4_workflow",
+                       "ecuInfo": "mandatory_system_and_ecu_identification"}[cat]
+                reasons[cat] = f"ecmect_specific:{dep}"
+            else:
+                reasons[cat] = f"no_generic_translator:{cat}"
+
+    byte_match = None
+    if reference_data is not None and exact_ecmect and ecmect_review is not None:
+        byte_match = all(canonical(category_definitions(data, c, FIELDS[c])) ==
+                         canonical(category_definitions(reference_data, c, FIELDS[c]))
+                         for c in ("pids", "dtcs", "ecuInfo"))
+    return {"categories": statuses, "reasons": reasons, "counts": counts,
+            "definitions": translated, "ecmectControlByteIdentical": byte_match,
+            "mode": "A-strict-pinned", "oracleApproved": False}

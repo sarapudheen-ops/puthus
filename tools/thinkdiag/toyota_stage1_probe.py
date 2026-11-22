@@ -16,37 +16,53 @@ from pathlib import Path
 
 from toyota_calc import REVIEWED
 from convert_vehicle_packs import REASONS
+from toyota_ecmect_pack import load_review
+from toyota_category_translation import translate_categories
 from toyota_structure import section_directory, typed_table, uint
 
 CATEGORIES = ("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions")
 KNOWN = {(3, 8), (6, 8), (10, 104), (39, 20)}
 
 
-def translate_categories(region, function, selector, system_row):
-    """No-write classification of exact current per-system compiler results."""
-    if region not in ("EU", "NA", "JP") or type(function) is not int or type(selector) is not int:
-        raise ValueError("exact_region_function_selector_required")
-    if not isinstance(system_row, dict):
-        raise TypeError("system_row_must_be_object")
-    if (system_row.get("region"), system_row.get("functionKey"), system_row.get("entrySelector")) != (region, function, selector):
-        raise ValueError("system_identity_mismatch")
-    statuses = system_row.get("categoryStatus")
-    if not isinstance(statuses, dict):
-        raise ValueError("category_status_missing")
-    reasons = system_row.get("categoryReasons", {})
-    result = {}
-    for category in CATEGORIES:
-        status = statuses.get(category, "unknown")
-        if status == "executable":
-            result[category] = ("executable", None)
-        elif status == "error":
-            result[category] = ("error", str(reasons.get(category, "translator_error_unspecified")))
-        else:
-            reason = reasons.get(category)
-            if not reason:
-                reason = "translator_not_ported" if status in ("unknown", "unresolved", None) else f"invalid_status:{status}"
-            result[category] = ("rejected", str(reason))
-    return result
+def ecmect_reference(pack_dir):
+    from vehicle_bundle import read_object
+    index = json.loads((pack_dir / "index.json").read_bytes())
+    container = pack_dir / index["container"]
+    page = read_object(container, index["catalogRoot"])
+    for name in ("Toyota", "Kijang Innova", "TGN · 2009.07-2017.07", "MINI VAN · w/ VSC (Vehicle Stability Control)"):
+        page = read_object(container, next(c for c in page["children"] if c["name"] == name)["object"])
+    manual = read_object(container, page["systemsSource"])
+    ref = next(s["object"] for s in manual["systems"] if s["id"] == "SYSLIST_EU.BIN@0009d8f2")
+    return read_object(container, ref)
+
+
+def candidate_parse_group(decoded, region, function, ecu_file):
+    """Mode B structural-only candidate parse; never authorizes definitions."""
+    from toyota_functions import FunctionBlocks
+    from toyota_ecuprogram import EcuProgramIndex
+    try:
+        fun_path = decoded / f"FUNCDATA_{region}.BIN"
+        block = FunctionBlocks(fun_path.read_bytes()).faults(function)
+        if block is None:
+            return {"status":"rejected", "reason":"Not a source P3/P4 fault block",
+                    "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
+        program_path = decoded / "ECUPROGRAM.BIN"
+        if program_path.is_file():
+            EcuProgramIndex(program_path.read_bytes()).select({"EU":1,"NA":2,"JP":3}[region], function)
+        if not ecu_file:
+            return {"status":"rejected", "reason":"not_parameterizable:missing_ecu_file",
+                    "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
+        # Parse framing only; no category semantics are inferred.
+        ecu_path = decoded / ecu_file
+        raw = ecu_path.read_bytes()
+        sections = section_directory(raw)
+        typed = [typed_table(raw[s.offset:s.end]) for s in sections]
+        return {"status":"structurally parsed", "reason":None,
+                "faultQueries":len(block.queries) if block is not None else 0,
+                "ecuTables":len(typed), "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
+    except Exception as exc:
+        return {"status":"rejected", "reason":str(exc),
+                "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
 
 
 def row_bucket(n):
@@ -136,26 +152,81 @@ def run(args):
                           "librarySha256": v.get("librarySha256"),
                           "vectors": v.get("vectors"), "regions": v.get("regions")}
                       for k, v in native.items() if k.endswith("Comparison") and isinstance(v, dict)}
-    eligible = [r for r in systems if r.get("nativeTransport") == 1 and r.get("linkStatus") == "proven"]
+    # Promotion partition: 39,543 records = 39,363 transport-1 proven +
+    # one pinned ECMECT record (native transport 5, but separately source-verified)
+    # + 179 transport-5 unproven. Do not equate linkStatus=proven with transport=1.
+    eligible = [r for r in systems if r.get("nativeTransport") in (1, 5)
+                and r.get("linkStatus") in ("proven", "unproven")]
+    review = load_review(args.ecmect_review_dir)
+    control_system = ecmect_reference(args.ecmect_review_dir)
     status_counts = {c: Counter() for c in CATEGORIES}
     reason_systems = Counter()
+    reason_region_class = Counter()
+    translated_counts = Counter()
+    samples = defaultdict(list)
+    group_members = defaultdict(list)
+    group_outcomes = {}
+    candidate_groups = {}
     errors = Counter()
     for row in eligible:
+        key = (row.get("ecuFile"), row["functionKey"], row["entrySelector"])
+        group_members[key].append(row)
+    for key, members in group_members.items():
+        row = members[0]
+        candidate_groups[key] = candidate_parse_group(args.decoded, row["region"], row["functionKey"], row.get("ecuFile") or "")
         try:
-            outcome = translate_categories(row["region"], row["functionKey"], row["entrySelector"], row)
-            for category, (status, reason) in outcome.items():
-                status_counts[category][status] += 1
-                if reason: reason_systems[(category, reason)] += 1
+            outcome = translate_categories(row["region"], row["functionKey"], row["entrySelector"], row,
+                                           ecmect_review=review,
+                                           reference_data=control_system["data"] if row.get("id") == "SYSLIST_EU.BIN@0009d8f2" else None)
+            group_outcomes[key] = outcome
         except Exception as exc:
             errors[type(exc).__name__] += 1
-            for category in CATEGORIES: status_counts[category]["error"] += 1
+            group_outcomes[key] = {"translationError": type(exc).__name__}
+        for member in members:
+            outcome = group_outcomes[key]
+            for category in CATEGORIES:
+                if "translationError" in outcome:
+                    status_counts[category]["error"] += 1
+                    reason = "translator_error:" + outcome["translationError"]
+                else:
+                    status = outcome["categories"][category]
+                    status_counts[category][status] += 1
+                    if status == "executable":
+                        translated_counts[category] += outcome["counts"][category]
+                    reason = outcome["reasons"].get(category)
+                if reason:
+                    reason_systems[(category, reason)] += 1
+                    reason_region_class[(member.get('region'), member.get('nativeTransport'), category, reason)] += 1
+                    if len(samples[(category, reason)]) < 10:
+                        samples[(category, reason)].append(member["id"])
+    control_outcome = next((v for k,v in group_outcomes.items()
+                            if any(m.get("id") == "SYSLIST_EU.BIN@0009d8f2" for m in group_members[k])), None)
+    if control_outcome is None or control_outcome.get("ecmectControlByteIdentical") is not True or \
+       {c:control_outcome["counts"][c] for c in ("pids","dtcs","ecuInfo")} != {"pids":30,"dtcs":1414,"ecuInfo":1}:
+        raise SystemExit("ECMECT control failed: expected serialized definitions 30/1414/1 byte-identical")
+    candidate_status = Counter()
+    candidate_reasons = Counter()
+    candidate_reason_samples = defaultdict(list)
+    for key, outcome in candidate_groups.items():
+        candidate_status[outcome['status']] += len(group_members[key])
+        if outcome.get('reason'):
+            candidate_reasons[outcome['reason']] += len(group_members[key])
+            for row in group_members[key]:
+                if len(candidate_reason_samples[outcome['reason']]) < 10:
+                    candidate_reason_samples[outcome['reason']].append(row['id'])
     tables = census_tables(args.decoded)
     live, expressions = live_and_expression_census(args.decoded, args.english)
     elapsed = time.perf_counter() - started
     memory_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
     lines = ["# Stage 1 K-Line category dry-run probe", "",
-        "Scope: current converter outputs for transport-1 systems with complete native lifecycle evidence; no pack changes or enablement.",
+        "Scope: Mode A strict pinned translator and Mode B bounded candidate-parse over the transport-1/ECMECT/transport-5-unproven partition; no pack changes or enablement.",
+        f"Population partition: {sum(1 for r in eligible if r.get('nativeTransport') == 1 and r.get('linkStatus') == 'proven')} transport-1 proven + {sum(1 for r in eligible if r.get('id') == 'SYSLIST_EU.BIN@0009d8f2')} exact pinned ECMECT + {sum(1 for r in eligible if r.get('nativeTransport') == 5 and r.get('linkStatus') == 'unproven')} transport-5 unproven = {len(eligible)}.",
+        "Mode B is candidate-parse only; structurally parsed does NOT mean translated, verified, or enabling.",
+        "Argument/pin audit: Mode A `translate_categories(region,function,selector,system_row,ecmect_review,reference_data)`; pins are `toyota_runtime_compile.py:110-111`, `toyota_ecmect_pack.py:13-14,222-235`, `toyota_runtime_compile.py:135-145`. Mode B `candidate_parse_group(decoded,region,function,ecu_file)` uses `FunctionBlocks.faults(function)` from `toyota_functions.py:148-159`; it can structurally parse fault blocks, but no DTC definitions or oracle is returned. `toyota_runtime_compile.py:114-145` pins SYSLIST offset 0x9d8f2, function 61, selector 0x11, caller 11, ECU 0081 and entry 0x2f63; those prevent applying ECMECT compile to other groups.",
+        "Literal Mode A rejection reasons include `ecmect_specific:mandatory_system_and_live_read_review`, `ecmect_specific:mandatory_system_and_p3p4_workflow`, `ecmect_specific:mandatory_system_and_ecu_identification`, and `no_generic_translator:<category>`. Mode B retains the first Python parser exception verbatim or `not_parameterizable:category_semantics_require_source_caller_and_oracle` when structural framing alone is insufficient.",
+        "Mode B categories without structural compiler result are deliberately skipped: PID live semantics are gated by `toyota_live.py:313-318` and exact support inputs; DTC semantic caller by `toyota_runtime_compile.py:28-43`; ecuInfo by `toyota_ecuprogram.py:119-127`; actuator/coding/special-functions have no generic translator in the reviewed modules.",
+
         "", "## Source-read findings (CODE)", "",
         "- `convert_vehicle_packs.py:321-327`: system row reads function key from SYSLIST `raw[0:4]`, ECU filename from the text index at `raw[23:27]`, selector from `raw[27]`, then joins region+function to FUNCDATA, region+ECU name to Ecu_Data, and exact region/function/full selector via `EntryIndex.select` to SYSTEMENTER. Source IDs are retained at lines 329-335.",
         "- `toyota_runtime_compile.py:28-43`: existing DTC compiler requires exact 37-byte SYSLIST row and transport and rejects native caller modes 7/9 with `Native caller mode 7/9 has additional unported overrides`.",
@@ -167,22 +238,37 @@ def run(args):
         lines.append(f"| `{reason}` | {description.replace('|', chr(92)+'|')} |")
     lines += ["",
         f"Systems examined in source conversion report: {len(systems)}; eligible rows: {len(eligible)}.",
-        "The status is the existing converted-system category status. This probe does not claim an unrun per-record native differential.", "",
-        "## Per-category outcome", "", "| Category | Executable (existing) | Rejected | Error |", "|---|---:|---:|---:|"]
+        "Mode A invokes the existing pinned ECMECT data_for(review) path and rejects other records by named pin dependencies. Mode B is bounded candidate parsing only and never yields executable category definitions. Neither mode performs new oracle approval.", "",
+        "## Mode A per-category translator outcome", "", "| Category | Executable (strict translator) | Rejected | Error |", "|---|---:|---:|---:|"]
     for c in CATEGORIES:
         x = status_counts[c]
         lines.append(f"| {c} | {x['executable']} | {x['rejected']} | {x['error']} |")
+    lines.append(f"Translated definition totals for translator-executable rows (not oracle-approved): `{dict(translated_counts)}`. Control serialized comparison: {control_outcome['ecmectControlByteIdentical']} with counts {control_outcome['counts']}.")
     lines += ["", "## Rejection reasons (top 20; eligible systems affected)", "", "| Category | Reason | Systems |", "|---|---|---:|"]
     for (c, reason), n in reason_systems.most_common(20): lines.append(f"| {c} | `{reason}` | {n} |")
+    lines += ["", "Regional / native-transport rejection histogram:", ""]
+    for (region, transport, cat, reason), n in sorted(reason_region_class.items(), key=lambda x:(x[0][0],x[0][1],-x[1],x[0][2],x[0][3])):
+        lines.append(f"- {region}/transport-{transport} `{cat}` `{reason}`: {n}")
+    lines += ["", "## Mode B candidate-parse (NOT verified / NOT enabling)", "",
+              f"Distinct `(Ecu_Data file,function,selector)` groups: {len(group_members)}; systems sharing groups: " +
+              f"{sum(max(0,len(v)-1) for v in group_members.values())} beyond one representative per group.",
+              f"Candidate parser outcomes (systems): `{dict(candidate_status)}`; first-reject histogram: `{dict(candidate_reasons)}`.",
+              "Per-category candidate definitions remain zero: parsers only establish structure. Literal parser exceptions above are retained; no formula/table semantics are inferred.",
+              "", "Top 15 rejection reasons by affected systems, up to 10 representative exact system keys each:", ""]
+    for (cat, reason), n in reason_systems.most_common(15):
+        lines.append(f"- `{cat}` / `{reason}`: {n}; samples: " + ", ".join(f"`{x}`" for x in samples[(cat, reason)]))
+    lines.append("Mode B first-reject top 15 with up to 10 system samples each:")
+    for reason, n in candidate_reasons.most_common(15):
+        lines.append(f"- `{reason}`: {n}; samples: " + ", ".join(f"`{x}`" for x in candidate_reason_samples[reason]))
     lines += ["", "## Unrecognized Ecu_Data table layouts", "",
         "Recognized-pair flag means only the four checked-in P4 tableTag/stride shapes; semantic coverage is not implied.",
         "Top 30 layouts by summed source rows. Each row includes its bounded file list and up to two raw source rows with byte offsets.", "",
         "| Region | slot | tableTag | stride | row bucket | sections | rows | ECU files | recognized P4 pair | raw samples |",
         "|---|---:|---:|---:|---|---:|---:|---:|---|---|"]
     for r in [x for x in tables if not x["recognizedP4Pair"]][:30]:
-        samples = "<br>".join(f"`{ident}` `{raw}`" for ident, raw in r["samples"])
+        sample_html = "<br>".join(f"`{ident}` `{raw}`" for ident, raw in r["samples"])
         files = ", ".join(f"`{f}`" for f in r["ecuFiles"])
-        lines.append(f"| {r['region']} | {r['slot']} | {r['tableTag']} | {r['stride']} | {r['rowBucket']} | {r['sections']} | {r['rows']} | {files} | no | {samples} |")
+        lines.append(f"| {r['region']} | {r['slot']} | {r['tableTag']} | {r['stride']} | {r['rowBucket']} | {r['sections']} | {r['rows']} | {files} | no | {sample_html} |")
     lines += ["", "## FUNCDATA live-row census", "", "| Region | Functions with live block | Declared live rows | Declared command rows | CALC id references | Distinct CALC ids |", "|---|---:|---:|---:|---:|---:|"]
     for region, d in live.items(): lines.append(f"| {region} | {d['functionsWithLiveBlock']} | {d['declaredLiveRows']} | {d['declaredCommandRows']} | {d['calcIdReferences']} | {d['distinctCalcIds']} |")
     lines += ["", "## EXPRESS expression references (top 20)", "", "Support is exact-string membership in `toyota_calc.REVIEWED`; not a claim of runtime/native comparison for this row.", "", "| References | Existing `toyota_calc.py` support | Expression |", "|---:|---|---|"]
@@ -199,8 +285,19 @@ def run(args):
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines))
     args.json_output.write_text(json.dumps({"kind":"toyota-stage1-category-probe-v1", "systems":len(systems),
-        "eligibleTransport1ProvenSystems":len(eligible), "categoryOutcomes":{k:dict(v) for k,v in status_counts.items()},
-        "reasonSystems":[{"category":k[0],"reason":k[1],"systems":v} for k,v in reason_systems.most_common()],
+        "populationPartition":{"transport1Proven":sum(1 for r in eligible if r.get('nativeTransport') == 1 and r.get('linkStatus') == 'proven'),
+            "ecmect":sum(1 for r in eligible if r.get('id') == 'SYSLIST_EU.BIN@0009d8f2'),
+            "transport5Unproven":sum(1 for r in eligible if r.get('nativeTransport') == 5 and r.get('linkStatus') == 'unproven')},
+        "categoryOutcomes":{k:dict(v) for k,v in status_counts.items()},
+        "translatedDefinitionTotalsNotOracleApproved":dict(translated_counts),
+        "ecmectControl":{"byteIdentical":control_outcome["ecmectControlByteIdentical"],"counts":control_outcome["counts"]},
+        "reasonSystems":[{"category":k[0],"reason":k[1],"systems":v,"samples":samples[k]} for k,v in reason_systems.most_common()],
+        "reasonByRegionAndTransport":[{"region":k[0],"transport":k[1],"category":k[2],"reason":k[3],"systems":v}
+            for k,v in sorted(reason_region_class.items())],
+        "groups":{"distinct":len(group_members),"systemsBeyondOnePerGroup":sum(max(0,len(v)-1) for v in group_members.values())},
+        "candidateParse":{"statusBySystems":dict(candidate_status),"firstRejectBySystems":dict(candidate_reasons)},
+        "ecmectControlGroups":[{"group":list(k),"systems":len(v),"controlByteIdentical":group_outcomes[k]['ecmectControlByteIdentical']}
+            for k,v in group_members.items() if 'ecmectControlByteIdentical' in group_outcomes.get(k,{}) and group_outcomes[k]['ecmectControlByteIdentical'] is not None],
         "classificationErrors":dict(errors), "nativeComparisons":native_summary,
         "unrecognizedEcuLayouts":[r for r in tables if not r["recognizedP4Pair"]],
         "liveRowsByRegion":live, "topExpressions":[{"expression":e,"references":c,"existingReviewed":e in {v[1] for v in REVIEWED.values()}} for e,c in expressions.most_common(20)],
@@ -213,6 +310,7 @@ def main():
     p.add_argument("--decoded", type=Path, required=True)
     p.add_argument("--english", type=Path, required=True)
     p.add_argument("--native-oracle", type=Path)
+    p.add_argument("--ecmect-review-dir", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--json-output", type=Path, required=True)
     run(p.parse_args())
