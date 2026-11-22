@@ -367,3 +367,25 @@ jobs:
           name: toyota-data-inspection
           path: .local/thinkdiag/report/
           retention-days: 7
+      - name: Publish Stage 0 report to ci-reports-v1 and PR comments
+        if: github.event_name == 'push' && hashFiles('docs/toyota-progress.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .local/thinkdiag/report
+          python3 - <<'PY'
+          import datetime
+          from pathlib import Path
+          doc = Path('docs/toyota-progress.md').read_text()
+          body = (f'# Stage 0 report - part 1/1\n\nHead: {__import__("os").environ["GITHUB_SHA"]}\n'
+                  f'UTC timestamp: {datetime.datetime.now(datetime.timezone.utc).isoformat()}\n\n{doc}')
+          if len(body) > 24000:
+              raise SystemExit(f'Stage report exceeds safe PR comment bound: {len(body)}')
+          Path('.local/thinkdiag/report/stage-0-report.md').write_text(body)
+          PY
+          gh release upload ci-reports-v1 .local/thinkdiag/report/stage-0-report.md --clobber
+          PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
+          gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+            -F body=@.local/thinkdiag/report/stage-0-report.md
