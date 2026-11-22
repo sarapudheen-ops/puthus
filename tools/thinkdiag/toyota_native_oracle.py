@@ -144,7 +144,7 @@ def compare_entries(libraries, source):
             'fakeBoundaries': ['fseekEx/freadEx over decoded byte arrays; not libDEVICEID file decryption']}
 
 
-def compare_fast_kwp_lifecycle(libraries, sources, *, failure_paths=False, iso_paths=False):
+def compare_fast_kwp_lifecycle(libraries, sources, *, failure_paths=False, iso_paths=False, evidence=None):
     """Real FILE -> SYSP -> COMM linkage; only adapter/file/libc edges are fakes.
 
     The supplied frame-lookup, configuration, packet, keepalive and exit
@@ -154,6 +154,10 @@ def compare_fast_kwp_lifecycle(libraries, sources, *, failure_paths=False, iso_p
     handshake. None of these adapter fakes is MIC3313 equivalence or ECU proof.
     """
     if failure_paths and iso_paths: raise ValueError('Choose one explicit lifecycle domain')
+    if evidence is not None and not isinstance(evidence, list):
+        raise TypeError('Lifecycle evidence must be a list or None')
+    if evidence is not None and (failure_paths or iso_paths):
+        raise ValueError('Entry evidence is available only for the normal lifecycle comparison')
     file, comm, sysp = 'libTOYOTA_FILE.so', 'libTOYOTA_COMM.so', 'libTOYOTA_SYSP.so'
     identities = {file: 'dae1765c3e870f56f8195c9e7690088f45669c90dc20c6399f504d93d5b5c7c0',
                   comm: COMM_SHA256, sysp: SYSP_SHA256}
@@ -347,6 +351,7 @@ def compare_fast_kwp_lifecycle(libraries, sources, *, failure_paths=False, iso_p
                 trace.clear()
                 compare('fastPositiveEntry', native.call(sysp, 'SystemEnterPart', function, context),
                     lifecycle.fast_success_calls(connector=16, pin_pair_index=0), identity)
+                fast_positive_calls = canonical([call.report() for call in trace])
                 for enabled in (True, False):
                     trace.clear()
                     compare('keepaliveOn' if enabled else 'keepaliveOff',
@@ -360,6 +365,23 @@ def compare_fast_kwp_lifecycle(libraries, sources, *, failure_paths=False, iso_p
                 keepalive_requests[lifecycle.keepalive.request.hex()] += 1
                 exit_requests[lifecycle.exit.request.hex()] += 1
                 pulses[lifecycle.entry.timing[3:].hex()] += 1
+                if evidence is not None:
+                    evidence.append({
+                        'region': region_id,
+                        'regionName': region,
+                        'function': function,
+                        'selector': entry.descriptor,
+                        'transport': entry.transport,
+                        'baud': entry.baud,
+                        'entrySourceRecord': entry.source_id,
+                        'frameSourceRecords': {
+                            'init': list(lifecycle.initial.source_records),
+                            'keepalive': list(lifecycle.keepalive.source_records),
+                            'exit': list(lifecycle.exit.source_records),
+                        },
+                        'projectionDigest': lifecycle.projection_digest(),
+                        'nativeCalls': json.loads(fast_positive_calls),
+                    })
     if iso_paths:
         if not counts: raise ValueError('No source KWP/ISO entry was compared')
         return {'nativeInstructionsExecuted': True, 'librarySha256': SYSP_SHA256,
@@ -840,7 +862,7 @@ def compare_calc(libraries):
         'vectors': results, 'fakeBoundaries': ['malloc/calloc/free within guest heap', 'libc string/printf shims; not native libc formatting proof']}
 
 
-def run(libraries, sources, *, text_libraries, full_calc=True):
+def run(libraries, sources, *, text_libraries, full_calc=True, lifecycle_evidence=None):
     counts = {}
     for region in ('EU', 'NA', 'JP'):
         functions = FunctionBlocks(sources[f'FUNCDATA_{region}.BIN'])
@@ -857,7 +879,7 @@ def run(libraries, sources, *, text_libraries, full_calc=True):
         'physicalValidation': False, 'adapterAccess': False, 'networkAccess': False,
         'entryComparison': compare_entries(libraries, sources['SYSTEMENTER.BIN']),
         'kwpTransportComparison': compare_fast_kwp(libraries, sources['SYSTEMENTER.BIN']),
-        'kwpLifecycleComparison': compare_fast_kwp_lifecycle(libraries, sources),
+        'kwpLifecycleComparison': compare_fast_kwp_lifecycle(libraries, sources, evidence=lifecycle_evidence),
         'kwpRetryComparison': compare_fast_kwp_lifecycle(libraries, sources, failure_paths=True),
         'isoEntryComparison': compare_fast_kwp_lifecycle(libraries, sources, iso_paths=True),
         'frameComparison': compare_frames(libraries, sources, 'EU', 61,
@@ -992,6 +1014,7 @@ def main():
     execute.add_argument('--decoded', type=Path, required=True)
     execute.add_argument('--manifest', type=Path, required=True)
     execute.add_argument('--output', type=Path, required=True)
+    execute.add_argument('--evidence-output', type=Path)
     check = commands.add_parser('verify', help='Validate a complete cached report against reviewed identities/result hashes')
     check.add_argument('report', type=Path)
     args = parser.parse_args()
@@ -1004,8 +1027,14 @@ def main():
     # Verify every decoded payload against the complete source manifest before
     # allowing any supplied reader to see it. A pinned ZIP alone is insufficient.
     sources = load_sources(args.archive, args.decoded, args.manifest)
-    result = run(load_libraries(args.archive), sources, text_libraries=read_text_libraries(args.archive))
+    lifecycle_evidence = [] if args.evidence_output else None
+    result = run(load_libraries(args.archive), sources, text_libraries=read_text_libraries(args.archive),
+                 lifecycle_evidence=lifecycle_evidence)
     write_checked_report(result, args.output)
+    if args.evidence_output:
+        args.evidence_output.parent.mkdir(parents=True, exist_ok=True)
+        rows = sorted(lifecycle_evidence, key=lambda r: (r['region'], r['function'], r['selector']))
+        args.evidence_output.write_bytes(canonical(rows) + b'\n')
     print(summary(result))
 
 

@@ -5,7 +5,10 @@ import os
 from pathlib import Path
 import unittest
 
-from toyota_ecmect_pack import (ENTRY, MANDATORY_SYSTEM, load_review, verify_enabled)
+from toyota_ecmect_pack import (ENTRY, MANDATORY_SYSTEM, link_for, load_review, verify_enabled)
+from toyota_entries import EntryIndex
+from toyota_frames import SourceFrames
+from toyota_lifecycle import selected_fast_kwp_lifecycle
 from toyota_innova_2007_pack import (ENTRY as ENTRY_2007, SYSTEM as SYSTEM_2007,
                                     load_candidate, verify_enabled as verify_2007)
 from vehicle_bundle import read_object
@@ -143,6 +146,31 @@ class EcmectPackTest(unittest.TestCase):
         pilot_raw = (self.directory / 'mandatory-ecmect-source-reads.json').read_bytes()
         with self.assertRaises(ValueError):
             verify_candidate_bytes(pilot_raw, 'innova-2007-source-read-candidate.json')
+
+    def test_shared_link_builder_matches_ecmect_and_reports_innova_membership(self):
+        decoded = Path('.local/thinkdiag/decoded')
+        required = [decoded / 'SYSTEMENTER.BIN', *(decoded / 'EU' / f'Toyota_bin_{name}.BIN' for name in ('00', '11', '12'))]
+        if not all(path.is_file() for path in required):
+            self.skipTest('Decoded source inputs are unavailable in this test environment')
+        sources = {
+            'SYSTEMENTER.BIN': required[0].read_bytes(),
+            **{f'EU/Toyota_bin_{name}.BIN': path.read_bytes() for name, path in zip(('00', '11', '12'), required[1:])},
+        }
+        index = EntryIndex(sources['SYSTEMENTER.BIN'])
+        lifecycle = selected_fast_kwp_lifecycle(index, SourceFrames(sources, 'EU'), region=1, function=61, selector=0x11)
+        self.assertEqual(self.system['data']['ecus'][0]['link'], link_for(lifecycle)['link'])
+        innova = index.select(1, self.system_2007['functionKey'], self.system_2007['entrySelector'])
+        if innova is None or innova.transport not in (1, 5):
+            self.assertIsNone(innova)
+        elif innova.transport == 5:
+            with self.assertRaisesRegex(ValueError, 'link_representation_unsupported:transport-5'):
+                link_for(selected_fast_kwp_lifecycle(index, SourceFrames(sources, 'EU'), region=1,
+                    function=self.system_2007['functionKey'], selector=self.system_2007['entrySelector']))
+        else:
+            innova_lifecycle = selected_fast_kwp_lifecycle(index, SourceFrames(sources, 'EU'), region=1,
+                function=self.system_2007['functionKey'], selector=self.system_2007['entrySelector'])
+            innova_ecu = self.system_2007['data']['ecus'][0]
+            self.assertEqual(innova_ecu['link'], link_for(innova_lifecycle)['link'])
 
     def test_all_985_omitted_live_rows_have_their_exact_first_implementation_blocker(self):
         from collections import Counter

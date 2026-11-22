@@ -15,8 +15,9 @@ on:
       - 'app/src/main/assets/datapacks/toyota-lexus-dtcs.json'
 
 permissions:
-  contents: read
+  contents: write
   checks: write
+  pull-requests: write
 
 jobs:
   recover-source-inputs:
@@ -27,6 +28,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -120,10 +122,14 @@ jobs:
           python3 tools/thinkdiag/toyota_native_oracle.py run .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
-            --output .local/thinkdiag/report/native-oracle.json
+            --output .local/thinkdiag/report/native-oracle.json \
+            --evidence-output .local/thinkdiag/report/code1-link-evidence.json
       - name: Publish native comparison outcome (including failed reference gates)
         if: always() && hashFiles('.local/thinkdiag/report/native-oracle.md') != ''
         run: |
+          if [ -f .local/thinkdiag/report/code1-link-evidence.json ]; then
+            gh release upload ci-reports-v1 .local/thinkdiag/report/code1-link-evidence.json --clobber
+          fi
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota offline native differential' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion='${{ steps.native_oracle.outcome }}' \
@@ -150,11 +156,18 @@ jobs:
             --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
             --english .local/thinkdiag/english --pilot-artifacts .local/thinkdiag/vehicle-packs \
             --output .local/thinkdiag/vehicle-packs/innova-2007-source-read-candidate.json
-          echo "[ecmect] convert vehicle packs (reads artifacts)"
+          echo "[ecmect] measure baseline container without oracle promotion"
           python3 tools/thinkdiag/convert_vehicle_packs.py .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --read-artifacts .local/thinkdiag/vehicle-packs \
+            --output .local/thinkdiag/vehicle-packs-baseline
+          echo "[ecmect] convert vehicle packs (reads artifacts + complete native evidence)"
+          python3 tools/thinkdiag/convert_vehicle_packs.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --read-artifacts .local/thinkdiag/vehicle-packs \
+            --oracle-evidence .local/thinkdiag/report/code1-link-evidence.json \
             --output .local/thinkdiag/vehicle-packs
           echo "[ecmect] lifecycle contracts"
           python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/thinkdiag/TOYOTA.zip \
@@ -164,6 +177,7 @@ jobs:
           python3 tools/thinkdiag/toyota_lifecycle_contracts.py verify .local/thinkdiag/vehicle-packs
           python3 tools/thinkdiag/toyota_runtime_compile.py verify .local/thinkdiag/vehicle-packs
           python3 tools/thinkdiag/toyota_runtime_compile.py test-artifacts .local/thinkdiag/vehicle-packs > .local/thinkdiag/vehicle-packs/compiled-source-read-validation.json
+          PYTHONPATH=tools/thinkdiag TOYOTA_PACK_DIRECTORY=.local/thinkdiag/vehicle-packs python3 -m unittest test_ecmect_pack -v
           cat .local/thinkdiag/vehicle-packs/compiled-source-read-validation.json
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota exact compiled source reads' -f head_sha="$GITHUB_SHA" \
@@ -183,6 +197,78 @@ jobs:
             -f status=completed -f conclusion=success \
             -f 'output[title]=Partial conversion: unresolved items remain disabled' \
             -F 'output[summary]=@.local/thinkdiag/vehicle-packs/conversion-report.md'
+      - name: Run read-only Code 1 lifecycle join sweep
+        id: code1_lifecycle_sweep
+        continue-on-error: true
+        run: |
+          python3 tools/thinkdiag/toyota_code1_lifecycle_sweep.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --output .local/thinkdiag/report/code1-lifecycle-sweep \
+            --ecmect-review .local/thinkdiag/vehicle-packs/mandatory-ecmect-source-reads.json \
+            --native-evidence .local/thinkdiag/report/code1-link-evidence.json
+      - name: Audit Code 1 native lifecycle evidence against the sweep tuple set
+        run: |
+          python3 tools/thinkdiag/report_code1_link_evidence.py \
+            .local/thinkdiag/report/code1-link-evidence.json \
+            .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json \
+            --output .local/thinkdiag/report
+          cat .local/thinkdiag/report/code1-link-evidence-summary.md
+      - name: Publish Code 1 link-promotion report
+        run: |
+          python3 tools/thinkdiag/report_code1_link_promotion.py .local/thinkdiag/vehicle-packs \
+            --baseline-index .local/thinkdiag/vehicle-packs-baseline/index.json \
+            --sweep-json .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json
+          gh release upload ci-reports-v1 \
+            .local/thinkdiag/vehicle-packs/code1-link-promotion.md \
+            .local/thinkdiag/vehicle-packs/code1-link-promotion.json --clobber
+          PR_NUMBER=25
+          REPORT=.local/thinkdiag/vehicle-packs/code1-link-promotion.md
+          python3 - "$REPORT" "$GITHUB_SHA" <<'PY' > .local/thinkdiag/report/promotion-comments.json
+          import datetime, json, pathlib, sys
+          text = pathlib.Path(sys.argv[1]).read_text()
+          limit = 24000
+          chunks = [text[i:i+limit] for i in range(0, len(text), limit)] or ['(empty report)']
+          stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          comments = []
+          for i, chunk in enumerate(chunks, 1):
+              title = f'Promotion report - part {i}/{len(chunks)}'
+              if i == 1:
+                  title += f' | head {sys.argv[2]} | {stamp}'
+              comments.append(f'## {title}\n\n{chunk}')
+          d = json.loads(pathlib.Path('.local/thinkdiag/vehicle-packs/code1-link-promotion.json').read_text())
+          rows=d['systemsByLinkStatusRegionTransportBaud']
+          proven=sum(r['systems'] for r in rows if r['linkStatus']=='proven')
+          unproven=sum(r['systems'] for r in rows if r['linkStatus']=='unproven')
+          comments.append(f"Promotion key numbers: {d['eligibleSystemRecords']} eligible; {proven} proven; {unproven} unproven; {d['containerBytesAfter']} container bytes. Head {sys.argv[2]}.")
+          print(json.dumps(comments))
+          PY
+          python3 - <<'PY'
+          import json, os, subprocess
+          comments=json.load(open('.local/thinkdiag/report/promotion-comments.json'))
+          for body in comments:
+              subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/25/comments",'-f',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
+          # Verify every exact body is now present; comments are never silently skipped.
+          existing=subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/issues/25/comments','--paginate','--jq','.[].body'],text=True)
+          assert all(body in existing for body in comments), 'Promotion report comment verification failed'
+          print(f'Posted and verified {len(comments)-1} report parts and one key-numbers comment on PR #25')
+          PY
+          rm -rf .local/thinkdiag/vehicle-packs-baseline
+      - name: Publish Code 1 lifecycle sweep reports
+        if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          gh release upload ci-reports-v1 \
+            .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md \
+            .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json \
+            .local/thinkdiag/report/code1-link-evidence-summary.md \
+            .local/thinkdiag/report/code1-link-evidence-summary.json --clobber
+          PR_NUMBER="${PR_NUMBER:-$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)}"
+          if [ -n "$PR_NUMBER" ]; then
+            tuples=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("{} tuples; {} completed; timedOut={}".format(d["tupleCount"],d["completed"],d["timedOut"])+("; ERROR: "+d["fatalError"] if d.get("fatalError") else ""))' .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json)
+            gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="Code 1 lifecycle sweep: $tuples. Full reports: code1-lifecycle-sweep.md and code1-lifecycle-sweep.json in ci-reports-v1."
+          fi
       - name: Publish conversion step log (captures the exact failing command)
         if: always() && hashFiles('.local/thinkdiag/report/convert-step.log') != ''
         run: |

@@ -72,6 +72,78 @@ def live_omissions(sources, english, review):
             'omittedLiveRows': 985, 'reasons': dict(sorted(Counter(r['reasons'][0] for r in omitted).items())), 'items': omitted}
 
 
+def response_header_check(lifecycle):
+    wire = lifecycle.entry.packet(lifecycle.initial.request)
+    expected = bytes([0x80, wire[2], wire[1]]) if len(wire) >= 3 else b''
+    response = lifecycle.initial.response
+    mask = lifecycle.initial.mask
+    agrees = (len(response) >= 3 and len(mask) >= 3 and
+              all((response[i] & mask[i]) == (expected[i] & mask[i]) for i in range(3)))
+    return {'expectedConventionHex': expected.hex(),
+            'responseTemplateHex': response[:3].hex(), 'responseMaskHex': mask[:3].hex(),
+            'agrees': agrees}
+
+
+def link_for(lifecycle):
+    """Build the app DiagnosticLink plus a separately labelled source trace.
+
+    Transport 5 dispatches an ISO fallback which this app link cannot express;
+    refuse that projection rather than mapping it approximately.
+    """
+    entry = lifecycle.entry
+    if entry.transport != 1 or entry.flags != 0x81:
+        raise ValueError(f'link_representation_unsupported:transport-{entry.transport}-flags-{entry.flags:02x}')
+    link = copy.deepcopy(LINK)
+    link['kLine']['baud'] = entry.baud
+    link['testerPresent'] = lifecycle.keepalive.request.hex().upper()
+    wire = entry.packet(lifecycle.initial.request)
+    request_header = (bytes([0x80]) + wire[1:3]) if len(wire) >= 3 else b''
+    check = response_header_check(lifecycle)
+    response_convention = bytes.fromhex(check['expectedConventionHex'])
+    response_agrees = check['agrees']
+    calls = [call.report() for call in lifecycle.fast_success_calls(connector=16, pin_pair_index=0)]
+    return {
+        'link': link,
+        'source': {
+            'baud': entry.baud,
+            'initPacketHex': wire.hex(),
+            'keepaliveRequestHex': lifecycle.keepalive.request.hex(),
+            'keepalivePacketHex': entry.packet(lifecycle.keepalive.request).hex(),
+            'exitRequestHex': lifecycle.exit.request.hex(),
+            'exitPacketHex': entry.packet(lifecycle.exit.request).hex(),
+            'requestHeaderHex': request_header.hex(),
+            **({'responseHeaderHex': response_convention.hex()} if response_agrees else {}),
+            'responseHeaderConventionAgrees': response_agrees,
+            'responseHeaderCheck': check,
+            'pinAndConnectorCalls': [c for c in calls if c['api'] in ('EnableLLine', 'SelectPIN')],
+            'rawTimingHex': entry.timing.hex(),
+            'transport': entry.transport,
+            'flags': entry.flags,
+            'entrySourceRecord': entry.source_record,
+            'frameSourceRecords': {
+                'init': list(lifecycle.initial.source_records),
+                'keepalive': list(lifecycle.keepalive.source_records),
+                'exit': list(lifecycle.exit.source_records),
+            },
+        },
+        'provenance': {
+            'protocol': 'policy', 'dialect': 'policy', 'kLine.init': 'policy',
+            'kLine.initAddress': 'policy', 'kLine.baud': 'source',
+            'kLine.p1MaxMs': 'policy', 'kLine.p2MaxMs': 'policy',
+            'kLine.p2StarMs': 'policy', 'kLine.p3MinMs': 'policy',
+            'kLine.p3MaxMs': 'policy', 'kLine.p4Ms': 'policy',
+            'kLine.fastLowMs': 'policy', 'kLine.fastHighMs': 'policy',
+            'kLine.initParity': 'policy', 'kLine.dataParity': 'policy',
+            'kLine.slowInitTimingsMs': 'policy', 'testerPresent': 'source',
+            'baud': 'source', 'transport': 'source', 'flags': 'source',
+            'initPacketHex': 'source', 'keepaliveRequestHex': 'source',
+            'keepalivePacketHex': 'source', 'exitRequestHex': 'source', 'exitPacketHex': 'source',
+            'requestHeaderHex': 'convention', 'responseHeaderHex': 'convention',
+            'pinAndConnectorCalls': 'source', 'rawTimingHex': 'source',
+        },
+    }
+
+
 def source_keepalive(review):
     """Use only the pinned lifecycle compiler output for this exact entry."""
     verify_source_read_review(review)
@@ -85,11 +157,11 @@ def source_keepalive(review):
     return request.upper()
 
 
-def data_for(review):
+def data_for(review, lifecycle=None):
     keepalive = source_keepalive(review)
     diagnostics = copy.deepcopy(review['diagnostics'])
     diagnostics['faults'].pop('clear', None)  # This slice never exposes clearing.
-    link = {**copy.deepcopy(LINK), 'testerPresent': keepalive}
+    link = link_for(lifecycle)['link'] if lifecycle is not None else {**copy.deepcopy(LINK), 'testerPresent': keepalive}
     provenance = list(dict.fromkeys([MANDATORY_SYSTEM, FUNCTION, ENTRY,
         *review['transportPlan']['sourceRecords']]))
     ecu = {'address': '0081', 'name': 'ECMECT (Engine and ECT)', 'protocol': 'KWP',
@@ -141,7 +213,7 @@ def candidate_for(system, review):
             'blockers': [], 'runtime': runtime_for(review)}
 
 
-def enable(system, review):
+def enable(system, review, lifecycle=None):
     """Join only the exact selected record; no other system may use this enablement."""
     mismatches = []
     def check(label, actual, expected):
@@ -163,7 +235,11 @@ def enable(system, review):
     require(not mismatches, 'ECMECT source join differs: ' + '; '.join(mismatches))
     require(system['ecuSource']['sha256'] == next(i['sha256'] for i in review['inputs'] if i['file'] == MANDATORY_ECU),
             'ECMECT ECU input hash differs')
-    system.update(enabled=True, reasons=[], readOnly=True, transportPolicy=transport_for(review), data=data_for(review))
+    projection = link_for(lifecycle) if lifecycle is not None else None
+    system.update(enabled=True, reasons=[], readOnly=True, transportPolicy=transport_for(review), data=data_for(review, lifecycle))
+    if projection is not None:
+        system['linkSource'] = projection['source']
+        system['linkProvenance'] = projection['provenance']
     for kind, count in {'pids': 30, 'dtcs': 1414, 'ecuInfo': 1, 'tests': 0, 'coding': 0, 'specialFunctions': 0}.items():
         system['counts'][kind] = {'converted': count, 'unresolved': review['uncompiledLiveRows'] if kind == 'pids' else None}
     # Other feature denominators stay unknown; read-only exclusion is not a

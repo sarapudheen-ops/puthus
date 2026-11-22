@@ -20,6 +20,8 @@ from toyota_structure import (ECU_FILE, function_index, menu_nodes, section_dire
 from vehicle_bundle import BundleWriter, SOURCE_SHA256, canonical, read_object
 from toyota_hierarchy import normalize_source_vehicle
 from toyota_entries import EntryIndex
+from toyota_frames import SourceFrames
+from toyota_lifecycle import selected_fast_kwp_lifecycle
 from source_verification import load_verification, verify_archive
 
 REGIONS = {0xFEE9: "EU", 0xFEEA: "NA", 0xFEEB: "JP"}
@@ -96,7 +98,7 @@ def load_sources(archive, decoded, manifest):
 
 
 class Converter:
-    def __init__(self, sources, texts, output, english=None, read_artifacts=None):
+    def __init__(self, sources, texts, output, english=None, read_artifacts=None, oracle_evidence=None):
         self.sources = sources
         self.texts = texts
         self.english = english
@@ -106,6 +108,19 @@ class Converter:
         # from toyota_runtime_compile.verify_source_read_files for the ONE reviewed
         # mandatory ECMECT system. All other systems stay disabled.
         self.read_artifacts = read_artifacts
+        oracle_evidence = oracle_evidence or []
+        self.oracle_evidence_rows = len(oracle_evidence)
+        self.oracle_evidence = {}
+        self.oracle_evidence_valid = True
+        for row in oracle_evidence:
+            key = (row['region'], row['function'], row['selector'])
+            if key in self.oracle_evidence:
+                self.oracle_evidence_valid = False
+            self.oracle_evidence[key] = row
+        self.oracle_evidence_keys = set(self.oracle_evidence)
+        self.oracle_evidence_complete = False
+        self.lifecycle_frames = {}
+        self.response_header_checks = {}
         self.ecus = {}
         self.functions = {}
         self.systems = {}
@@ -142,6 +157,14 @@ class Converter:
 
     def convert_entries(self):
         self.entries = EntryIndex(self.sources["SYSTEMENTER.BIN"])
+        expected_oracle_keys = {(region_id, function, entry.descriptor)
+            for region_id, region_rows in self.entries.regions.items()
+            for function, row in region_rows.items()
+            for entry in self.entries.lists[row['listOffset']].entries
+            if entry.transport in (1, 5)}
+        self.oracle_evidence_complete = (self.oracle_evidence_valid and bool(expected_oracle_keys)
+                                         and self.oracle_evidence_rows == len(expected_oracle_keys)
+                                         and self.oracle_evidence_keys == expected_oracle_keys)
         # Count DISTINCT recovered source records, not repeated menu/vehicle references. This
         # ranks byte-identical source setups only; it NEVER broadens an ECU's applicability.
         for item in self.entries.lists.values():
@@ -163,6 +186,14 @@ class Converter:
                                  bytes.fromhex(span["rawHex"]), ["record_schema_untranslated"])
             self.unclaimed_entry_pages.extend(self.pages([item]))
         (self.output / "entry-index.json").write_bytes(canonical(self.entries.report()) + b"\n")
+
+    def lifecycle_for(self, region_id, function, selector):
+        region = {1: 'EU', 2: 'NA', 3: 'JP'}[region_id]
+        if region not in self.lifecycle_frames:
+            self.lifecycle_frames[region] = SourceFrames(self.sources, region)
+        frames = self.lifecycle_frames[region]
+        return selected_fast_kwp_lifecycle(self.entries, frames, region=region_id,
+                                           function=function, selector=selector)
 
     def bring_up_candidates(self, region, function, selector, flash=False):
         row = self.entries.regions.get(region, {}).get(function)
@@ -321,12 +352,44 @@ class Converter:
                         "rawHex": raw.hex(), "ecuSource": ecu, "functionSource": function, "entrySource": entry_source,
                         "bringUpPages": self.bring_up_candidates(region_id, key, raw[27], transport == "FLASH"),
                         "counts": counts, "data": {}}
-                    if self.ecmect_review is not None and identity == self.ecmect_review["systemId"]:
+                    lifecycle = None
+                    evidence_status = None
+                    evidence_reason = None
+                    oracle_key = (region_id, key, raw[27])
+                    is_ecmect = self.ecmect_review is not None and identity == self.ecmect_review["systemId"]
+                    if entry is not None and (is_ecmect or self.oracle_evidence):
+                        try:
+                            lifecycle = self.lifecycle_for(region_id, key, raw[27])
+                        except Exception as error:
+                            evidence_status = 'unproven'
+                            evidence_reason = 'lifecycle_projection_rejected:' + type(error).__name__
+                        if lifecycle is not None:
+                            from toyota_ecmect_pack import response_header_check
+                            self.response_header_checks[oracle_key] = response_header_check(lifecycle)
+                        if not is_ecmect:
+                            evidence = self.oracle_evidence.get(oracle_key)
+                            if evidence is None or not self.oracle_evidence_complete:
+                                evidence_status, evidence_reason = 'unproven', 'oracle_evidence_missing'
+                            elif lifecycle is None:
+                                evidence_status = 'unproven'
+                            elif evidence.get('projectionDigest') != lifecycle.projection_digest():
+                                evidence_status, evidence_reason = 'unproven', 'oracle_digest_mismatch'
+                            else:
+                                try:
+                                    from toyota_ecmect_pack import link_for
+                                    projection = link_for(lifecycle)
+                                    value['link'] = projection['link']
+                                    value['linkSource'] = projection['source']
+                                    value['linkProvenance'] = projection['provenance']
+                                    evidence_status, evidence_reason = 'proven', None
+                                except ValueError as error:
+                                    evidence_status, evidence_reason = 'unproven', str(error)
+                    if is_ecmect:
                         # Enablement is allowed only via the pinned, independently
                         # verified compiler artifact; enable() itself asserts the exact
                         # source join (function 61, full selector 0x11, raw bytes, hashes).
                         from toyota_ecmect_pack import candidate_for, enable
-                        enable(value, self.ecmect_review)
+                        enable(value, self.ecmect_review, lifecycle)
                         # Replace the untranslated evidence page with the ONE runnable
                         # read-only candidate carrying the exact translated runtime.
                         candidate = candidate_for(value, self.ecmect_review)
@@ -337,10 +400,15 @@ class Converter:
                         candidate = candidate_for(value, self.innova_2007_review)
                         value["bringUpPages"] = [self.writer.add({"kind": "bring-up-candidates", "candidates": [candidate]})]
                     # Link and category status are explicit; legacy count fields are not
-                    # treated as proof. The two separately reviewed read-only systems
-                    # are the only proven link joins at present.
-                    value["linkStatus"] = "proven" if value.get("enabled") is True and not value.get("reasons") else "unproven"
-                    value["linkReasons"] = [] if value["linkStatus"] == "proven" else list(value.get("reasons") or ["ecu_entry_untranslated"])
+                    # treated as proof. Separately reviewed paths retain their pinned
+                    # authorization; other links require complete native evidence below.
+                    value["linkStatus"] = "proven" if value.get("enabled") is True and not value.get("reasons") else (evidence_status or "unproven")
+                    if value["linkStatus"] == 'proven':
+                        value['linkReasons'] = []
+                    elif evidence_reason:
+                        value['linkReasons'] = [evidence_reason]
+                    else:
+                        value["linkReasons"] = [] if value["linkStatus"] == "proven" else list(value.get("reasons") or ["ecu_entry_untranslated"])
                     data = value.get("data", {})
                     if isinstance(data, dict):
                         # No actuator/coding/security oracle hash is currently
@@ -355,20 +423,24 @@ class Converter:
                     category_keys = {"pids": "pids", "dtcs": "dtcs", "ecuInfo": "ecus",
                                      "actuators": "actuators", "coding": "coding", "specialFunctions": "specialFunctions"}
                     category_status = {}
-                    for category, field in category_keys.items():
-                        definitions = category_definitions(data, category, field)
-                        count_key = "tests" if category == "actuators" else category
-                        converted = value.get("counts", {}).get(count_key, {}).get("converted", 0)
-                        if definitions:
-                            category_status[category] = "executable"
-                        elif converted:
-                            category_status[category] = "unresolved"
-                        elif category in ("pids", "dtcs", "ecuInfo") and value["linkStatus"] == "proven":
-                            category_status[category] = "unresolved"
-                        else:
-                            category_status[category] = "unknown"
-                        if category_status[category] != "executable" and isinstance(data, dict) and field in data:
-                            data[field] = []
+                    if evidence_status == 'proven' and value.get('enabled') is not True:
+                        category_status = {category: 'unresolved' for category in category_keys}
+                        value['categoryReasons'] = {category: f'translator_not_ported:{category}' for category in category_keys}
+                    else:
+                        for category, field in category_keys.items():
+                            definitions = category_definitions(data, category, field)
+                            count_key = "tests" if category == "actuators" else category
+                            converted = value.get("counts", {}).get(count_key, {}).get("converted", 0)
+                            if definitions:
+                                category_status[category] = "executable"
+                            elif converted:
+                                category_status[category] = "unresolved"
+                            elif category in ("pids", "dtcs", "ecuInfo") and value["linkStatus"] == "proven":
+                                category_status[category] = "unresolved"
+                            else:
+                                category_status[category] = "unknown"
+                            if category_status[category] != "executable" and isinstance(data, dict) and field in data:
+                                data[field] = []
                     value["categoryStatus"] = category_status
                     value["enabled"] = value["linkStatus"] == "proven" and "executable" in category_status.values()
                     ref = self.writer.add(value)
@@ -381,8 +453,13 @@ class Converter:
                     self.systems[identity] = ref
                     self.system_report.append({"id": identity, "region": region, "system": value["name"],
                         "functionKey": key, "entrySelector": raw[27], "ecuFile": ecu_file,
+                        "nativeTransport": entry.transport if entry else None, "baud": entry.baud if entry else None,
                         "sourceRecords": sources, "entrySource": entry.source_id if entry else None,
-                        "counts": value["counts"], "enabled": value["enabled"], "reasons": value["reasons"]})
+                        "counts": value["counts"], "enabled": value["enabled"], "reasons": value["reasons"],
+                        "linkStatus": value["linkStatus"], "linkReasons": value["linkReasons"],
+                        "link": value.get("link"), "linkSource": value.get("linkSource"),
+                        "linkProvenance": value.get("linkProvenance"),
+                        "categoryStatus": value.get("categoryStatus"), "categoryReasons": value.get("categoryReasons", {})})
                 for key, block in index:
                     if block == offset:
                         self.vehicle_systems[region, key] = refs
@@ -595,6 +672,49 @@ class Converter:
         container = self.output / index["container"]
         if read_object(container, index["root"])["kind"] != "manual-menu":
             raise ValueError("Invalid bundle root")
+        promoted = [r for r in self.system_report if r.get('nativeTransport') in (1, 5)]
+        groups = Counter((r['linkStatus'], r['region'], r['nativeTransport'], str(r['baud'])) for r in promoted)
+        reasons = Counter(reason for r in promoted for reason in r.get('linkReasons', []))
+        deviations = Counter((reason, r['region'], r['nativeTransport'], str(r['baud']), r['functionKey'], r['entrySelector'])
+                             for r in promoted if r['linkStatus'] == 'unproven'
+                             for reason in (r.get('linkReasons') or ['unspecified']))
+        links = Counter(canonical(r['link']) for r in promoted if r.get('link') is not None)
+        init_packets = Counter(r['linkSource']['initPacketHex'] for r in promoted if r.get('linkSource'))
+        keepalive_packets = Counter(r['linkSource']['keepalivePacketHex'] for r in promoted if r.get('linkSource'))
+        exit_packets = Counter(r['linkSource']['exitPacketHex'] for r in promoted if r.get('linkSource'))
+        keepalive_first = Counter(packet[:2] for packet in keepalive_packets.elements())
+        exit_first = Counter(packet[:2] for packet in exit_packets.elements())
+        rx = Counter('agree' if item['agrees'] else 'disagree'
+                     for item in self.response_header_checks.values())
+        promotion = {
+            'kind': 'code1-link-promotion-v1',
+            'eligibleSystemRecords': len(promoted),
+            'systemsByLinkStatusRegionTransportBaud': [
+                {'linkStatus': k[0], 'region': k[1], 'transport': k[2], 'baud': k[3], 'systems': v}
+                for k, v in sorted(groups.items())],
+            'reasonHistogram': dict(sorted(reasons.items())),
+            'top10Reasons': reasons.most_common(10),
+            'deviations': [
+                {'reason': k[0], 'region': k[1], 'transport': k[2], 'baud': k[3],
+                 'function': k[4], 'selector': k[5], 'systems': v}
+                for k, v in sorted(deviations.items())],
+            'distinctLinkObjects': len(links),
+            'topLinksBySystems': [{'link': json.loads(k), 'systems': v} for k, v in links.most_common(10)],
+            'distinctInitPackets': len(init_packets), 'topInitPackets': init_packets.most_common(20),
+            'distinctKeepalivePackets': len(keepalive_packets), 'topKeepalivePackets': keepalive_packets.most_common(20),
+            'keepaliveFirstByteDistribution': dict(sorted(keepalive_first.items())),
+            'distinctExitPackets': len(exit_packets), 'topExitPackets': exit_packets.most_common(20),
+            'exitFirstByteDistribution': dict(sorted(exit_first.items())),
+            'responseHeaderConventionChecks': {'checkedTuples': len(self.response_header_checks), **dict(sorted(rx.items()))},
+            'provenanceFields': next((r['linkProvenance'] for r in promoted if r.get('linkProvenance')), {}),
+            'featureCounts': converted, 'enabledSystems': enabled,
+            'containerBytesAfter': index['containerBytes'],
+            'containerBytesBefore': None,
+            'containerBytesAdded': None,
+            '9600Systems': {status: sum(1 for r in promoted if r['baud'] == 9600 and r['linkStatus'] == status)
+                            for status in ('proven', 'unproven')},
+        }
+        (self.output / 'code1-link-promotion.json').write_bytes(canonical(promotion) + b'\n')
         return index
 
 
@@ -607,6 +727,8 @@ def main():
     parser.add_argument("--english", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--oracle-evidence", type=Path,
+                        help="Complete verified native lifecycle evidence; absent means no new links are promoted.")
     parser.add_argument("--read-artifacts", type=Path,
                         help="Directory with both pinned ECMECT source-read artifacts. "
                              "When given, exactly the two reviewed systems are enabled read-only; "
@@ -619,7 +741,13 @@ def main():
         from toyota_runtime_compile import verify_source_read_files
         counts = verify_source_read_files(args.read_artifacts)
         read_artifacts = (counts, args.read_artifacts)
-    index = Converter(sources, texts, args.output, english=args.english, read_artifacts=read_artifacts).finish()
+    oracle_evidence = None
+    if args.oracle_evidence is not None:
+        oracle_evidence = json.loads(args.oracle_evidence.read_text())
+        if not isinstance(oracle_evidence, list) or any(not isinstance(row, dict) for row in oracle_evidence):
+            raise ValueError('Oracle evidence must be a list of records')
+    index = Converter(sources, texts, args.output, english=args.english, read_artifacts=read_artifacts,
+                      oracle_evidence=oracle_evidence).finish()
     print(json.dumps(index, indent=2))
 
 

@@ -12,6 +12,7 @@ class VehiclePackTest {
     @Test fun wrongVehicleEcuOrFunctionReferenceIsRejected() = VehiclePackScenarios.referencedSourcesCannotCrossVehicleEcuOrFunction()
     @Test fun onlyPinnedConversionMayEnableWriteDefinitions() = VehiclePackScenarios.trustedConversionNotImportedFlags()
     @Test fun enabledSystemRequiresProvenLinkStatus() = VehiclePackScenarios.unprovenEnabledSystemIsRejectedWithExplicitLinkError()
+    @Test fun disabledProvenLinkWithUnresolvedCategoriesIsAccepted() = VehiclePackScenarios.disabledProvenLinkWithUnresolvedCategoriesIsAccepted()
     @Test fun bringUpCandidatesHaveIndependentPinnedProvenanceNotImportTrust() = VehiclePackScenarios.pinnedBringUpCandidatesAreSeparateFromExecutableSystemFlags()
     @Test fun crossEcuDefinitionIsRejectedAtomically() = VehiclePackScenarios.crossEcuDefinitionRejected()
     @Test fun convertedEcuCannotSubstituteLegacyGenericReads() = VehiclePackScenarios.convertedEcuCannotSubstituteLegacyGenericReads()
