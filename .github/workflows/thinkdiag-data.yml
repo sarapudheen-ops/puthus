@@ -221,7 +221,6 @@ jobs:
           gh release upload ci-reports-v1 \
             .local/thinkdiag/vehicle-packs/code1-link-promotion.md \
             .local/thinkdiag/vehicle-packs/code1-link-promotion.json --clobber
-          PR_NUMBER=25
           REPORT=.local/thinkdiag/vehicle-packs/code1-link-promotion.md
           python3 - "$REPORT" "$GITHUB_SHA" <<'PY' > .local/thinkdiag/report/promotion-comments.json
           import datetime, json, pathlib, sys
