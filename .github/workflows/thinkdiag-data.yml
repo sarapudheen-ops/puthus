@@ -221,10 +221,37 @@ jobs:
           gh release upload ci-reports-v1 \
             .local/thinkdiag/vehicle-packs/code1-link-promotion.md \
             .local/thinkdiag/vehicle-packs/code1-link-promotion.json --clobber
-          if [ -n "$PR_NUMBER" ]; then
-            summary=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("{} eligible systems; {} proven; {} unproven; container {} bytes".format(d["eligibleSystemRecords"],sum(r["systems"] for r in d["systemsByLinkStatusRegionTransportBaud"] if r["linkStatus"]=="proven"),sum(r["systems"] for r in d["systemsByLinkStatusRegionTransportBaud"] if r["linkStatus"]=="unproven"),d["containerBytesAfter"]))' .local/thinkdiag/vehicle-packs/code1-link-promotion.json)
-            gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="Code 1 link promotion: $summary. Full report: code1-link-promotion.md/.json in ci-reports-v1."
-          fi
+          PR_NUMBER=25
+          REPORT=.local/thinkdiag/vehicle-packs/code1-link-promotion.md
+          python3 - "$REPORT" "$GITHUB_SHA" <<'PY' > .local/thinkdiag/report/promotion-comments.json
+          import datetime, json, pathlib, sys
+          text = pathlib.Path(sys.argv[1]).read_text()
+          limit = 24000
+          chunks = [text[i:i+limit] for i in range(0, len(text), limit)] or ['(empty report)']
+          stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          comments = []
+          for i, chunk in enumerate(chunks, 1):
+              title = f'Promotion report - part {i}/{len(chunks)}'
+              if i == 1:
+                  title += f' | head {sys.argv[2]} | {stamp}'
+              comments.append(f'## {title}\n\n{chunk}')
+          d = json.loads(pathlib.Path('.local/thinkdiag/vehicle-packs/code1-link-promotion.json').read_text())
+          rows=d['systemsByLinkStatusRegionTransportBaud']
+          proven=sum(r['systems'] for r in rows if r['linkStatus']=='proven')
+          unproven=sum(r['systems'] for r in rows if r['linkStatus']=='unproven')
+          comments.append(f"Promotion key numbers: {d['eligibleSystemRecords']} eligible; {proven} proven; {unproven} unproven; {d['containerBytesAfter']} container bytes. Head {sys.argv[2]}.")
+          print(json.dumps(comments))
+          PY
+          python3 - <<'PY'
+          import json, os, subprocess
+          comments=json.load(open('.local/thinkdiag/report/promotion-comments.json'))
+          for body in comments:
+              subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/25/comments",'-f',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
+          # Verify every exact body is now present; comments are never silently skipped.
+          existing=subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/issues/25/comments','--paginate','--jq','.[].body'],text=True)
+          assert all(body in existing for body in comments), 'Promotion report comment verification failed'
+          print(f'Posted and verified {len(comments)-1} report parts and one key-numbers comment on PR #25')
+          PY
           rm -rf .local/thinkdiag/vehicle-packs-baseline
       - name: Publish Code 1 lifecycle sweep reports
         if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''
