@@ -13,6 +13,7 @@ on:
       - 'tools/thinkdiag/**'
       - '.github/workflows/thinkdiag-data.yml'
       - 'app/src/main/assets/datapacks/toyota-lexus-dtcs.json'
+      - 'docs/toyota-progress.md'
 
 permissions:
   contents: write
