@@ -243,10 +243,55 @@ The two groups this stage targets satisfy all of the above by construction of a 
 Ranking basis: systems behind each reason, i.e. the systems that would move forward if only that blocker were
 ported. Rank 1 alone would unlock more systems than everything else combined (24,832 of 39,340 rejected).
 
-### Per-group oracle result
+### Oracle result per compiled group (DATA, release-data run 45222723609, head `08fd98f`)
 
-NOT ESTABLISHED until the release-data run completes; the run posts its own `stage-1c-oracle.md` report and
-`stage-1c-oracle.json` in `ci-reports-v1`, and the PR comment carries the numbers.
+| Group | Systems | DTC labels | Compiled layout `count,start,bytes,asm,presence,mode` | Read | Clear | Oracle ran | Layout / Linkage / Display vectors | Result |
+|---|---:|---:|---|---|---|---|---|---|
+| `EU/Ecu_Data_0081.BIN`, fn 61, sel `0x11` | 79 | 1,414 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 99 / 34 / 1,414 | **PASS** |
+| `EU/Ecu_Data_0081.BIN`, fn 61, sel `0x51` | 79 | 1,414 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 99 / 34 / 1,414 | **PASS** |
+| `JP/Ecu_Data_0081.BIN`, fn 61, sel `0x11` | 30 | 1,111 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 66 / 34 / 1,111 | **PASS** |
+| `NA/Ecu_Data_0081.BIN`, fn 61, sel `0x51` | 15 | 1,414 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 99 / 34 / 1,414 | **PASS** |
+
+All four compiled groups describe the same record shape — count byte at 0, records from 1, two record bytes,
+assembly kind 2, no presence flag, mode low-bits 1 — so the decoder agreement is one shape confirmed four times,
+not four independent shapes. Result digests are recorded per leg in the run's own report.
+
+What the pass does **not** say: the payloads are synthesised, the record path is confirmed but no ECU reply was
+ever seen, and none of the P5 auxiliary side tables, mask discovery, transport or lifecycle behaviour is covered.
+Two probe iterations were needed to reach a clean pass and both were caught by the control: run
+`45210440758` compiled 0 groups (the compile was handed the native `.so` mapping instead of the English tables:
+`KeyError:'TCODE_EN.GAG'`), and run `45218407745` passed layout and display but failed linkage only on the label
+whose native code is `00000000`, where native and the port both correctly return no record.
+
+### ECMECT control (DATA, same run)
+
+- Pinned control row `SYSLIST_EU.BIN@0009d8f2`: 1,414 compiled DTC labels, required exactly 1,414 — satisfied.
+- The control row's own group-keyed oracle: PASS.
+- The pinned ECMECT packet path is untouched by this stage; its enabled output stays byte-identical at
+  30 PIDs / 1,414 DTCs / 1 ecuInfo.
+
+### Enablement (decision)
+
+Groups enabled: **0**. Systems enabled: **0**. New DTC definitions enabled: **0**. DTCs per enabled system are
+unchanged: ECMECT 1,414 and the pinned 2007 Innova slice 1,414.
+
+A group-keyed oracle pass is necessary but not sufficient, and the three blockers are exactly:
+
+1. `no_group_enable_path` — `convert_vehicle_packs.py:388-400` enables only the pinned ECMECT identity
+   (`toyota_ecmect_pack.enable`, `toyota_ecmect_pack.py:216`) and the pinned 2007 `systemId`
+   (`toyota_innova_2007_pack.enable` over `toyota_innova_2007_reads.py:20`); no path accepts a group key.
+2. `no_pinned_group_artifact` — `tools/thinkdiag/schema/` holds only `mandatory-read-artifacts-v1.json`,
+   `native-oracle-v1.json` and `innova-2007-source-read-candidate-v1.json`; there is no deterministic
+   expected-output pin for a compiled group definition.
+3. `per_system_link_projection` — `convert_vehicle_packs.py:370-390` marks a system proven only from
+   `self.oracle_evidence[oracle_key]` with a matching `projectionDigest` and a lifecycle projection, and
+   `convert_vehicle_packs.py:445` sets `enabled` only when `linkStatus == "proven"` and a category is executable.
+
+### Stage 1c cost (DATA, same run)
+
+- Oracle step wall clock 18.1 s, peak RSS 163.9 MiB (whole inspect job stays inside the 45-minute budget).
+- Container: 421,223,645 bytes (401.7 MiB), under the 480 MiB limit and under the 460 MiB review threshold.
+- Tests in the same run's own discovery: `Ran 311 tests ... OK (skipped=1)`.
 
 ## Evidence audit / next work
 
