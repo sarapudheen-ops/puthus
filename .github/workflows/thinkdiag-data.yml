@@ -256,15 +256,22 @@ jobs:
       - name: Run Stage 1 no-write K-Line category probe
         run: |
           set -euo pipefail
+          mkdir -p .local/thinkdiag/report
+          set +e
           python3 tools/thinkdiag/toyota_stage1_probe.py \
             --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
             --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
             --native-oracle .local/thinkdiag/report/native-oracle.json \
             --ecmect-review-dir .local/thinkdiag/vehicle-packs \
             --output .local/thinkdiag/report/stage-1-probe.md \
-            --json-output .local/thinkdiag/report/stage-1-probe.json
-          gh release upload ci-reports-v1 .local/thinkdiag/report/stage-1-probe.md \
-            .local/thinkdiag/report/stage-1-probe.json --clobber
+            --json-output .local/thinkdiag/report/stage-1-probe.json \
+            2>&1 | tee .local/thinkdiag/report/stage-1-probe-output.log
+          PROBE_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ -s .local/thinkdiag/report/stage-1-probe.md ]; then
+            gh release upload ci-reports-v1 .local/thinkdiag/report/stage-1-probe.md \
+              .local/thinkdiag/report/stage-1-probe.json --clobber
+          fi
           PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
           export PR_NUMBER
           python3 - .local/thinkdiag/report/stage-1-probe.md "$GITHUB_SHA" > .local/thinkdiag/report/stage-1-comments.json <<'PY'
@@ -288,6 +295,24 @@ jobs:
           existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments",'--jq','.[].body'],text=True)
           assert all(body in existing for body in bodies), 'Stage 1 probe comments were not verified'
           print(f'Posted and verified {len(bodies)} Stage 1 probe comment(s)')
+          PY
+          exit "$PROBE_STATUS"
+      - name: Publish Stage 1 probe FAILURE log
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
+          python3 - "$PR_NUMBER" "$GITHUB_SHA" <<'PY'
+          from pathlib import Path
+          import subprocess,sys,os
+          path=Path('.local/thinkdiag/report/stage-1-probe-output.log')
+          log='\\n'.join(path.read_text(errors='replace').splitlines()[-200:]) if path.is_file() else 'Probe failed before producing output; inspect the failing step exception/log.'
+          body=(f"# Stage 1 probe FAILURE log\\n\\nHead: {sys.argv[2]}\\n\\n````text\\n"+
+                log[-50000:]+"\\n````")
+          subprocess.run(['gh','api','--method','POST',f"repos/{__import__('os').environ['GH_REPO']}/issues/{sys.argv[1]}/comments",'-F',f'body={body}'],check=True)
           PY
       - name: Publish Code 1 lifecycle sweep reports
         if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''

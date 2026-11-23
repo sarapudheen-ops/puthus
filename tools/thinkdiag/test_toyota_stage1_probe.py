@@ -2,7 +2,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from toyota_category_translation import translate_categories
+from toyota_category_translation import translate_categories, normalize_ecu_file
 
 
 class Stage1TranslatorTests(unittest.TestCase):
@@ -19,16 +19,18 @@ class Stage1TranslatorTests(unittest.TestCase):
 
     def test_exact_ecmect_calls_existing_data_builder_and_counts(self):
         row = {"id":"SYSLIST_EU.BIN@0009d8f2", "region":"EU", "functionKey":61,
-               "entrySelector":0x11, "ecuFile":"EU/Ecu_Data_0081.BIN"}
+               "entrySelector":0x11, "ecuFile":"Ecu_Data_0081.BIN"}
+        self.assertEqual("EU/Ecu_Data_0081.BIN", normalize_ecu_file("EU", row["ecuFile"]))
         data = {"pids":[{"id":str(i)} for i in range(30)], "ecus":[{
             "diagnostics":{"faults":{"layout":{"labels":[{"id":str(i)} for i in range(1414)]}},
                            "identification":[{"id":"ecu"}]}}]}
         with patch("toyota_category_translation.verify_source_read_review"), \
              patch("toyota_category_translation.data_for", return_value=data):
-            got = translate_categories("EU", 61, 0x11, row, ecmect_review={})
+            got = translate_categories("EU", 61, 0x11, row, ecmect_review={}, reference_data=data)
         self.assertEqual({"pids":30,"dtcs":1414,"ecuInfo":1},
                          {c:got["counts"][c] for c in ("pids","dtcs","ecuInfo")})
         self.assertEqual("executable", got["categories"]["pids"])
+        self.assertTrue(got["ecmectControlByteIdentical"])
         self.assertFalse(got["oracleApproved"])
 
     def test_selector_mismatch_is_rejected_without_mutation(self):
