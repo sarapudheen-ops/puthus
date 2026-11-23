@@ -88,8 +88,12 @@ For tested source head `59e2afd7904be433ec6de376756081412b938934`:
 ## Stage 1b — parameterized non-ECMECT DTC probe
 
 STATUS: measured in release-data CI only. The sandbox has no `TOYOTA.zip`, so every number below comes
-from a completed run on the head recorded under *Measurements*. The commit that adds this section
-re-runs the same measurement on the final head; that run's own report is posted as a PR comment.
+from a completed release-data run on the head recorded under *Measurements*. The identical numbers were
+reproduced on two later heads, each on a green run: [45184668780](https://github.com/sarapudheen-ops/puthus/actions/runs/45184668780)
+(head `672fe1896fb52932c1b781cf2b9a702657b3ab7c`) and [45187523338](https://github.com/sarapudheen-ops/puthus/actions/runs/45187523338)
+(head `916facaec04aa2bdcd2b18a1c77661d95d6a557d`, probe step 18 success in 12s, probe wall clock 12.45s).
+Each run posts its own probe report as a PR comment, and the run's own head SHA is what the Stage 1b
+report comment cites.
 
 ### What changed (CODE)
 
