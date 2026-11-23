@@ -181,6 +181,73 @@ decoder-level and not keyed by `(Ecu_Data file, function, selector)` (`toyota_na
 so **no oracle result for non-ECMECT DTC exists** and nothing is enabled. The 4 compiled groups remain
 candidates; enabling any of them would require a per-group oracle that does not exist yet.
 
+## Stage 1c — group-keyed DTC oracle
+
+STATUS: every mechanism and the ranking below are CODE/DATA; per-group oracle numbers are filled only from a
+completed release-data run (cited under *Per-group oracle result*). The sandbox has no `TOYOTA.zip`, so no
+native vector was executed locally.
+
+### Why the existing comparisons cannot approve a group (CODE)
+
+`faultDecoderComparison` (`toyota_native_oracle.py:609`) and `p5DecoderComparison` (`:726`) choose their own
+layout grid — eight assembly/stride pairs x two modes x two presence flags, and the P5 start/width grid — and
+neither takes a `(Ecu_Data file, function, selector)` group. Stage 1c keeps the same bounded sandbox and the same
+native consumers but takes the layout from one compiled group:
+
+| Leg | Native consumer | Compiled / Python side | What a pass means |
+|---|---|---|---|
+| layout | `GetDTCCodeFromAnsP3P4` @0x14ae8; layout word and `context+0x18`/`context+0x1b0` built exactly as `compare_fault_decoder` builds them | `NativeFaultLayout.decode` (`toyota_faults.py:41`) with the group's own count index, record start/width, assembly kind, presence flag and mode low-bits | native projection equals the port for that group's own kinds, values and payload shapes |
+| linkage | same consumer | `encode_row`/`build_payload` (`toyota_group_oracle.py`) with the group's compiled `nativeCode` set | each sampled compiled DTC code survives the group's own record width and returns as itself |
+| display | `GetShowDtcInfo` @0x11f90 with the DTCF display imports | `FaultLabels` (`toyota_dtc_labels.py:59`) and the group's compiled `code`/`description` | native renders exactly the compiled pair for every compiled key of the group |
+
+Not covered, and therefore NOT ESTABLISHED: ECU replies (payload vectors are synthesised), P5 auxiliary
+freeze-frame/mask side tables and mask discovery, transport/lifecycle negotiation, and per-system vehicle
+applicability. The record-leg mask is `0xFF` for every group; the state half of each pair is covered
+exhaustively by the global comparison, so the group-keyed claim is the DTC code projection and the label set.
+
+### Pinned values the compiling groups satisfied (CODE)
+
+`compile_p3p4_diagnostics` (`toyota_runtime_compile.py:28`) and `compile_dtc_workflow`
+(`toyota_dtc_workflow.py:173`) gate on these, so a group that compiles has satisfied all of them:
+
+- `toyota_runtime_compile.py:36-39` exact regional SYSLIST record: region in EU/NA/JP, a complete 37-byte row,
+  native transport 1..5 and a `SYSLIST_<region>.BIN@` id.
+- `:41-43` caller mode (`system_bytes[33]`) is not 7 or 9.
+- `:44-46` the region's `FUNCDATA_<region>.BIN` index contains the function and `compile_dtc_workflow` accepts the
+  block: `toyota_dtc_workflow.py:177-179` (`byte1` is 1 or 2, i.e. a source P3/P4 fault block), `:180-183` at most
+  one initial template, `:184-191` that template binds to exactly one non-empty request, `:194-200` query kinds in
+  1..10 with at most five conditions.
+- `toyota_runtime_compile.py:54-63` every function-detail row is unconditional (no `commandCondition`) and detail
+  ids are non-empty and unique.
+- `:74-79` exactly one single-frame primary kind-1 fault-read primitive with an explicit positive service.
+- `toyota_dtc_labels.py:117-135` (`compile_p3p4_layout`): `byte1 == 1`, a decodable kind (kind 5 is refused,
+  `:127-131`), mode low-bits 0..7, availability mask 0, and no missing exact TCODE key.
+- `toyota_runtime_compile.py:95-102` the clear block is a single query of the exact KWP `04`/`44` class.
+- `:105` -> `toyota_ecuprogram.py:123-127` the system uses ECUF dispatch kind 14 with the exact
+  `09 04` / `FF FF` / `49 04` identity frame.
+
+The two groups this stage targets satisfy all of the above by construction of a successful compile. What they do
+**not** have is any of the enable pins listed under *Enablement*.
+
+### Reject reasons ranked by systems unlocked if that blocker were ported (DATA, Stage 1b run 45191744205)
+
+| Rank | Literal reject reason | Groups | Systems |
+|---:|---|---:|---:|
+| 1 | `ValueError:No unambiguous exact DTC function-detail source rows` | 137 | 24,832 |
+| 2 | `ValueError:Not a source P3/P4 fault block` | 60 | 8,112 |
+| 3 | `ValueError:No exact single-frame primary P3/P4 fault-read primitive` | 47 | 4,386 |
+| 4 | `ValueError:Not the exact single KWP04/44 clear class` | 25 | 1,369 |
+| 5 | `ValueError:Native caller mode 7/9 has additional unported overrides` | 7 | 547 |
+| 6 | `ValueError:Selected source system does not use ECUF dispatch kind 14` | 4 | 94 |
+
+Ranking basis: systems behind each reason, i.e. the systems that would move forward if only that blocker were
+ported. Rank 1 alone would unlock more systems than everything else combined (24,832 of 39,340 rejected).
+
+### Per-group oracle result
+
+NOT ESTABLISHED until the release-data run completes; the run posts its own `stage-1c-oracle.md` report and
+`stage-1c-oracle.json` in `ci-reports-v1`, and the PR comment carries the numbers.
+
 ## Evidence audit / next work
 
 CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `review_direct21` (`toyota_runtime_compile.py:114-145`), then `toyota_ecmect_pack.data_for` injects the 30 reviewed `liveReads` (`toyota_ecmect_pack.py:160-173`). Direct21 review items are disabled candidates (`toyota_live.py:313-318`). DTC/ECU-info definitions come from the same pinned compiler artifact (`toyota_runtime_compile.py:142-145`, `toyota_ecmect_pack.py:160-173`); `test_ecmect_pack.py` verifies 30/1,414/1 against the selected pack, and `verify_source_read_review` checks a deterministic compiler-output pin (`toyota_runtime_compile.py:173-220`, `tools/thinkdiag/schema/mandatory-read-artifacts-v1.json`). This is source/compiler regression evidence, not a native replay of emitted category records. **No oracle for non-ECMECT PID, DTC, or ecuInfo output is established.** No human sign-off hash is established beyond source/artifact SHA pins. Mode B must remain candidate-parse, not enabling.

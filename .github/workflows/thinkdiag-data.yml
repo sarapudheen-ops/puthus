@@ -209,6 +209,35 @@ jobs:
           END=$(date +%s)
           echo "[stage1b] elapsed=$((END-START))s exit=$PROBE_STATUS" | tee -a "$LOG"
           exit "$PROBE_STATUS"
+      - name: Run Stage 1c group-keyed DTC oracle (native replay per compiled group)
+        id: stage1c_oracle
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          mkdir -p .local/thinkdiag/report
+          LOG=.local/thinkdiag/report/stage-1c-oracle-step.log
+          python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py' \
+            > .local/thinkdiag/report/stage-1c-tests.log 2>&1 || true
+          START=$(date +%s)
+          set -x
+          python3 tools/thinkdiag/stage1c_group_oracle.py \
+            --archive .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --english .local/thinkdiag/english \
+            --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
+            --ecmect-review-dir .local/thinkdiag/vehicle-packs \
+            --pack-directory .local/thinkdiag/vehicle-packs \
+            --test-log .local/thinkdiag/report/stage-1c-tests.log \
+            --native-oracle .local/thinkdiag/report/native-oracle.json \
+            --head-sha "$GITHUB_SHA" \
+            --max-seconds 900 \
+            --output .local/thinkdiag/report/stage-1c-oracle.md \
+            --json-output .local/thinkdiag/report/stage-1c-oracle.json 2>&1 | tee "$LOG"
+          STATUS=${PIPESTATUS[0]}
+          END=$(date +%s)
+          echo "[stage1c] elapsed=$((END-START))s exit=$STATUS" | tee -a "$LOG"
+          exit "$STATUS"
       - name: Publish checksummed ECU program-dispatch input for exact reader work
         continue-on-error: true
         # The agent workspace cannot follow the release-asset storage redirect. Keep
@@ -331,6 +360,24 @@ jobs:
               post(f'# Stage 1b probe FAILURE log\n\nHead: {head}'
                    f'\nProbe step conclusion: {outcome}\n\n````text\n{tail[-40000:]}\n````')
           PY
+      - name: Publish Stage 1c oracle report
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          STEP_OUTCOME: ${{ steps.stage1c_oracle.outcome }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          PR_NUMBER="${PR_NUMBER:-$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number || true)}"
+          export PR_NUMBER
+          python3 tools/thinkdiag/publish_ci_report.py \
+            --title 'Stage 1c report' \
+            --report .local/thinkdiag/report/stage-1c-oracle.md \
+            --json-output .local/thinkdiag/report/stage-1c-oracle.json \
+            --log .local/thinkdiag/report/stage-1c-oracle-step.log \
+            --release ci-reports-v1
       - name: Publish Code 1 lifecycle sweep reports
         continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''
