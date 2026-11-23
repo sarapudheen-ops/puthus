@@ -149,6 +149,15 @@ Mode B (Stage 1b parameterized P3/P4 compile, one execution per group): **4 exec
 39,340 systems; 0 groups without a decision. These are *candidate* translations only: not oracle-approved,
 not enabled, and no pack or definition file is written.
 
+The 4 executable groups (DATA, this run), all with read request `13B0` and clear request `04`:
+`EU/Ecu_Data_0081.BIN` function 61 selector `0x11` — 79 systems, 1,414 labels, representative
+`SYSLIST_EU.BIN@0009d8f2` (the pinned ECMECT row); `EU/Ecu_Data_0081.BIN` function 61 selector `0x51` —
+79 systems, 1,414 labels, representative `SYSLIST_EU.BIN@00023995` (the pinned 2007 Innova candidate row);
+`JP/Ecu_Data_0081.BIN` function 61 selector `0x11` — 30 systems, 1,111 labels, representative
+`SYSLIST_JP.BIN@00003875`; `NA/Ecu_Data_0081.BIN` function 61 selector `0x51` — 15 systems, 1,414 labels,
+representative `SYSLIST_NA.BIN@0002bf2a`. Two of the four are already-pinned rows, so only **2 groups /
+45 systems** are new source-compilable candidates, and neither has an oracle.
+
 Mode B literal reject reasons (groups / systems): `ValueError:No unambiguous exact DTC function-detail
 source rows` 137 / 24,832; `ValueError:Not a source P3/P4 fault block` 60 / 8,112;
 `ValueError:No exact single-frame primary P3/P4 fault-read primitive` 47 / 4,386;
