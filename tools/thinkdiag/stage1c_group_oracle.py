@@ -213,9 +213,16 @@ def run(args, checks):
                 lines.append(f'- `{entry["key"][0]}`, {entry["key"][1]}, 0x{entry["key"][2]:02x} — {leg}: '
                              f'{detail["vectors"]:,} vectors pass, results `{detail["resultsSha256"][:16]}…`')
             else:
-                lines.append(f'- `{entry["key"][0]}`, {entry["key"][1]}, 0x{entry["key"][2]:02x} — {leg}: '
-                             f'FAIL after {detail["vectors"]:,} vectors')
+                reasons = []
+                if detail.get('notEncodableCount'):
+                    reasons.append('{} sample(s) do not fit the record width'.format(detail['notEncodableCount']))
+                if detail.get('zeroCodeCount'):
+                    reasons.append('{} sample(s) are the zero code'.format(detail['zeroCodeCount']))
+                extra = (' [' + '; '.join(reasons) + ']') if reasons else ''
+                lines.append(f'- `{entry["key"][0]}`, {entry["key"][1]}, 0x{entry["key"][2]:02x} - {leg}: '
+                             f'FAIL after {detail["vectors"]:,} vectors{extra}')
                 for failure in (detail.get('mismatches') or detail.get('failures') or [])[:SAMPLE_LIMIT]:
+                    lines.append(f'  - `{json.dumps(failure, sort_keys=True)}`')
                     lines.append(f'  - `{json.dumps(failure, sort_keys=True)}`')
     lines += ['']
 
@@ -234,10 +241,17 @@ def run(args, checks):
         lines.append(f'| {position} | `{reason}` | {count:,} | {unlocked[reason]:,} | {samples} |')
     lines += ['']
 
+    control_labels = control['compiled']['dtcCount'] if control else None
+    control_oracle = bool(control and control['oracle']['passed'])
+    control_failure = control['oracle']['failure'] if control else None
     lines += ['## ECMECT control', '',
-              f'- Control group oracle: {"PASS" if control_ok else "FAIL"} '
-              f'(compiled DTC labels {control["compiled"]["dtcCount"] if control else "NOT ESTABLISHED"} on the pinned row; '
-              f'required exactly {PINNED_DTCS:,}).',
+              '- Pinned control row `{}` compiled DTC labels: {} (required exactly {:,}): {}.'.format(
+                  CONTROL_SYSTEM, control_labels if control_labels is not None else 'NOT ESTABLISHED',
+                  PINNED_DTCS, 'satisfied' if control_labels == PINNED_DTCS else 'NOT satisfied'),
+              '- Pinned control row group-keyed oracle: {}{}.'.format(
+                  'PASS' if control_oracle else 'FAIL',
+                  ' ({})'.format(control_failure) if control_failure else ''),
+              '- Control verdict: {}.'.format('PASS' if control_ok else 'FAIL'),
               '- The pinned ECMECT packet path is untouched by this stage; its enabled output stays byte-identical '
               'at 30 PIDs / 1,414 DTCs / 1 ecuInfo.', '']
 

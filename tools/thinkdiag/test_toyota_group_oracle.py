@@ -23,6 +23,7 @@ class FakeNative:
         self.texts = texts or {}
         self.corrupt_decoder = corrupt_decoder
         self.corrupt_display = corrupt_display
+        self.drop_code = False
         self.calls = []
         self.libraries = {'libTOYOTA_DTCF.so': type('Library', (), {'sha256': 'fake'})()}
 
@@ -77,6 +78,8 @@ class FakeNative:
         mode = self.read(context + 0x18, 1)[0]
         layout = NativeFaultLayout(fields[0], fields[1], fields[2], fields[3], presence, mode)
         pairs = list(layout.decode(payload, kind, mask))
+        if self.drop_code:
+            pairs = []
         if self.corrupt_decoder and pairs:
             pairs[0] = (pairs[0][0], pairs[0][1] ^ 1)
         answer = self.allocate(4 + 8 * len(pairs))
@@ -202,6 +205,25 @@ class CompareLinkageAndDisplayTest(unittest.TestCase):
         self.assertFalse(result['passed'])
         self.assertEqual(2, result['notEncodableCount'])
         self.assertEqual([], result['failures'])
+
+    def test_linkage_does_not_call_the_zero_code_a_failure(self):
+        layout = NativeFaultLayout(1, 2, 4, 1, False, 0)
+        labels = [{'nativeCode': '00000000', 'code': '----', 'description': 'No fault'}]
+        result = compare_linkage(FakeNative(codes={'00000000': '----\\0No fault'}), layout, labels, [1], sample=2)
+        self.assertEqual(0, result['vectors'])
+        self.assertEqual(1, result['zeroCodeCount'])
+        self.assertEqual([], result['failures'])
+        self.assertFalse(result['passed'])
+
+    def test_linkage_fails_when_a_nonzero_code_never_returns(self):
+        layout = NativeFaultLayout(1, 2, 4, 1, False, 0)
+        native = FakeNative()
+        native.drop_code = True
+        labels = [{'nativeCode': '00000123', 'code': 'P0123', 'description': 'x'}]
+        result = compare_linkage(native, layout, labels, [1], sample=2)
+        self.assertEqual(1, result['vectors'])
+        self.assertFalse(result['passed'])
+        self.assertFalse(result['failures'][0]['codePresent'])
 
     def test_display_matches_compiled_labels(self):
         native = FakeNative(codes=CODES, texts=TEXTS)

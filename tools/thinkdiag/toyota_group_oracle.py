@@ -182,7 +182,11 @@ def compare_layout(native, layout, kinds, *, cases=None):
 
 
 def compare_linkage(native, layout, labels, kinds, *, sample=40):
-    """Leg 2: each sampled compiled DTC code survives the native record projection."""
+    """Leg 2: each sampled compiled DTC code survives the native record projection.
+
+    Samples whose code is 0 (the "no DTC" sentinel) or that do not fit the group's record
+    width are counted as not applicable; they never make an empty leg pass.
+    """
     if sample < 1:
         raise ValueError('linkage sample must be positive')
     ordered = sorted(labels, key=lambda label: int(label['nativeCode'], 16))
@@ -193,9 +197,15 @@ def compare_linkage(native, layout, labels, kinds, *, sample=40):
     digest = hashlib.sha256()
     failures = []
     not_encodable = []
+    zero_codes = []
     checked = 0
     for label in selected:
         code = int(label['nativeCode'], 16)
+        if code == 0:
+            # 0 is the "no DTC stored" sentinel: the decoder returns no record for it, so a
+            # present-code assertion cannot apply. Native vs port is still compared below.
+            zero_codes.append(label['nativeCode'])
+            continue
         try:
             row = encode_row(layout, code)
         except ValueError as error:
@@ -218,7 +228,7 @@ def compare_linkage(native, layout, labels, kinds, *, sample=40):
                                  'codePresent': code in codes})
     return {'sampled': len(selected), 'vectors': checked, 'passed': bool(checked) and not failures,
             'failures': failures, 'notEncodable': not_encodable[:MISMATCH_LIMIT],
-            'notEncodableCount': len(not_encodable),
+            'notEncodableCount': len(not_encodable), 'zeroCodeCount': len(zero_codes),
             'resultsSha256': digest.hexdigest(), 'kind': kind, 'of': len(ordered)}
 
 
