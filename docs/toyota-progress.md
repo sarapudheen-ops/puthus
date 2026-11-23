@@ -87,8 +87,9 @@ For tested source head `59e2afd7904be433ec6de376756081412b938934`:
 
 ## Stage 1b — parameterized non-ECMECT DTC probe
 
-STATUS: NOT ESTABLISHED. This section is filled only from a completed `release-data` run on the
-head recorded below; nothing here is inferred from a local sandbox, which has no `TOYOTA.zip`.
+STATUS: measured in release-data CI only. The sandbox has no `TOYOTA.zip`, so every number below comes
+from a completed run on the head recorded under *Measurements*. The commit that adds this section
+re-runs the same measurement on the final head; that run's own report is posted as a PR comment.
 
 ### What changed (CODE)
 
@@ -113,9 +114,59 @@ head recorded below; nothing here is inferred from a local sandbox, which has no
 - Group time budget is `--max-seconds 600` inside a 15-minute step timeout in a 45-minute job. Groups not
   reached are reported as `notProcessed`, never as a per-system reject.
 
-### Measurements on this head
+### Measurements (release-data CI only)
 
-NOT ESTABLISHED until the run completes.
+Source run: [45181808200](https://github.com/sarapudheen-ops/puthus/actions/runs/45181808200),
+head `09f5b96b33532d7dfbdd78cca6f74e79b2500c5b`, conclusion **success**, 13:13:36Z–13:29:23Z.
+Probe step (job step 18, "Run Stage 1b parameterized DTC probe (group-based, read-only)") conclusion
+**success**, 13:23:31Z–13:23:43Z; the probe's own wall clock 12.4s, peak RSS 146.4 MiB, 16 decoded source
+files checksum-verified. Report comment: [Stage 1b probe report](https://github.com/sarapudheen-ops/puthus/pull/28#issuecomment-7102476324);
+artifacts `stage-1b-probe.md` / `stage-1b-probe.json` in `ci-reports-v1`.
+
+| Measure | Value |
+|---|---:|
+| System records read from `systems.jsonl.gz` | 287,030 |
+| Eligible promotion-partition systems | 39,543 |
+| Partition: transport-1 proven / exact pinned ECMECT / transport-5 unproven | 39,362 / 1 / 180 |
+| Distinct (Ecu_Data file, function, selector) groups executed | 284 of 284 |
+| Systems beyond one representative per group | 39,259 |
+| Groups without a decision (budget, 600s cap) | 0 |
+
+Mode A (existing strict pinned translator, group-executed): `pids`, `dtcs` and `ecuInfo` each have
+1 executable group / 1 executable system and 283 rejected groups / 39,542 rejected systems;
+`actuators`, `coding` and `specialFunctions` have 0 executable groups and 284 rejected groups / 39,543
+rejected systems. Zero translator exceptions.
+
+Mode A literal reject reasons (systems, five sample keys in the PR comment):
+`ecmect_specific:mandatory_system_and_live_read_review` 39,542; `ecmect_specific:mandatory_system_and_p3p4_workflow`
+39,542; `ecmect_specific:mandatory_system_and_ecu_identification` 39,542; `no_generic_translator:actuators`
+39,542; `no_generic_translator:coding` 39,542; `no_generic_translator:specialFunctions` 39,542;
+`ecmect_compiler_returned_no_definitions` 1 each for actuators, coding and specialFunctions
+(`SYSLIST_EU.BIN@0009d8f2`).
+
+Mode B (Stage 1b parameterized P3/P4 compile, one execution per group): **4 executable groups covering
+203 systems, 5,353 DTC labels, 4 groups with a source `04`/`44` clear**; 280 rejected groups covering
+39,340 systems; 0 groups without a decision. These are *candidate* translations only: not oracle-approved,
+not enabled, and no pack or definition file is written.
+
+Mode B literal reject reasons (groups / systems): `ValueError:No unambiguous exact DTC function-detail
+source rows` 137 / 24,832; `ValueError:Not a source P3/P4 fault block` 60 / 8,112;
+`ValueError:No exact single-frame primary P3/P4 fault-read primitive` 47 / 4,386;
+`ValueError:Not the exact single KWP04/44 clear class` 25 / 1,369; `ValueError:Native caller mode 7/9 has
+additional unported overrides` 7 / 547; `ValueError:Selected source system does not use ECUF dispatch kind 14`
+4 / 94.
+
+ECMECT control (DATA, this run): Mode A counts `{'pids': 30, 'dtcs': 1414, 'ecuInfo': 1}` on
+`SYSLIST_EU.BIN@0009d8f2`, byte-identical to the enabled-pack output **True**, control **passed**; the
+parameterized P3/P4 compile on the same row also returns **1,414 DTC labels**, read request `13B0`, clear
+request `04`.
+
+Oracle (NOT ESTABLISHED for non-ECMECT DTC): the run's native comparison contains
+`faultDecoderComparison` (70,144 state vectors, 2,112 record vectors) and `p5DecoderComparison`
+(49,152 record vectors, 395 source blocks), both with `nativeInstructionsExecuted: true`. Both are
+decoder-level and not keyed by `(Ecu_Data file, function, selector)` (`toyota_native_oracle.py:609`, `:726`),
+so **no oracle result for non-ECMECT DTC exists** and nothing is enabled. The 4 compiled groups remain
+candidates; enabling any of them would require a per-group oracle that does not exist yet.
 
 ## Evidence audit / next work
 

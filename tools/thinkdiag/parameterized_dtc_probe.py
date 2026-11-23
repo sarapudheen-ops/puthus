@@ -461,6 +461,17 @@ def run(args, checks):
     lines += ['', 'A compiled group is a **candidate** DTC translation: it is not oracle-approved and it is '
               'not enabled. Compilation success proves only that the existing source compiler accepted that '
               'exact source row.', '']
+    compiled_groups = [(key, value) for key, value in group_results.items() if value['compiled']]
+    lines += ['### Executable (candidate) groups, first 50 of {:,}'.format(len(compiled_groups)), '',
+              '| Ecu_Data file, function, selector | Representative system | Systems | DTC labels | Read | Clear |',
+              '|---|---|---:|---:|---|---|']
+    for key, value in compiled_groups[:50]:
+        lines.append(f'| `{key[0]}`, {key[1]}, 0x{key[2]:02x} | `{value["representative"]}` | '
+                     f'{value["systems"]:,} | {value["dtcCount"]:,} | `{value["readRequest"]}` | '
+                     f'`{value["clearRequest"]}` |')
+    if not compiled_groups:
+        lines.append('| (none) | — | 0 | 0 | — | — |')
+    lines += ['']
 
     lines += ['## Oracle comparison (non-ECMECT)', '']
     if not oracle['available']:
