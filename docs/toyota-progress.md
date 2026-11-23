@@ -36,6 +36,8 @@
 
 ## Stage 1 control correction and successful probe
 
+Documentation follow-up head `0c663b6280884393017e54320195e7e402b974b8` was pushed to record these results. Its automatic release-data run was cancelled by GitHub before concluding, so a fresh push-triggered run is required to confirm this exact docs head; the successful code-bearing probe run below remains the completed green release-data evidence.
+
 Historical failed attempts are retained in the PR discussion; they are superseded by the successful run linked here. The literal strict-translator reject reasons observed before the fix included `ecmect_specific:mandatory_system_and_live_read_review`, `ecmect_specific:mandatory_system_and_p3p4_workflow`, and `ecmect_specific:mandatory_system_and_ecu_identification`.
 
 Root cause (CODE): the strict translation call received the first row in a shared `(Ecu_Data file,function,selector)` group as its `system_row`; the converter instead calls `enable(value, review, lifecycle)` using the exact ECMECT system record. The probe had been applying the exact pinned acceptance path to a group representative, not the exact row `SYSLIST_EU.BIN@0009d8f2`. The fix preserves that exact system row for the control and supplies the source-derived lifecycle to the same `data_for(review, lifecycle)` builder used by `toyota_ecmect_pack.enable`. The pinned region/function/selector/system/ECU checks are unchanged. Tests verify the `data_for(review, lifecycle)` argument shape, 30/1,414/1 counts, byte identity, and that another system in the same tuple does not inherit ECMECT results.
