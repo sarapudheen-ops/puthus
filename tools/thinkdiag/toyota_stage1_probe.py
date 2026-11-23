@@ -34,6 +34,16 @@ def ecmect_entry(decoded):
     return entry.report()
 
 
+def ecmect_source_lifecycle(decoded):
+    from toyota_entries import EntryIndex
+    from toyota_frames import SourceFrames
+    from toyota_lifecycle import selected_fast_kwp_lifecycle
+    index = EntryIndex((decoded / "SYSTEMENTER.BIN").read_bytes())
+    frames = SourceFrames({name: (decoded / name).read_bytes() for name in (
+        "EU/Toyota_bin_00.BIN", "EU/Toyota_bin_11.BIN", "EU/Toyota_bin_12.BIN")}, "EU")
+    return selected_fast_kwp_lifecycle(index, frames, region=1, function=61, selector=0x11)
+
+
 def ecmect_reference(pack_dir):
     from vehicle_bundle import read_object
     index = json.loads((pack_dir / "index.json").read_bytes())
@@ -199,6 +209,7 @@ def run(args):
     review = load_review(args.ecmect_review_dir)
     control_system = ecmect_reference(args.ecmect_review_dir)
     exact_entry = ecmect_entry(args.decoded)
+    control_lifecycle = ecmect_source_lifecycle(args.decoded)
     status_counts = {c: Counter() for c in CATEGORIES}
     reason_systems = Counter()
     reason_region_class = Counter()
@@ -220,6 +231,7 @@ def run(args):
             source_row["ecuFile"] = key[0]
             outcome = translate_categories(row["region"], row["functionKey"], row["entrySelector"], source_row,
                                            ecmect_review=review,
+                                           lifecycle=control_lifecycle if row.get("id") == "SYSLIST_EU.BIN@0009d8f2" else None,
                                            reference_data=control_system["data"] if row.get("id") == "SYSLIST_EU.BIN@0009d8f2" else None)
             group_outcomes[key] = outcome
         except Exception as exc:

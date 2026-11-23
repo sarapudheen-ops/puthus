@@ -23,7 +23,7 @@ def normalize_ecu_file(region, filename):
 
 
 def translate_categories(region, function, selector, system_row, *, ecmect_review=None,
-                         reference_data=None):
+                         lifecycle=None, reference_data=None):
     """Translate one exact source system without mutation or IO."""
     if region not in ("EU", "NA", "JP") or type(function) is not int or type(selector) is not int:
         raise ValueError("exact_region_function_selector_required")
@@ -39,7 +39,7 @@ def translate_categories(region, function, selector, system_row, *, ecmect_revie
     statuses, reasons, counts = {}, {}, {}
     if exact_ecmect and ecmect_review is not None:
         verify_source_read_review(ecmect_review)
-        data = data_for(ecmect_review)
+        data = data_for(ecmect_review, lifecycle)
         for cat in CATEGORIES:
             defs = category_definitions(data, cat, FIELDS[cat])
             translated[cat] = deepcopy(defs)

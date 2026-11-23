@@ -24,9 +24,13 @@ class Stage1TranslatorTests(unittest.TestCase):
         data = {"pids":[{"id":str(i)} for i in range(30)], "ecus":[{
             "diagnostics":{"faults":{"layout":{"labels":[{"id":str(i)} for i in range(1414)]}},
                            "identification":[{"id":"ecu"}]}}]}
+        lifecycle = object()
+        review = {"verified":True}
         with patch("toyota_category_translation.verify_source_read_review"), \
-             patch("toyota_category_translation.data_for", return_value=data):
-            got = translate_categories("EU", 61, 0x11, row, ecmect_review={}, reference_data=data)
+             patch("toyota_category_translation.data_for", return_value=data) as builder:
+            got = translate_categories("EU", 61, 0x11, row, ecmect_review=review,
+                                       lifecycle=lifecycle, reference_data=data)
+        builder.assert_called_once_with(review, lifecycle)
         self.assertEqual({"pids":30,"dtcs":1414,"ecuInfo":1},
                          {c:got["counts"][c] for c in ("pids","dtcs","ecuInfo")})
         self.assertEqual("executable", got["categories"]["pids"])
