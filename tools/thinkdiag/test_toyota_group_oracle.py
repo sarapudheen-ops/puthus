@@ -264,6 +264,27 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class CompileLibrariesTest(unittest.TestCase):
+    def test_compile_libraries_are_the_english_tables_not_the_native_bytes(self):
+        from stage1c_group_oracle import compile_libraries
+        tables = compile_libraries(CODES, TEXTS)
+        self.assertEqual({'TCODE_EN.GAG', 'TEXT_EN.GAG'}, set(tables))
+        self.assertIs(CODES, tables['TCODE_EN.GAG'])
+        with self.assertRaises(ValueError):
+            compile_libraries(b'not a table', TEXTS)
+
+    def test_wrong_compile_libraries_stay_a_literal_reject(self):
+        from toyota_category_translation_v2 import parameterized_dtc_group
+        from test_toyota_runtime_compile import runtime_fixture
+        sources, libraries, raw = runtime_fixture()
+        native_style = {'libTOYOTA_DTCF.so': b'\x7fELF'}
+        result = parameterized_dtc_group(sources, native_style, region='EU',
+                                        system_id='SYSLIST_EU.BIN@00000000',
+                                        system_bytes=raw, native_transport=1)
+        self.assertFalse(result['executable'])
+        self.assertIn("KeyError:'TCODE_EN.GAG'", result['rejectReason'])
+
+
 class PublishHelperTest(unittest.TestCase):
     def test_chunks_cover_the_whole_report(self):
         from publish_ci_report import build_comments, chunk_text

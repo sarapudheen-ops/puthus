@@ -47,6 +47,17 @@ ENABLE_BLOCKERS = (
 )
 
 
+def compile_libraries(codes, texts):
+    """The decoded English tables `compile_p3p4_diagnostics` needs (`toyota_runtime_compile.py:80`).
+
+    The native `.so` bytes from `load_libraries` are a different mapping and must never be
+    passed as the compile libraries; doing so raises `KeyError: 'TCODE_EN.GAG'` for every group.
+    """
+    if not isinstance(codes, dict) or not isinstance(texts, dict):
+        raise ValueError('english_tables:not_objects')
+    return {'TCODE_EN.GAG': codes, 'TEXT_EN.GAG': texts}
+
+
 def parse_test_counts(path):
     """Read the CI test step's own output; never invent a count."""
     if path is None or not path.is_file():
@@ -77,11 +88,14 @@ def container_bytes(pack_directory):
 
 def run(args, checks):
     started = time.perf_counter()
-    libraries = load_libraries(args.archive)
+    native_libraries = load_libraries(args.archive)
     codes = json.loads((args.english / 'TCODE_EN.GAG.json').read_text())
     texts = json.loads((args.english / 'TEXT_EN.GAG.json').read_text())
+    # compile_p3p4_diagnostics reads the decoded English tables (toyota_runtime_compile.py:80),
+    # not the native .so bytes; the oracle needs the libraries. Keep them separate.
+    text_libraries = compile_libraries(codes, texts)
     sources = VerifiedSources(args.decoded, json.loads(args.manifest.read_text()))
-    session = OracleSession(libraries, codes, texts)
+    session = OracleSession(native_libraries, codes, texts)
 
     total_records, eligible = stream_eligible(args.systems)
     groups = defaultdict(list)
@@ -103,7 +117,7 @@ def run(args, checks):
             if (int.from_bytes(raw[0:4], 'little'), raw[27]) != (representative['functionKey'],
                                                                  representative['entrySelector']):
                 raise ValueError('system_row_identity_mismatch')
-            compiled = parameterized_dtc_group(sources, libraries, region=representative['region'],
+            compiled = parameterized_dtc_group(sources, text_libraries, region=representative['region'],
                                                system_id=representative['id'], system_bytes=raw,
                                                native_transport=representative['nativeTransport'])
         except Exception as error:
