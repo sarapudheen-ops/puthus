@@ -215,6 +215,7 @@ jobs:
             --output .local/thinkdiag/report
           cat .local/thinkdiag/report/code1-link-evidence-summary.md
       - name: Publish Code 1 link-promotion report
+        continue-on-error: true
         run: |
           python3 tools/thinkdiag/report_code1_link_promotion.py .local/thinkdiag/vehicle-packs \
             --baseline-index .local/thinkdiag/vehicle-packs-baseline/index.json \
