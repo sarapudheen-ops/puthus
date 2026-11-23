@@ -36,7 +36,7 @@
 
 ## Stage 1 control correction and successful probe
 
-Documentation follow-up head `0c663b6280884393017e54320195e7e402b974b8` was pushed to record these results. Its automatic release-data run was cancelled by GitHub before concluding, so a fresh push-triggered run is required to confirm this exact docs head; the successful code-bearing probe run below remains the completed green release-data evidence.
+The documentation follow-up initially triggered a cancelled run; a subsequent push-triggered run on `86eac0303a5e437313365fb9d73609708f3fb704` completed successfully: [release-data run 45098479618](https://github.com/sarapudheen-ops/puthus/actions/runs/45098479618), 14m36s.
 
 Historical failed attempts are retained in the PR discussion; they are superseded by the successful run linked here. The literal strict-translator reject reasons observed before the fix included `ecmect_specific:mandatory_system_and_live_read_review`, `ecmect_specific:mandatory_system_and_p3p4_workflow`, and `ecmect_specific:mandatory_system_and_ecu_identification`.
 
