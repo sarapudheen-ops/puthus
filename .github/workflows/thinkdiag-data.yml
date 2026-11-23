@@ -51,7 +51,7 @@ jobs:
     name: Inspect owner-verified Toyota specification
     if: github.event_name != 'workflow_dispatch' || !inputs.recover-source-inputs
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -248,56 +248,64 @@ jobs:
           for body in comments:
               subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/25/comments",'-f',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
           # Verify every exact body is now present; comments are never silently skipped.
-          existing=subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/issues/25/comments','--paginate','--jq','.[].body'],text=True)
+          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/25/comments","--jq","".[].body"],text=True)
           assert all(body in existing for body in comments), 'Promotion report comment verification failed'
           print(f'Posted and verified {len(comments)-1} report parts and one key-numbers comment on PR #25')
           PY
           rm -rf .local/thinkdiag/vehicle-packs-baseline
-      - name: Run Stage 1 no-write K-Line category probe
+      - name: Run Stage 1b parameterized DTC translator probe (cheap group-based)
+        timeout-minutes: 15
         run: |
           set -euo pipefail
-          mkdir -p .local/thinkdiag/report
-          set +e
-          python3 tools/thinkdiag/toyota_stage1_probe.py \
+          LOG=.local/thinkdiag/report/stage-1b-probe-step.log
+          START_TIME=$(date +%s)
+          exec > >(tee "$LOG") 2>&1
+          set -x
+          echo "[stage1b] start parameterized_dtc_probe at $(date)"
+          python3 tools/thinkdiag/parameterized_dtc_probe.py \
             --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
-            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
+            --decoded .local/thinkdiag/decoded \
+            --english .local/thinkdiag/english \
             --native-oracle .local/thinkdiag/report/native-oracle.json \
             --ecmect-review-dir .local/thinkdiag/vehicle-packs \
-            --output .local/thinkdiag/report/stage-1-probe.md \
-            --json-output .local/thinkdiag/report/stage-1-probe.json \
-            2>&1 | tee .local/thinkdiag/report/stage-1-probe-output.log
+            --output .local/thinkdiag/report/stage-1b-probe.md \
+            --json-output .local/thinkdiag/report/stage-1b-probe.json
+          END_TIME=$(date +%s)
+          ELAPSED=$((END_TIME - START_TIME))
+          echo "[stage1b] parameterized_dtc_probe finished at $(date) in ${ELAPSED}s" >> "$LOG"
+          echo "PROBE_STEP_TIME=${ELAPSED}" >> "$GITHUB_ENV"
           PROBE_STATUS=${PIPESTATUS[0]}
           set -e
-          if [ -s .local/thinkdiag/report/stage-1-probe.md ]; then
-            gh release upload ci-reports-v1 .local/thinkdiag/report/stage-1-probe.md \
-              .local/thinkdiag/report/stage-1-probe.json --clobber
+          if [ -s .local/thinkdiag/report/stage-1b-probe.md ]; then
+            gh release upload ci-reports-v1 .local/thinkdiag/report/stage-1b-probe.md \
+              .local/thinkdiag/report/stage-1b-probe.json --clobber
           fi
           PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
           export PR_NUMBER
-          python3 - .local/thinkdiag/report/stage-1-probe.md "$GITHUB_SHA" > .local/thinkdiag/report/stage-1-comments.json <<'PY'
+          python3 - .local/thinkdiag/report/stage-1b-probe.md "$GITHUB_SHA" > .local/thinkdiag/report/stage-1b-comments.json <<'PY'
           import datetime,json,pathlib,sys
           text=pathlib.Path(sys.argv[1]).read_text()
           size=20000
           chunks=[text[i:i+size] for i in range(0,len(text),size)] or ['(empty probe)']
           out=[]
           for i,chunk in enumerate(chunks,1):
-              header=f"# Stage 1 probe - part {i}/{len(chunks)}"
-              if i==1: header+=f"\n\nHead: {sys.argv[2]}\nUTC: {datetime.datetime.now(datetime.timezone.utc).isoformat()}"
+              header=f"# Stage 1b report - part {i}/{len(chunks)}"
+              if i==1: header+=f"\n\nHead: {sys.argv[2]}\nUTC: {datetime.datetime.now(datetime.timezone.utc).isoformat()}\nPROBE_STEP_TIME: {os.environ.get('PROBE_STEP_TIME','NOT_ESTABLISHED')}"
               out.append(header+'\n\n'+chunk)
           print(json.dumps(out))
           PY
           python3 - <<'PY'
           import json,os,subprocess
-          bodies=json.load(open('.local/thinkdiag/report/stage-1-comments.json'))
+          bodies=json.load(open('.local/thinkdiag/report/stage-1b-comments.json'))
           pr=os.environ['PR_NUMBER']
           for body in bodies:
               subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments",'-F',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
-          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments",'--jq','.[].body'],text=True)
-          assert all(body in existing for body in bodies), 'Stage 1 probe comments were not verified'
-          print(f'Posted and verified {len(bodies)} Stage 1 probe comment(s)')
+          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments","--jq","".[].body"],text=True)
+          assert all(body in existing for body in bodies), 'Stage 1b probe comments were not verified'
+          print(f'Posted and verified {len(bodies)} Stage 1b probe comment(s)')
           PY
           exit "$PROBE_STATUS"
-      - name: Publish Stage 1 probe FAILURE log
+      - name: Publish Stage 1b probe FAILURE log
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -308,10 +316,10 @@ jobs:
           python3 - "$PR_NUMBER" "$GITHUB_SHA" <<'PY'
           from pathlib import Path
           import subprocess,sys,os
-          path=Path('.local/thinkdiag/report/stage-1-probe-output.log')
-          log='\\n'.join(path.read_text(errors='replace').splitlines()[-200:]) if path.is_file() else 'Probe failed before producing output; inspect the failing step exception/log.'
-          body=(f"# Stage 1 probe FAILURE log\\n\\nHead: {sys.argv[2]}\\n\\n````text\\n"+
-                log[-50000:]+"\\n````")
+          path=Path('.local/thinkdiag/report/stage-1b-probe-step.log')
+          log='\n'.join(path.read_text(errors='replace').splitlines()[-200:]) if path.is_file() else 'Probe failed before producing output; inspect the failing step exception/log.'
+          body=(f"# Stage 1b probe FAILURE log\n\nHead: {sys.argv[2]}\n\n````text\n"+
+                log[-50000:]+"````")
           subprocess.run(['gh','api','--method','POST',f"repos/{__import__('os').environ['GH_REPO']}/issues/{sys.argv[1]}/comments",'-F',f'body={body}'],check=True)
           PY
       - name: Publish Code 1 lifecycle sweep reports
