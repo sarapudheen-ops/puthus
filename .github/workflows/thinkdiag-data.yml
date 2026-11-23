@@ -51,7 +51,7 @@ jobs:
     name: Inspect owner-verified Toyota specification
     if: github.event_name != 'workflow_dispatch' || !inputs.recover-source-inputs
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -98,25 +98,6 @@ jobs:
             -f status=completed -f conclusion=success \
             -f 'output[title]=Exact source join; adapter equivalence not approved' \
             -F 'output[summary]=@.local/thinkdiag/report/innova-2007-join.json'
-      - name: Publish checksummed ECU program-dispatch input for exact reader work
-        # The agent workspace cannot follow the release-asset storage redirect. Keep
-        # this small, owner-verified source input in research evidence, never Git/APK.
-        run: |
-          python3 - <<'PY'
-          import base64, hashlib, json, zlib
-          from pathlib import Path
-          source = Path('.local/thinkdiag/decoded/ECUPROGRAM.BIN').read_bytes()
-          manifest = json.loads(Path('.local/thinkdiag/report/decoded-manifest.json').read_text())
-          item = next(r for r in manifest if r['file'] == 'ECUPROGRAM.BIN')
-          assert len(source) == item['bytes'] and hashlib.sha256(source).hexdigest() == item['sha256']
-          record = {**item, 'compression': 'zlib', 'base64': base64.b64encode(zlib.compress(source, 9)).decode('ascii')}
-          Path('.local/thinkdiag/report/ecu-program-input.json').write_text(json.dumps(record, sort_keys=True))
-          PY
-          gh api --method POST "repos/$GH_REPO/check-runs" \
-            -f name='Toyota exact ECU program input' -f head_sha="$GITHUB_SHA" \
-            -f status=completed -f conclusion=success \
-            -f 'output[title]=Owner-source ECUPROGRAM input; not executable coverage' \
-            -F 'output[summary]=@.local/thinkdiag/report/ecu-program-input.json'
       - name: Compare supplied FILE COMM SYSP DTCF CALC instructions with bounded ports (offline only)
         id: native_oracle
         run: |
@@ -125,17 +106,6 @@ jobs:
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --output .local/thinkdiag/report/native-oracle.json \
             --evidence-output .local/thinkdiag/report/code1-link-evidence.json
-      - name: Publish native comparison outcome (including failed reference gates)
-        if: always() && hashFiles('.local/thinkdiag/report/native-oracle.md') != ''
-        run: |
-          if [ -f .local/thinkdiag/report/code1-link-evidence.json ]; then
-            gh release upload ci-reports-v1 .local/thinkdiag/report/code1-link-evidence.json --clobber
-          fi
-          gh api --method POST "repos/$GH_REPO/check-runs" \
-            -f name='Toyota offline native differential' -f head_sha="$GITHUB_SHA" \
-            -f status=completed -f conclusion='${{ steps.native_oracle.outcome }}' \
-            -f 'output[title]=Bounded offline semantic comparison; no adapter or ECU' \
-            -F 'output[summary]=@.local/thinkdiag/report/native-oracle.md'
       - name: Sweep every diagnostic-table family and native reader
         run: |
           python3 tools/thinkdiag/sweep_toyota.py .local/thinkdiag/TOYOTA.zip \
@@ -214,7 +184,94 @@ jobs:
             .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json \
             --output .local/thinkdiag/report
           cat .local/thinkdiag/report/code1-link-evidence-summary.md
+      - name: Run Stage 1b parameterized DTC probe (group-based, read-only)
+        id: stage1b_probe
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          mkdir -p .local/thinkdiag/report
+          LOG=.local/thinkdiag/report/stage-1b-probe-step.log
+          START=$(date +%s)
+          set -x
+          python3 tools/thinkdiag/parameterized_dtc_probe.py \
+            --archive .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --english .local/thinkdiag/english \
+            --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
+            --native-oracle .local/thinkdiag/report/native-oracle.json \
+            --ecmect-review-dir .local/thinkdiag/vehicle-packs \
+            --head-sha "$GITHUB_SHA" \
+            --max-seconds 600 \
+            --output .local/thinkdiag/report/stage-1b-probe.md \
+            --json-output .local/thinkdiag/report/stage-1b-probe.json 2>&1 | tee "$LOG"
+          PROBE_STATUS=${PIPESTATUS[0]}
+          END=$(date +%s)
+          echo "[stage1b] elapsed=$((END-START))s exit=$PROBE_STATUS" | tee -a "$LOG"
+          exit "$PROBE_STATUS"
+      - name: Run Stage 1c group-keyed DTC oracle (native replay per compiled group)
+        id: stage1c_oracle
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          mkdir -p .local/thinkdiag/report
+          LOG=.local/thinkdiag/report/stage-1c-oracle-step.log
+          python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py' \
+            > .local/thinkdiag/report/stage-1c-tests.log 2>&1 || true
+          START=$(date +%s)
+          set -x
+          python3 tools/thinkdiag/stage1c_group_oracle.py \
+            --archive .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --english .local/thinkdiag/english \
+            --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
+            --ecmect-review-dir .local/thinkdiag/vehicle-packs \
+            --pack-directory .local/thinkdiag/vehicle-packs \
+            --test-log .local/thinkdiag/report/stage-1c-tests.log \
+            --native-oracle .local/thinkdiag/report/native-oracle.json \
+            --head-sha "$GITHUB_SHA" \
+            --max-seconds 900 \
+            --output .local/thinkdiag/report/stage-1c-oracle.md \
+            --json-output .local/thinkdiag/report/stage-1c-oracle.json 2>&1 | tee "$LOG"
+          STATUS=${PIPESTATUS[0]}
+          END=$(date +%s)
+          echo "[stage1c] elapsed=$((END-START))s exit=$STATUS" | tee -a "$LOG"
+          exit "$STATUS"
+      - name: Publish checksummed ECU program-dispatch input for exact reader work
+        continue-on-error: true
+        # The agent workspace cannot follow the release-asset storage redirect. Keep
+        # this small, owner-verified source input in research evidence, never Git/APK.
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, zlib
+          from pathlib import Path
+          source = Path('.local/thinkdiag/decoded/ECUPROGRAM.BIN').read_bytes()
+          manifest = json.loads(Path('.local/thinkdiag/report/decoded-manifest.json').read_text())
+          item = next(r for r in manifest if r['file'] == 'ECUPROGRAM.BIN')
+          assert len(source) == item['bytes'] and hashlib.sha256(source).hexdigest() == item['sha256']
+          record = {**item, 'compression': 'zlib', 'base64': base64.b64encode(zlib.compress(source, 9)).decode('ascii')}
+          Path('.local/thinkdiag/report/ecu-program-input.json').write_text(json.dumps(record, sort_keys=True))
+          PY
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota exact ECU program input' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Owner-source ECUPROGRAM input; not executable coverage' \
+            -F 'output[summary]=@.local/thinkdiag/report/ecu-program-input.json'
+      - name: Publish native comparison outcome (including failed reference gates)
+        continue-on-error: true
+        if: always() && hashFiles('.local/thinkdiag/report/native-oracle.md') != ''
+        run: |
+          if [ -f .local/thinkdiag/report/code1-link-evidence.json ]; then
+            gh release upload ci-reports-v1 .local/thinkdiag/report/code1-link-evidence.json --clobber
+          fi
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota offline native differential' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion='${{ steps.native_oracle.outcome }}' \
+            -f 'output[title]=Bounded offline semantic comparison; no adapter or ECU' \
+            -F 'output[summary]=@.local/thinkdiag/report/native-oracle.md'
       - name: Publish Code 1 link-promotion report
+        continue-on-error: true
         run: |
           python3 tools/thinkdiag/report_code1_link_promotion.py .local/thinkdiag/vehicle-packs \
             --baseline-index .local/thinkdiag/vehicle-packs-baseline/index.json \
@@ -248,73 +305,81 @@ jobs:
           for body in comments:
               subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/25/comments",'-f',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
           # Verify every exact body is now present; comments are never silently skipped.
-          existing=subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/issues/25/comments','--paginate','--jq','.[].body'],text=True)
+          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/25/comments","--jq","".[].body"],text=True)
           assert all(body in existing for body in comments), 'Promotion report comment verification failed'
           print(f'Posted and verified {len(comments)-1} report parts and one key-numbers comment on PR #25')
           PY
           rm -rf .local/thinkdiag/vehicle-packs-baseline
-      - name: Run Stage 1 no-write K-Line category probe
-        run: |
-          set -euo pipefail
-          mkdir -p .local/thinkdiag/report
-          set +e
-          python3 tools/thinkdiag/toyota_stage1_probe.py \
-            --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
-            --decoded .local/thinkdiag/decoded --english .local/thinkdiag/english \
-            --native-oracle .local/thinkdiag/report/native-oracle.json \
-            --ecmect-review-dir .local/thinkdiag/vehicle-packs \
-            --output .local/thinkdiag/report/stage-1-probe.md \
-            --json-output .local/thinkdiag/report/stage-1-probe.json \
-            2>&1 | tee .local/thinkdiag/report/stage-1-probe-output.log
-          PROBE_STATUS=${PIPESTATUS[0]}
-          set -e
-          if [ -s .local/thinkdiag/report/stage-1-probe.md ]; then
-            gh release upload ci-reports-v1 .local/thinkdiag/report/stage-1-probe.md \
-              .local/thinkdiag/report/stage-1-probe.json --clobber
-          fi
-          PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
-          export PR_NUMBER
-          python3 - .local/thinkdiag/report/stage-1-probe.md "$GITHUB_SHA" > .local/thinkdiag/report/stage-1-comments.json <<'PY'
-          import datetime,json,pathlib,sys
-          text=pathlib.Path(sys.argv[1]).read_text()
-          size=20000
-          chunks=[text[i:i+size] for i in range(0,len(text),size)] or ['(empty probe)']
-          out=[]
-          for i,chunk in enumerate(chunks,1):
-              header=f"# Stage 1 probe - part {i}/{len(chunks)}"
-              if i==1: header+=f"\n\nHead: {sys.argv[2]}\nUTC: {datetime.datetime.now(datetime.timezone.utc).isoformat()}"
-              out.append(header+'\n\n'+chunk)
-          print(json.dumps(out))
-          PY
-          python3 - <<'PY'
-          import json,os,subprocess
-          bodies=json.load(open('.local/thinkdiag/report/stage-1-comments.json'))
-          pr=os.environ['PR_NUMBER']
-          for body in bodies:
-              subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments",'-F',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
-          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/{pr}/comments",'--jq','.[].body'],text=True)
-          assert all(body in existing for body in bodies), 'Stage 1 probe comments were not verified'
-          print(f'Posted and verified {len(bodies)} Stage 1 probe comment(s)')
-          PY
-          exit "$PROBE_STATUS"
-      - name: Publish Stage 1 probe FAILURE log
-        if: failure()
+      - name: Publish Stage 1b probe report and failure log
+        if: always()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PROBE_STEP_OUTCOME: ${{ steps.stage1b_probe.outcome }}
         run: |
-          set -euo pipefail
-          PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
-          python3 - "$PR_NUMBER" "$GITHUB_SHA" <<'PY'
-          from pathlib import Path
-          import subprocess,sys,os
-          path=Path('.local/thinkdiag/report/stage-1-probe-output.log')
-          log='\\n'.join(path.read_text(errors='replace').splitlines()[-200:]) if path.is_file() else 'Probe failed before producing output; inspect the failing step exception/log.'
-          body=(f"# Stage 1 probe FAILURE log\\n\\nHead: {sys.argv[2]}\\n\\n````text\\n"+
-                log[-50000:]+"\\n````")
-          subprocess.run(['gh','api','--method','POST',f"repos/{__import__('os').environ['GH_REPO']}/issues/{sys.argv[1]}/comments",'-F',f'body={body}'],check=True)
+          set -uo pipefail
+          PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number || true)
+          export PR_NUMBER
+          python3 - <<'PY'
+          import datetime, json, os, pathlib, subprocess
+          repo = os.environ['GH_REPO']
+          pr = os.environ.get('PR_NUMBER') or ''
+          head = os.environ.get('GITHUB_SHA', 'NOT ESTABLISHED')
+          outcome = os.environ.get('PROBE_STEP_OUTCOME', 'NOT ESTABLISHED')
+          report = pathlib.Path('.local/thinkdiag/report/stage-1b-probe.md')
+          payload = pathlib.Path('.local/thinkdiag/report/stage-1b-probe.json')
+          log = pathlib.Path('.local/thinkdiag/report/stage-1b-probe-step.log')
+          def post(body):
+              if not pr:
+                  print('No pull request for this ref; comment skipped')
+                  return
+              subprocess.run(['gh', 'api', '--method', 'POST',
+                              f'repos/{repo}/issues/{pr}/comments', '-F', f'body={body}'],
+                             check=True, stdout=subprocess.DEVNULL)
+          data = {}
+          if report.is_file() and payload.is_file():
+              subprocess.run(['gh', 'release', 'upload', 'ci-reports-v1', str(report),
+                              str(payload), '--clobber'], check=False)
+              data = json.loads(payload.read_text())
+              text = report.read_text()
+              stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              chunks = [text[i:i + 18000] for i in range(0, len(text), 18000)] or ['(empty probe report)']
+              for index, chunk in enumerate(chunks, 1):
+                  header = f'# Stage 1b probe report - part {index}/{len(chunks)}'
+                  if index == 1:
+                      header += (f'\n\nHead: {head}\nUTC: {stamp}'
+                                 f'\nProbe step conclusion: {outcome}'
+                                 f"\nProbe measured duration: {data.get('elapsedSeconds')}s"
+                                 f"\nPartial: {data.get('partial')}")
+                  post(header + '\n\n' + chunk)
+              print(f'Posted {len(chunks)} Stage 1b probe comment(s)')
+          if outcome != 'success':
+              tail = ('\n'.join(log.read_text(errors='replace').splitlines()[-200:])
+                      if log.is_file() else 'Probe failed before writing its log; see the failing step output.')
+              post(f'# Stage 1b probe FAILURE log\n\nHead: {head}'
+                   f'\nProbe step conclusion: {outcome}\n\n````text\n{tail[-40000:]}\n````')
           PY
+      - name: Publish Stage 1c oracle report
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          STEP_OUTCOME: ${{ steps.stage1c_oracle.outcome }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          PR_NUMBER="${PR_NUMBER:-$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number || true)}"
+          export PR_NUMBER
+          python3 tools/thinkdiag/publish_ci_report.py \
+            --title 'Stage 1c report' \
+            --report .local/thinkdiag/report/stage-1c-oracle.md \
+            --json-output .local/thinkdiag/report/stage-1c-oracle.json \
+            --log .local/thinkdiag/report/stage-1c-oracle-step.log \
+            --release ci-reports-v1
       - name: Publish Code 1 lifecycle sweep reports
+        continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -331,6 +396,7 @@ jobs:
             gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="Code 1 lifecycle sweep: $tuples. Full reports: code1-lifecycle-sweep.md and code1-lifecycle-sweep.json in ci-reports-v1."
           fi
       - name: Publish conversion step log (captures the exact failing command)
+        continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/convert-step.log') != ''
         run: |
           tail -60 .local/thinkdiag/report/convert-step.log > .local/thinkdiag/report/convert-step-tail.txt || true
@@ -374,11 +440,13 @@ jobs:
       - name: Verify the bundled reference is exactly reproducible
         run: cmp .local/thinkdiag/converted/toyota-lexus-dtcs.json app/src/main/assets/datapacks/toyota-lexus-dtcs.json
       - name: Publish exhaustive sweep evidence
+        continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/sweep-reports.json') != ''
         run: |
           python3 tools/thinkdiag/sweep_reports.py publish \
             --reports .local/thinkdiag/report --output .local/thinkdiag/report/evidence-bundle
       - name: Publish static-analysis reports
+        continue-on-error: true
         if: always()
         run: |
           for report in native-symbols binary-containers decoded-tables english-text converted-dtcs reader-libDEVICEID.so reader-libSTD.so reader-libTOYOTA_FILE.so reader-libDIAG.so; do
@@ -390,6 +458,7 @@ jobs:
               -F "output[summary]=@.local/thinkdiag/report/$report.md"
           done
       - name: Publish inspectable converted-data shards
+        continue-on-error: true
         run: |
           for data in .local/thinkdiag/report/dtc-data-*.json; do
             name=$(basename "$data" .json)
@@ -413,6 +482,7 @@ jobs:
             .local/thinkdiag/report/english-text.json
           retention-days: 14
       - name: Publish inspection as a check
+        continue-on-error: true
         run: |
           cat .local/thinkdiag/report/summary.md >> "$GITHUB_STEP_SUMMARY"
           gh api --method POST "repos/$GH_REPO/check-runs" \
@@ -429,6 +499,7 @@ jobs:
           path: .local/thinkdiag/report/
           retention-days: 7
       - name: Publish Stage 0 report to ci-reports-v1 and PR comments
+        continue-on-error: true
         if: github.event_name == 'push' && hashFiles('docs/toyota-progress.md') != ''
         env:
           GH_TOKEN: ${{ github.token }}

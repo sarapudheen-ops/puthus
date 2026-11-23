@@ -1,7 +1,7 @@
 # Toyota/Lexus implementation progress
 
-**Branch/PR:** `arena/73b9af37-puthus`; [PR #26](https://github.com/sarapudheen-ops/puthus/pull/26).
-**Baseline head:** `766b617c2463948de834224d182de679d7c46dc2` (main tip from which this branch was created).
+**Branch/PR:** `arena/59245dbb-puthus` (Stage 1b); [PR #27](https://github.com/sarapudheen-ops/puthus/pull/27) is the source branch that was merged in.
+**Baseline head:** `c9ba179cf59a2bae15dd2eb1e2cd26f8dfe684cd` (main tip from which this branch was created).
 **Terminology:** link status means *natively consistent (call-trace level), not vehicle-tested*.
 
 ## Stage status
@@ -84,6 +84,214 @@ For tested source head `59e2afd7904be433ec6de376756081412b938934`:
 - Android push: success — run 45094717072; main build/test job and Android 24 on-demand smoke completed successfully. Android PR run 45094722547 had a failing census-release publication step, while build tests passed (603 tests, 0 failures, 0 errors, 0 skipped); do not represent that PR run as green.
 - GitHub workflow lint: success — run 45094722587.
 - Android census container measurement: 388,968,215 bytes / 378,285 reachable objects, under the 480 MiB cap. The release-data artifact zip size is not the decompressed container size.
+
+## Stage 1b — parameterized non-ECMECT DTC probe
+
+STATUS: measured in release-data CI only. The sandbox has no `TOYOTA.zip`, so every number below comes
+from a completed release-data run on the head recorded under *Measurements*. The identical numbers were
+reproduced on two later heads, each on a green run: [45184668780](https://github.com/sarapudheen-ops/puthus/actions/runs/45184668780)
+(head `672fe1896fb52932c1b781cf2b9a702657b3ab7c`) and [45187523338](https://github.com/sarapudheen-ops/puthus/actions/runs/45187523338)
+(head `916facaec04aa2bdcd2b18a1c77661d95d6a557d`, probe step 18 success in 12s, probe wall clock 12.45s).
+Each run posts its own probe report as a PR comment, and the run's own head SHA is what the Stage 1b
+report comment cites.
+
+### What changed (CODE)
+
+- `tools/thinkdiag/parameterized_dtc_probe.py` is one execution per distinct `(Ecu_Data file, function, selector)`
+  group. Every corpus path (`--archive`, `--decoded`, `--manifest`, `--english`, `--systems`,
+  `--native-oracle`, `--ecmect-review-dir`) is supplied by the workflow; `fail_fast` opens the archive,
+  the decoded members, both English tables, the decoded manifest, both pinned ECMECT review artifacts and
+  the system ledger before anything is measured, and exits 2 with a `FAIL-FAST:` reason instead of
+  recording a per-system reject.
+- Mode A is the existing strict pinned translator (`toyota_category_translation.translate_categories`,
+  the Stage 1 path). Mode B is `toyota_category_translation_v2.parameterized_dtc_group`, which calls
+  `toyota_runtime_compile.compile_p3p4_diagnostics` (`toyota_runtime_compile.py:28`) on the exact framed
+  37-byte `SYSLIST` row of the group representative (`toyota_structure.system_lists`). A compiler refusal
+  becomes a literal reject reason string; a success is a candidate translation only.
+- The probe writes no pack, no definition file and no check; it has no write functions.
+- No oracle is claimed for non-ECMECT DTC output: `compare_fault_decoder(libraries)` (`toyota_native_oracle.py:609`)
+  and `compare_p5_decoder(libraries, sources)` (`:726`) are decoder-level synthetic-vector comparisons and are
+  not keyed by `(Ecu_Data file, function, selector)`, so they cannot produce a per-group verdict.
+- Workflow ordering: the probe runs after the source join, native comparison, pack conversion and Code 1
+  sweep, and before every `Publish ...` step. Every `Publish ...` step has step-level `continue-on-error: true`,
+  so no publish failure can skip the probe and no probe result depends on a publish step.
+- Group time budget is `--max-seconds 600` inside a 15-minute step timeout in a 45-minute job. Groups not
+  reached are reported as `notProcessed`, never as a per-system reject.
+
+### Measurements (release-data CI only)
+
+Source run: [45181808200](https://github.com/sarapudheen-ops/puthus/actions/runs/45181808200),
+head `09f5b96b33532d7dfbdd78cca6f74e79b2500c5b`, conclusion **success**, 13:13:36Z–13:29:23Z.
+Probe step (job step 18, "Run Stage 1b parameterized DTC probe (group-based, read-only)") conclusion
+**success**, 13:23:31Z–13:23:43Z; the probe's own wall clock 12.4s, peak RSS 146.4 MiB, 16 decoded source
+files checksum-verified. Report comment: [Stage 1b probe report](https://github.com/sarapudheen-ops/puthus/pull/28#issuecomment-7102476324);
+artifacts `stage-1b-probe.md` / `stage-1b-probe.json` in `ci-reports-v1`.
+
+| Measure | Value |
+|---|---:|
+| System records read from `systems.jsonl.gz` | 287,030 |
+| Eligible promotion-partition systems | 39,543 |
+| Partition: transport-1 proven / exact pinned ECMECT / transport-5 unproven | 39,362 / 1 / 180 |
+| Distinct (Ecu_Data file, function, selector) groups executed | 284 of 284 |
+| Systems beyond one representative per group | 39,259 |
+| Groups without a decision (budget, 600s cap) | 0 |
+
+Mode A (existing strict pinned translator, group-executed): `pids`, `dtcs` and `ecuInfo` each have
+1 executable group / 1 executable system and 283 rejected groups / 39,542 rejected systems;
+`actuators`, `coding` and `specialFunctions` have 0 executable groups and 284 rejected groups / 39,543
+rejected systems. Zero translator exceptions.
+
+Mode A literal reject reasons (systems, five sample keys in the PR comment):
+`ecmect_specific:mandatory_system_and_live_read_review` 39,542; `ecmect_specific:mandatory_system_and_p3p4_workflow`
+39,542; `ecmect_specific:mandatory_system_and_ecu_identification` 39,542; `no_generic_translator:actuators`
+39,542; `no_generic_translator:coding` 39,542; `no_generic_translator:specialFunctions` 39,542;
+`ecmect_compiler_returned_no_definitions` 1 each for actuators, coding and specialFunctions
+(`SYSLIST_EU.BIN@0009d8f2`).
+
+Mode B (Stage 1b parameterized P3/P4 compile, one execution per group): **4 executable groups covering
+203 systems, 5,353 DTC labels, 4 groups with a source `04`/`44` clear**; 280 rejected groups covering
+39,340 systems; 0 groups without a decision. These are *candidate* translations only: not oracle-approved,
+not enabled, and no pack or definition file is written.
+
+The 4 executable groups (DATA, this run), all with read request `13B0` and clear request `04`:
+`EU/Ecu_Data_0081.BIN` function 61 selector `0x11` — 79 systems, 1,414 labels, representative
+`SYSLIST_EU.BIN@0009d8f2` (the pinned ECMECT row); `EU/Ecu_Data_0081.BIN` function 61 selector `0x51` —
+79 systems, 1,414 labels, representative `SYSLIST_EU.BIN@00023995` (the pinned 2007 Innova candidate row);
+`JP/Ecu_Data_0081.BIN` function 61 selector `0x11` — 30 systems, 1,111 labels, representative
+`SYSLIST_JP.BIN@00003875`; `NA/Ecu_Data_0081.BIN` function 61 selector `0x51` — 15 systems, 1,414 labels,
+representative `SYSLIST_NA.BIN@0002bf2a`. Two of the four are already-pinned rows, so only **2 groups /
+45 systems** are new source-compilable candidates, and neither has an oracle.
+
+Mode B literal reject reasons (groups / systems): `ValueError:No unambiguous exact DTC function-detail
+source rows` 137 / 24,832; `ValueError:Not a source P3/P4 fault block` 60 / 8,112;
+`ValueError:No exact single-frame primary P3/P4 fault-read primitive` 47 / 4,386;
+`ValueError:Not the exact single KWP04/44 clear class` 25 / 1,369; `ValueError:Native caller mode 7/9 has
+additional unported overrides` 7 / 547; `ValueError:Selected source system does not use ECUF dispatch kind 14`
+4 / 94.
+
+ECMECT control (DATA, this run): Mode A counts `{'pids': 30, 'dtcs': 1414, 'ecuInfo': 1}` on
+`SYSLIST_EU.BIN@0009d8f2`, byte-identical to the enabled-pack output **True**, control **passed**; the
+parameterized P3/P4 compile on the same row also returns **1,414 DTC labels**, read request `13B0`, clear
+request `04`.
+
+Oracle (NOT ESTABLISHED for non-ECMECT DTC): the run's native comparison contains
+`faultDecoderComparison` (70,144 state vectors, 2,112 record vectors) and `p5DecoderComparison`
+(49,152 record vectors, 395 source blocks), both with `nativeInstructionsExecuted: true`. Both are
+decoder-level and not keyed by `(Ecu_Data file, function, selector)` (`toyota_native_oracle.py:609`, `:726`),
+so **no oracle result for non-ECMECT DTC exists** and nothing is enabled. The 4 compiled groups remain
+candidates; enabling any of them would require a per-group oracle that does not exist yet.
+
+## Stage 1c — group-keyed DTC oracle
+
+STATUS: every mechanism and the ranking below are CODE/DATA; per-group oracle numbers are filled only from a
+completed release-data run (cited under *Per-group oracle result*). The sandbox has no `TOYOTA.zip`, so no
+native vector was executed locally.
+
+### Why the existing comparisons cannot approve a group (CODE)
+
+`faultDecoderComparison` (`toyota_native_oracle.py:609`) and `p5DecoderComparison` (`:726`) choose their own
+layout grid — eight assembly/stride pairs x two modes x two presence flags, and the P5 start/width grid — and
+neither takes a `(Ecu_Data file, function, selector)` group. Stage 1c keeps the same bounded sandbox and the same
+native consumers but takes the layout from one compiled group:
+
+| Leg | Native consumer | Compiled / Python side | What a pass means |
+|---|---|---|---|
+| layout | `GetDTCCodeFromAnsP3P4` @0x14ae8; layout word and `context+0x18`/`context+0x1b0` built exactly as `compare_fault_decoder` builds them | `NativeFaultLayout.decode` (`toyota_faults.py:41`) with the group's own count index, record start/width, assembly kind, presence flag and mode low-bits | native projection equals the port for that group's own kinds, values and payload shapes |
+| linkage | same consumer | `encode_row`/`build_payload` (`toyota_group_oracle.py`) with the group's compiled `nativeCode` set | each sampled compiled DTC code survives the group's own record width and returns as itself |
+| display | `GetShowDtcInfo` @0x11f90 with the DTCF display imports | `FaultLabels` (`toyota_dtc_labels.py:59`) and the group's compiled `code`/`description` | native renders exactly the compiled pair for every compiled key of the group |
+
+Not covered, and therefore NOT ESTABLISHED: ECU replies (payload vectors are synthesised), P5 auxiliary
+freeze-frame/mask side tables and mask discovery, transport/lifecycle negotiation, and per-system vehicle
+applicability. The record-leg mask is `0xFF` for every group; the state half of each pair is covered
+exhaustively by the global comparison, so the group-keyed claim is the DTC code projection and the label set.
+
+### Pinned values the compiling groups satisfied (CODE)
+
+`compile_p3p4_diagnostics` (`toyota_runtime_compile.py:28`) and `compile_dtc_workflow`
+(`toyota_dtc_workflow.py:173`) gate on these, so a group that compiles has satisfied all of them:
+
+- `toyota_runtime_compile.py:36-39` exact regional SYSLIST record: region in EU/NA/JP, a complete 37-byte row,
+  native transport 1..5 and a `SYSLIST_<region>.BIN@` id.
+- `:41-43` caller mode (`system_bytes[33]`) is not 7 or 9.
+- `:44-46` the region's `FUNCDATA_<region>.BIN` index contains the function and `compile_dtc_workflow` accepts the
+  block: `toyota_dtc_workflow.py:177-179` (`byte1` is 1 or 2, i.e. a source P3/P4 fault block), `:180-183` at most
+  one initial template, `:184-191` that template binds to exactly one non-empty request, `:194-200` query kinds in
+  1..10 with at most five conditions.
+- `toyota_runtime_compile.py:54-63` every function-detail row is unconditional (no `commandCondition`) and detail
+  ids are non-empty and unique.
+- `:74-79` exactly one single-frame primary kind-1 fault-read primitive with an explicit positive service.
+- `toyota_dtc_labels.py:117-135` (`compile_p3p4_layout`): `byte1 == 1`, a decodable kind (kind 5 is refused,
+  `:127-131`), mode low-bits 0..7, availability mask 0, and no missing exact TCODE key.
+- `toyota_runtime_compile.py:95-102` the clear block is a single query of the exact KWP `04`/`44` class.
+- `:105` -> `toyota_ecuprogram.py:123-127` the system uses ECUF dispatch kind 14 with the exact
+  `09 04` / `FF FF` / `49 04` identity frame.
+
+The two groups this stage targets satisfy all of the above by construction of a successful compile. What they do
+**not** have is any of the enable pins listed under *Enablement*.
+
+### Reject reasons ranked by systems unlocked if that blocker were ported (DATA, Stage 1b run 45191744205)
+
+| Rank | Literal reject reason | Groups | Systems |
+|---:|---|---:|---:|
+| 1 | `ValueError:No unambiguous exact DTC function-detail source rows` | 137 | 24,832 |
+| 2 | `ValueError:Not a source P3/P4 fault block` | 60 | 8,112 |
+| 3 | `ValueError:No exact single-frame primary P3/P4 fault-read primitive` | 47 | 4,386 |
+| 4 | `ValueError:Not the exact single KWP04/44 clear class` | 25 | 1,369 |
+| 5 | `ValueError:Native caller mode 7/9 has additional unported overrides` | 7 | 547 |
+| 6 | `ValueError:Selected source system does not use ECUF dispatch kind 14` | 4 | 94 |
+
+Ranking basis: systems behind each reason, i.e. the systems that would move forward if only that blocker were
+ported. Rank 1 alone would unlock more systems than everything else combined (24,832 of 39,340 rejected).
+
+### Oracle result per compiled group (DATA, release-data run 45222723609, head `08fd98f`)
+
+| Group | Systems | DTC labels | Compiled layout `count,start,bytes,asm,presence,mode` | Read | Clear | Oracle ran | Layout / Linkage / Display vectors | Result |
+|---|---:|---:|---|---|---|---|---|---|
+| `EU/Ecu_Data_0081.BIN`, fn 61, sel `0x11` | 79 | 1,414 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 99 / 34 / 1,414 | **PASS** |
+| `EU/Ecu_Data_0081.BIN`, fn 61, sel `0x51` | 79 | 1,414 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 99 / 34 / 1,414 | **PASS** |
+| `JP/Ecu_Data_0081.BIN`, fn 61, sel `0x11` | 30 | 1,111 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 66 / 34 / 1,111 | **PASS** |
+| `NA/Ecu_Data_0081.BIN`, fn 61, sel `0x51` | 15 | 1,414 | `0,1,2,2,False,1` | `13B0` | `04` | yes | 99 / 34 / 1,414 | **PASS** |
+
+All four compiled groups describe the same record shape — count byte at 0, records from 1, two record bytes,
+assembly kind 2, no presence flag, mode low-bits 1 — so the decoder agreement is one shape confirmed four times,
+not four independent shapes. Result digests are recorded per leg in the run's own report.
+
+What the pass does **not** say: the payloads are synthesised, the record path is confirmed but no ECU reply was
+ever seen, and none of the P5 auxiliary side tables, mask discovery, transport or lifecycle behaviour is covered.
+Two probe iterations were needed to reach a clean pass and both were caught by the control: run
+`45210440758` compiled 0 groups (the compile was handed the native `.so` mapping instead of the English tables:
+`KeyError:'TCODE_EN.GAG'`), and run `45218407745` passed layout and display but failed linkage only on the label
+whose native code is `00000000`, where native and the port both correctly return no record.
+
+### ECMECT control (DATA, same run)
+
+- Pinned control row `SYSLIST_EU.BIN@0009d8f2`: 1,414 compiled DTC labels, required exactly 1,414 — satisfied.
+- The control row's own group-keyed oracle: PASS.
+- The pinned ECMECT packet path is untouched by this stage; its enabled output stays byte-identical at
+  30 PIDs / 1,414 DTCs / 1 ecuInfo.
+
+### Enablement (decision)
+
+Groups enabled: **0**. Systems enabled: **0**. New DTC definitions enabled: **0**. DTCs per enabled system are
+unchanged: ECMECT 1,414 and the pinned 2007 Innova slice 1,414.
+
+A group-keyed oracle pass is necessary but not sufficient, and the three blockers are exactly:
+
+1. `no_group_enable_path` — `convert_vehicle_packs.py:388-400` enables only the pinned ECMECT identity
+   (`toyota_ecmect_pack.enable`, `toyota_ecmect_pack.py:216`) and the pinned 2007 `systemId`
+   (`toyota_innova_2007_pack.enable` over `toyota_innova_2007_reads.py:20`); no path accepts a group key.
+2. `no_pinned_group_artifact` — `tools/thinkdiag/schema/` holds only `mandatory-read-artifacts-v1.json`,
+   `native-oracle-v1.json` and `innova-2007-source-read-candidate-v1.json`; there is no deterministic
+   expected-output pin for a compiled group definition.
+3. `per_system_link_projection` — `convert_vehicle_packs.py:370-390` marks a system proven only from
+   `self.oracle_evidence[oracle_key]` with a matching `projectionDigest` and a lifecycle projection, and
+   `convert_vehicle_packs.py:445` sets `enabled` only when `linkStatus == "proven"` and a category is executable.
+
+### Stage 1c cost (DATA, same run)
+
+- Oracle step wall clock 18.1 s, peak RSS 163.9 MiB (whole inspect job stays inside the 45-minute budget).
+- Container: 421,223,645 bytes (401.7 MiB), under the 480 MiB limit and under the 460 MiB review threshold.
+- Tests in the same run's own discovery: `Ran 311 tests ... OK (skipped=1)`.
 
 ## Evidence audit / next work
 
