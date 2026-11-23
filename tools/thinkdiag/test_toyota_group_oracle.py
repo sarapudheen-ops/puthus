@@ -195,11 +195,13 @@ class CompareLinkageAndDisplayTest(unittest.TestCase):
         self.assertEqual(2, result['vectors'])
         self.assertEqual(2, result['of'])
 
-    def test_linkage_reports_a_code_that_does_not_fit(self):
+    def test_linkage_counts_a_code_that_does_not_fit_as_not_encodable(self):
         layout = NativeFaultLayout(255, 0, 2, 6, False, 2)
         result = compare_linkage(FakeNative(), layout, self.labels(), [1], sample=2)
+        self.assertEqual(0, result['vectors'])
         self.assertFalse(result['passed'])
-        self.assertTrue(all('does not fit' in failure.get('reason', '') for failure in result['failures']))
+        self.assertEqual(2, result['notEncodableCount'])
+        self.assertEqual([], result['failures'])
 
     def test_display_matches_compiled_labels(self):
         native = FakeNative(codes=CODES, texts=TEXTS)
@@ -262,6 +264,18 @@ class OracleForGroupTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OracleContractTest(unittest.TestCase):
+    def test_the_whole_definition_instead_of_its_faults_section_fails_closed(self):
+        lifecycle = {'identification': [], 'faults': compiled_group(
+            {'countIndex': 1, 'recordStart': 2, 'recordBytes': 4, 'assemblyKind': 1,
+             'countIsPresence': False, 'modeLowBits': 0}, CODES)}
+        result = oracle_for_group(Session(FakeNative(codes=CODES, texts=TEXTS)), lifecycle,
+                                  linkage_sample=2)
+        self.assertFalse(result['ran'])
+        self.assertFalse(result['passed'])
+        self.assertIn('KeyError', result['failure'])
 
 
 class CompileLibrariesTest(unittest.TestCase):

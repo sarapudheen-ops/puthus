@@ -140,7 +140,7 @@ def run(args, checks):
             entry['oracle'] = {'ran': False, 'passed': False, 'failure': 'budget_exhausted', 'legs': {}}
             oracle_results.append(entry)
             continue
-        entry['oracle'] = oracle_for_group(session, entry['compiled']['definition'],
+        entry['oracle'] = oracle_for_group(session, entry['compiled']['definition']['faults'],
                                            linkage_sample=args.linkage_sample)
         oracle_results.append(entry)
 

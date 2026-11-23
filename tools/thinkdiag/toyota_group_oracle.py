@@ -192,13 +192,17 @@ def compare_linkage(native, layout, labels, kinds, *, sample=40):
     kind = kinds[0]
     digest = hashlib.sha256()
     failures = []
+    not_encodable = []
     checked = 0
     for label in selected:
         code = int(label['nativeCode'], 16)
         try:
             row = encode_row(layout, code)
         except ValueError as error:
-            failures.append({'nativeCode': label['nativeCode'], 'reason': str(error)})
+            # The sample does not fit this group's record width; that is a limit of the
+            # encoded sample, not a native disagreement, so it is counted separately and
+            # can never turn an empty leg into a pass.
+            not_encodable.append({'nativeCode': label['nativeCode'], 'reason': str(error)})
             continue
         payload = build_payload(layout, kind, [row])
         expected = layout.decode(payload, kind, DEFAULT_MASK)
@@ -212,7 +216,9 @@ def compare_linkage(native, layout, labels, kinds, *, sample=40):
                                  'native': [list(pair) for pair in actual],
                                  'port': [list(pair) for pair in expected],
                                  'codePresent': code in codes})
-    return {'sampled': len(selected), 'vectors': checked, 'passed': not failures, 'failures': failures,
+    return {'sampled': len(selected), 'vectors': checked, 'passed': bool(checked) and not failures,
+            'failures': failures, 'notEncodable': not_encodable[:MISMATCH_LIMIT],
+            'notEncodableCount': len(not_encodable),
             'resultsSha256': digest.hexdigest(), 'kind': kind, 'of': len(ordered)}
 
 
@@ -318,23 +324,27 @@ class OracleSession:
         return self.native, self.display
 
 
-def oracle_for_group(session, compiled, *, linkage_sample=40):
-    """Run all three legs for one compiled group definition; fail closed on any exception."""
+def oracle_for_group(session, faults, *, linkage_sample=40):
+    """Run all three legs for one compiled group's `faults` section; fail closed on any exception.
+
+    `faults` is `compile_p3p4_diagnostics(...)['faults']`: it carries the group's own
+    `layout` (with its compiled `labels`), `workflow` query kinds, `read` and optional `clear`.
+    """
     result = {'ran': False, 'passed': False, 'legs': {}, 'failure': None,
               'librarySha256': None, 'notCovered': [
                   'synthesised payload vectors, not ECU replies',
                   'P5 auxiliary freeze-frame/mask side tables and mask discovery',
                   'transport, lifecycle and per-system vehicle applicability']}
     try:
-        layout = layout_from_compiled(compiled['layout'])
-        workflow = compiled.get('workflow') or {}
+        layout = layout_from_compiled(faults['layout'])
+        workflow = faults.get('workflow') or {}
         kinds = sorted({query.get('queryKind') for query in workflow.get('queries') or []}
-                       | {compiled['layout'].get('queryKind')})
+                       | {faults['layout'].get('queryKind')})
         kinds = [kind for kind in kinds if kind in DECODABLE_KINDS]
-        excluded = sorted(kind for kind in {compiled['layout'].get('queryKind')} - set(kinds) if kind is not None)
+        excluded = sorted(kind for kind in {faults['layout'].get('queryKind')} - set(kinds) if kind is not None)
         if not kinds:
             raise ValueError('no decodable query kind in the compiled group')
-        labels = compiled['layout'].get('labels') or []
+        labels = faults['layout'].get('labels') or []
         native, display_buffers = session.ensure()
         layout_leg = compare_layout(native, layout, kinds)
         linkage_leg = compare_linkage(native, layout, labels, kinds, sample=linkage_sample)
@@ -346,7 +356,7 @@ def oracle_for_group(session, compiled, *, linkage_sample=40):
                                         'countIsPresence': layout.count_is_presence,
                                         'modeLowBits': layout.mode_lowbits},
                        'recordMask': DEFAULT_MASK,
-                       'availabilityMask': compiled['layout'].get('availabilityMask')})
+                       'availabilityMask': faults['layout'].get('availabilityMask')})
         result['passed'] = bool(layout_leg['passed'] and linkage_leg['passed'] and display_leg['passed'])
     except Exception as error:  # fail closed: an oracle that cannot run is not a pass
         result['failure'] = f'{type(error).__name__}:{error}'
