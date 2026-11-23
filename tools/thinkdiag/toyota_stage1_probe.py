@@ -114,6 +114,11 @@ def candidate_parse_group(decoded, region, function, ecu_file):
                 "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
 
 
+def strict_group_representative(members):
+    """Preserve the exact enabled system input when groups share a source tuple."""
+    return next((m for m in members if m.get("id") == "SYSLIST_EU.BIN@0009d8f2"), members[0])
+
+
 def row_bucket(n):
     if n == 0: return "0"
     if n <= 4: return "1-4"
@@ -224,7 +229,9 @@ def run(args):
         key = (ecu_file, row["functionKey"], row["entrySelector"])
         group_members[key].append(row)
     for key, members in group_members.items():
-        row = members[0]
+        # Strict translation is source-system scoped, not just group scoped:
+        # use the exact pinned row if it shares a file/function/selector group.
+        row = strict_group_representative(members)
         candidate_groups[key] = candidate_parse_group(args.decoded, row["region"], row["functionKey"], row.get("ecuFile") or "")
         try:
             source_row = dict(row)

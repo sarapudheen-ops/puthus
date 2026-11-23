@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from toyota_category_translation import translate_categories, normalize_ecu_file
+from toyota_stage1_probe import strict_group_representative
 
 
 class Stage1TranslatorTests(unittest.TestCase):
@@ -36,6 +37,12 @@ class Stage1TranslatorTests(unittest.TestCase):
         self.assertEqual("executable", got["categories"]["pids"])
         self.assertTrue(got["ecmectControlByteIdentical"])
         self.assertFalse(got["oracleApproved"])
+
+    def test_group_representative_keeps_exact_ecmect_system_row(self):
+        ordinary = {"id":"SYSLIST_EU.BIN@00001000"}
+        ecmect = {"id":"SYSLIST_EU.BIN@0009d8f2"}
+        self.assertIs(strict_group_representative([ordinary, ecmect]), ecmect)
+        self.assertIs(strict_group_representative([ordinary]), ordinary)
 
     def test_selector_mismatch_is_rejected_without_mutation(self):
         row = {"id":"SYSLIST_EU.BIN@0009d8f2", "region":"EU", "functionKey":61,
