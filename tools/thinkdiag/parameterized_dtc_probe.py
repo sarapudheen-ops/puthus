@@ -1,285 +1,540 @@
 #!/usr/bin/env python3
-"""Parameterized DTC translator probe with group-based execution and time cap.
+"""Stage 1b group-based parameterized DTC probe (read-only, fail-closed).
 
-Groups systems by (Ecu_Data file, function, selector) tuple (284 groups).
-Runs translator/oracle once per group, applies result to all systems.
-Enforces per-group time cap (default 300s). Records 'group_timeout' if exceeded.
-Prints per-step timings in log and report.
+One execution per distinct (Ecu_Data file, function, selector) group. Every corpus
+path is supplied by the workflow as an argument; the probe fails fast with exit 2
+when a required source cannot be opened, so an unopenable corpus or an unreadable
+English table is never recorded as a per-system reject.
+
+Two independent read-only measurements are reported:
+
+* Mode A -- the existing strict pinned translator (`toyota_category_translation.translate_categories`),
+  the same path the Stage 1 probe used. Only the exact pinned ECMECT system is executable.
+* Mode B -- the Stage 1b parameterized P3/P4 DTC compile
+  (`toyota_category_translation_v2.parameterized_dtc_group`, backed by
+  `toyota_runtime_compile.compile_p3p4_diagnostics`, `toyota_runtime_compile.py:28`)
+  attempted once per group on that group's representative source row.
+
+No oracle is claimed for non-ECMECT DTC output: `faultDecoderComparison` /
+`p5DecoderComparison` are decoder-level synthetic-vector comparisons
+(`toyota_native_oracle.py:609`, `:726`) and are not keyed by group. A compiled
+non-ECMECT group therefore stays a candidate translation; nothing is enabled and
+no pack or definition file is written.
 """
 import argparse
 import gzip
+import hashlib
 import json
+import os
 import resource
-import time
 import sys
+import time
+import zipfile
 from collections import Counter, defaultdict
+from functools import lru_cache
+from datetime import datetime, timezone
 from pathlib import Path
 
-# Fail-fast check first
-try:
-    import tools.thinkdiag.fail_fast_corpus_check
-except ImportError:
-    pass
-
-# Import required modules from repository
 sys.path.insert(0, str(Path(__file__).parent))
-from toyota_category_translation_v2 import translate_categories, normalize_ecu_file
-from toyota_native_oracle import compare_fault_decoder
-from toyota_ecmect_pack import load_review, ecmect_reference
-from toyota_runtime_compile import _workflow_sources
 
-CATEGORIES = ("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions")
+from toyota_category_translation import CATEGORIES, normalize_ecu_file, translate_categories
+from toyota_category_translation_v2 import NO_ORACLE, parameterized_dtc_group
+from toyota_ecmect_pack import load_review
+from toyota_stage1_probe import ecmect_entry, ecmect_reference, ecmect_source_lifecycle, strict_group_representative
+from toyota_structure import system_lists
 
-def ecmect_entry(decoded):
-    from toyota_entries import EntryIndex
-    index = EntryIndex((decoded / "SYSTEMENTER.BIN").read_bytes())
-    entry = index.select(1, 61, 0x11)
-    if entry is None or entry.source_id != "SYSLIST_EU.BIN@0009d8f2":
-        raise ValueError("ECMECT exact SYSTEMENTER entry missing/mismatched")
-    return entry.report()
+CONTROL_SYSTEM = 'SYSLIST_EU.BIN@0009d8f2'
+CONTROL_COUNTS = {'pids': 30, 'dtcs': 1414, 'ecuInfo': 1}
+PINNED_DTCS = 1414
+SAMPLE_LIMIT = 5
+CORPUS_EXIT = 2
 
-def ecmect_source_lifecycle(decoded):
-    from toyota_entries import EntryIndex
-    from toyota_frames import SourceFrames
-    from toyota_lifecycle import selected_fast_kwp_lifecycle
-    index = EntryIndex((decoded / "SYSTEMENTER.BIN").read_bytes())
-    frames = SourceFrames({name: (decoded / name).read_bytes() for name in (
-        "EU/Toyota_bin_00.BIN", "EU/Toyota_bin_11.BIN", "EU/Toyota_bin_12.BIN")}, "EU")
-    return selected_fast_kwp_lifecycle(index, frames, region=1, function=61, selector=0x11)
 
-def load_systems(path):
-    rows = []
-    with gzip.open(path, "rt", encoding="utf-8") as stream:
+class CorpusError(Exception):
+    """The corpus or one of its required inputs cannot be opened."""
+
+
+def require_file(path, label, checks):
+    if not path.is_file():
+        raise CorpusError(f'{label}:missing:{path}')
+    size = path.stat().st_size
+    if size == 0:
+        raise CorpusError(f'{label}:empty:{path}')
+    checks.append(f'{label}={path} ({size} bytes)')
+    return path
+
+
+def require_directory(path, label, checks):
+    if not path.is_dir():
+        raise CorpusError(f'{label}:missing_directory:{path}')
+    checks.append(f'{label}={path}')
+    return path
+
+
+def read_json(path, label, checks, *, expect='dict'):
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CorpusError(f'{label}:unreadable:{path}:{type(error).__name__}') from error
+    if expect == 'dict' and (not isinstance(value, dict) or not value):
+        raise CorpusError(f'{label}:not_a_nonempty_object:{path}')
+    if expect == 'list' and (not isinstance(value, list) or not value):
+        raise CorpusError(f'{label}:not_a_nonempty_list:{path}')
+    return value
+
+
+def fail_fast(args):
+    """Open every declared source before measuring anything. Never returns a partial truth."""
+    checks = []
+    require_file(args.archive, 'corpus_archive', checks)
+    try:
+        with zipfile.ZipFile(args.archive) as archive:
+            names = archive.namelist()
+    except (OSError, zipfile.BadZipFile) as error:
+        raise CorpusError(f'corpus_archive:unopenable:{args.archive}:{type(error).__name__}') from error
+    if not names:
+        raise CorpusError(f'corpus_archive:no_members:{args.archive}')
+    checks.append(f'corpus_archive_members={len(names)}')
+    require_directory(args.decoded, 'decoded_directory', checks)
+    require_directory(args.english, 'english_directory', checks)
+    require_directory(args.ecmect_review_dir, 'ecmect_review_directory', checks)
+    for name in ('SYSTEMENTER.BIN', 'FUNCDATA_EU.BIN', 'SYSLIST_EU.BIN', 'ECUPROGRAM.BIN',
+                 'EU/Toyota_bin_00.BIN', 'EU/Toyota_bin_11.BIN', 'EU/Toyota_bin_12.BIN',
+                 'EU/Toyota_bin_1B.BIN'):
+        require_file(args.decoded / name, f'decoded:{name}', checks)
+    for name in ('TCODE_EN.GAG', 'TEXT_EN.GAG'):
+        table = read_json(args.english / (name + '.json'), f'english_table:{name}', checks)
+        checks.append(f'english_table:{name}_records={len(table)}')
+    manifest = read_json(args.manifest, 'decoded_manifest', checks, expect='list')
+    checks.append(f'decoded_manifest_entries={len(manifest)}')
+    for name in ('mandatory-ecmect-source-reads.json', 'mandatory-ecmect-diagnostics.json'):
+        require_file(args.ecmect_review_dir / name, f'ecmect_review:{name}', checks)
+    try:
+        with gzip.open(args.systems, 'rt', encoding='utf-8') as stream:
+            first = stream.readline()
+    except (OSError, EOFError, gzip.BadGzipFile) as error:
+        raise CorpusError(f'systems:unopenable:{args.systems}:{type(error).__name__}') from error
+    if not first.strip():
+        raise CorpusError(f'systems:no_records:{args.systems}')
+    try:
+        json.loads(first)
+    except json.JSONDecodeError as error:
+        raise CorpusError(f'systems:first_record_unparsable:{args.systems}') from error
+    checks.append(f'systems={args.systems}')
+    if args.native_oracle is not None and args.native_oracle.exists():
+        checks.append(f'native_oracle={args.native_oracle} ({args.native_oracle.stat().st_size} bytes)')
+    elif args.native_oracle is not None:
+        checks.append(f'native_oracle=MISSING {args.native_oracle} (reported, not a reject)')
+    return checks
+
+
+class VerifiedSources(dict):
+    """Decoded-source mapping that verifies each file against the decoded manifest on first read.
+
+    `convert_vehicle_packs.load_sources` builds the same checked bytes eagerly for
+    1,410 files. The probe only needs the handful of files the DTC compiler reads,
+    so each is checksum-verified once, cached, and nothing is trusted by name only.
+    """
+
+    def __init__(self, decoded, manifest):
+        super().__init__()
+        self.decoded = decoded
+        self.entries = {item['file']: item for item in manifest}
+        self.reads = []
+
+    def __missing__(self, name):
+        item = self.entries.get(name)
+        if item is None:
+            raise KeyError(f'unlisted decoded source {name}')
+        path = self.decoded / name
+        raw = path.read_bytes()
+        if len(raw) != item['bytes'] or hashlib.sha256(raw).hexdigest() != item['sha256']:
+            raise ValueError(f'Decoded source checksum mismatch: {name}')
+        self[name] = raw
+        self.reads.append(name)
+        return raw
+
+
+def stream_eligible(path):
+    """Stream the system ledger, retaining only the promotion partition."""
+    total = 0
+    eligible = []
+    with gzip.open(path, 'rt', encoding='utf-8') as stream:
         for line in stream:
-            if line.strip(): rows.append(json.loads(line))
+            if not line.strip():
+                continue
+            total += 1
+            row = json.loads(line)
+            if (row.get('nativeTransport') in (1, 5)
+                    and row.get('linkStatus') in ('proven', 'unproven')):
+                eligible.append({key: row.get(key) for key in (
+                    'id', 'region', 'functionKey', 'entrySelector', 'ecuFile',
+                    'nativeTransport', 'linkStatus')})
+    return total, eligible
+
+
+@lru_cache(maxsize=3)
+def _framed_rows(path):
+    """Framed SYSLIST rows keyed by their exact source address (37 bytes each)."""
+    data = Path(path).read_bytes()
+    _, blocks = system_lists(data)
+    rows = {}
+    for block_offset, block in blocks.items():
+        for index, row in enumerate(block):
+            if len(row) != 37:
+                raise ValueError(f'unexpected_system_row_length:{len(row)}')
+            rows[block_offset + 2 + 37 * index] = bytes(row)
     return rows
 
-def run(args, group_timeout_seconds=300):
-    start_total = time.perf_counter()
-    systems = load_systems(args.systems)
-    native = json.loads(args.native_oracle.read_text()) if args.native_oracle else {}
-    native_summary = {k: {"nativeInstructionsExecuted": v.get("nativeInstructionsExecuted"),
-                          "librarySha256": v.get("librarySha256"),
-                          "vectors": v.get("vectors"), "regions": v.get("regions")}
-                      for k, v in native.items() if k.endswith("Comparison") and isinstance(v, dict)}
-    
-    eligible = [r for r in systems if r.get("nativeTransport") in (1, 5)
-                and r.get("linkStatus") in ("proven", "unproven")]
-    
+
+def system_row(decoded, region, system_id):
+    """Return the exact framed 37-byte SYSLIST row addressed by a system id."""
+    try:
+        offset = int(system_id.split('@')[1], 16)
+    except (IndexError, ValueError) as error:
+        raise ValueError(f'malformed_system_id:{system_id}') from error
+    rows = _framed_rows(str(decoded / f'SYSLIST_{region}.BIN'))
+    if offset not in rows:
+        raise ValueError(f'not_a_framed_system_row:{system_id}')
+    return rows[offset]
+
+
+def oracle_status(path):
+    """Report decoder-level oracle evidence; never promote it to a per-group result."""
+    base = {'groupKeyed': False, 'oracleStatus': NO_ORACLE,
+            'source': 'toyota_native_oracle.py:609 compare_fault_decoder(libraries); '
+                      ':726 compare_p5_decoder(libraries, sources)'}
+    if path is None or not path.is_file():
+        return {**base, 'available': False, 'reason': 'not_established:native_oracle_absent'}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {**base, 'available': False, 'reason': 'not_established:native_oracle_unreadable'}
+    detail = {}
+    for key in ('faultDecoderComparison', 'p5DecoderComparison'):
+        value = data.get(key)
+        if isinstance(value, dict):
+            detail[key] = {name: value.get(name) for name in (
+                'nativeInstructionsExecuted', 'librarySha256', 'stateVectors',
+                'recordVectors', 'sourceBlocks')}
+    if not detail:
+        return {**base, 'available': False, 'reason': 'not_established:decoder_comparisons_absent'}
+    return {**base, 'available': True, 'reason': NO_ORACLE, 'decoderComparisons': detail}
+
+
+def run(args, checks):
+    started = time.perf_counter()
     review = load_review(args.ecmect_review_dir)
     control_system = ecmect_reference(args.ecmect_review_dir)
     exact_entry = ecmect_entry(args.decoded)
     control_lifecycle = ecmect_source_lifecycle(args.decoded)
-    
-    status_counts = {c: Counter() for c in CATEGORIES}
-    reason_systems = Counter()
-    reason_region_class = Counter()
-    translated_counts = Counter()
-    samples = defaultdict(list)
-    group_members = defaultdict(list)
-    group_outcomes = {}
-    candidate_groups = {}
-    errors = Counter()
-    oracle_results = {}  # group_key -> (pass/fail, function, file:line)
-    
-    # Group by (Ecu_Data file, function, selector)
+
+    total_records, eligible = stream_eligible(args.systems)
+    groups = defaultdict(list)
     for row in eligible:
-        ecu_file = normalize_ecu_file(row["region"], row.get("ecuFile"))
-        key = (ecu_file, row["functionKey"], row["entrySelector"])
-        group_members[key].append(row)
-    
-    group_start = time.perf_counter()
-    step_timings = {}
-    
-    for key, members in group_members.items():
-        step_start = time.perf_counter()
-        
-        # Enforce per-group time cap
-        if time.perf_counter() - group_start > group_timeout_seconds:
-            reason = "group_timeout"
-            for member in members:
-                reason_systems[("dtcs", reason)] += 1
-                if len(samples[("dtcs", reason)]) < 5:
-                    samples[("dtcs", reason)].append(member["id"])
-            group_outcomes[key] = {"translationError": reason}
-            candidate_groups[key] = {"status":"rejected", "reason":reason, "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
-            step_timings[key] = time.perf_counter() - step_start
-            continue
-        
-        row = next((m for m in members if m.get("id") == "SYSLIST_EU.BIN@0009d8f2"), members[0])
-        
-        # Candidate parse (Mode B structural only)
+        key = (normalize_ecu_file(row['region'], row.get('ecuFile')),
+               row['functionKey'], row['entrySelector'])
+        groups[key].append(row)
+    group_keys = sorted(groups, key=lambda k: (str(k[0]), k[1], k[2]))
+
+    libraries = {name: json.loads((args.english / (name + '.json')).read_text())
+                 for name in ('TCODE_EN.GAG', 'TEXT_EN.GAG')}
+    sources = VerifiedSources(args.decoded, json.loads(args.manifest.read_text()))
+
+    mode_a = {category: Counter() for category in CATEGORIES}
+    mode_a_reasons = Counter()
+    mode_a_samples = defaultdict(list)
+    compile_reasons = Counter()
+    compile_samples = defaultdict(list)
+    compile_counts = Counter()
+    group_results = {}
+    control = {}
+    not_processed = {'groups': 0, 'systems': 0, 'reason': None}
+    translate_errors = Counter()
+
+    for position, key in enumerate(group_keys):
+        elapsed = time.perf_counter() - started
+        if elapsed > args.max_seconds:
+            remaining = group_keys[position:]
+            not_processed = {'groups': len(remaining),
+                             'systems': sum(len(groups[k]) for k in remaining),
+                             'reason': f'budget_exhausted:maxSeconds={args.max_seconds}:elapsedSeconds={elapsed:.1f}'}
+            break
+        members = groups[key]
+        representative = strict_group_representative(members)
+        control_member = representative.get('id') == CONTROL_SYSTEM
+
+        # --- Mode A: existing strict pinned translator, per member (no I/O). ---
         try:
-            from toyota_functions import FunctionBlocks
-            from toyota_dtc_workflow import compile_dtc_workflow
-            from toyota_faults import NativeFaultLayout
-            fun_path = args.decoded / f"FUNCDATA_{row['region']}.BIN"
-            block = FunctionBlocks(fun_path.read_bytes()).faults(row["functionKey"])
-            if block is None:
-                candidate_groups[key] = {"status":"rejected", "reason":"Not a source P3/P4 fault block", "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
-            else:
-                ecu_file = normalize_ecu_file(row["region"], row.get("ecuFile") or "")
-                NativeFaultLayout(block.count_index, block.record_start, block.record_bytes, block.assembly_kind, mode_lowbits=block.byte2 & 7)
-                compile_dtc_workflow(_workflow_sources(str(args.decoded), row["region"], ecu_file), region=row["region"], function=row["functionKey"])
-                candidate_groups[key] = {"status":"structurally parsed", "reason":None, "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
-        except Exception as exc:
-            candidate_groups[key] = {"status":"rejected", "reason":str(exc), "counts":{"pids":0,"dtcs":0,"ecuInfo":0}}
-            
-        # Mode A translation (strict)
-        try:
-            source_row = dict(row)
-            source_row["ecuFile"] = key[0]
-            outcome = translate_categories(row["region"], row["functionKey"], row["entrySelector"], source_row,
-                                           ecmect_review=review,
-                                           lifecycle=control_lifecycle if row.get("id") == "SYSLIST_EU.BIN@0009d8f2" else None,
-                                           reference_data=control_system["data"] if row.get("id") == "SYSLIST_EU.BIN@0009d8f2" else None)
-            group_outcomes[key] = outcome
-            
-            # Oracle comparison for non-ECMECT groups
-            if row.get("id") != "SYSLIST_EU.BIN@0009d8f2":
-                oracle_pass = compare_fault_decoder(
-                    args.native_oracle, args.decoded, key[0], row["functionKey"], row["entrySelector"],
-                    outcome.get("categories", {}), outcome.get("counts", {})
-                )
-                oracle_results[key] = (oracle_pass, "faultDecoderComparison / p5DecoderComparison", "toyota_native_oracle.py:610, 726")
-        except Exception as exc:
-            errors[type(exc).__name__] += 1
-            group_outcomes[key] = {"translationError": type(exc).__name__}
-            
-        # Apply group result to all members
+            outcome = translate_categories(
+                representative['region'], representative['functionKey'],
+                representative['entrySelector'], dict(representative, ecuFile=key[0]),
+                ecmect_review=review,
+                lifecycle=control_lifecycle if control_member else None,
+                reference_data=control_system['data'] if control_member else None)
+            representative_error = None
+        except Exception as error:
+            representative_error = f'{type(error).__name__}:{error}'
+            translate_errors[type(error).__name__] += 1
         for member in members:
-            if member.get("id") == "SYSLIST_EU.BIN@0009d8f2":
-                outcome = group_outcomes[key]
+            if representative_error is not None:
+                for category in CATEGORIES:
+                    mode_a[category]['error_systems'] += 1
+                continue
+            if member.get('id') == CONTROL_SYSTEM and not control_member:
+                member_outcome = translate_categories(
+                    member['region'], member['functionKey'], member['entrySelector'],
+                    member, ecmect_review=review)
+            elif member is representative:
+                member_outcome = outcome
             else:
-                outcome = translate_categories(member["region"], member["functionKey"],
-                    member["entrySelector"], member, ecmect_review=review)
-            
+                member_outcome = translate_categories(
+                    member['region'], member['functionKey'], member['entrySelector'],
+                    member, ecmect_review=review)
             for category in CATEGORIES:
-                if "translationError" in outcome:
-                    status_counts[category]["error"] += 1
-                    reason = "translator_error:" + outcome["translationError"]
-                else:
-                    status = outcome["categories"][category]
-                    status_counts[category][status] += 1
-                    if status == "executable":
-                        translated_counts[category] += outcome["counts"][category]
-                    reason = outcome["reasons"].get(category)
-                
+                status = member_outcome['categories'][category]
+                mode_a[category][status + '_systems'] += 1
+                reason = member_outcome['reasons'].get(category)
                 if reason:
-                    reason_systems[(category, reason)] += 1
-                    reason_region_class[(member.get('region'), member.get('nativeTransport'), category, reason)] += 1
-                    if len(samples[(category, reason)]) < 5:
-                        samples[(category, reason)].append(member["id"])
-                        
-        step_timings[key] = time.perf_counter() - step_start
-
-    control_outcome = next((v for k,v in group_outcomes.items()
-                            if any(m.get("id") == "SYSLIST_EU.BIN@0009d8f2" for m in group_members[k])), None)
-    control_valid = (control_outcome is not None
-        and control_outcome.get("ecmectControlByteIdentical") is True
-        and {c:control_outcome.get("counts",{}).get(c) for c in ("pids","dtcs","ecuInfo")} ==
-            {"pids":30,"dtcs":1414,"ecuInfo":1})
-    control_status = "passed" if control_valid else "control failed, results invalid"
-    
-    candidate_status = Counter()
-    candidate_reasons = Counter()
-    candidate_reason_samples = defaultdict(list)
-    for key, outcome in candidate_groups.items():
-        candidate_status[outcome['status']] += len(group_members[key])
-        if outcome.get('reason'):
-            candidate_reasons[outcome['reason']] += len(group_members[key])
-            for row in group_members[key]:
-                if len(candidate_reason_samples[outcome['reason']]) < 10:
-                    candidate_reason_samples[outcome['reason']].append(row['id'])
-                    
-    elapsed_total = time.perf_counter() - start_total
-    memory_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-
-    # Build report
-    lines = ["# Stage 1b parameterized DTC translator probe", "",
-        "Scope: Group-based execution over 284 distinct (Ecu_Data file, function, selector) tuples; applies group result to all systems. Per-group time cap: {}s.".format(group_timeout_seconds),
-        f"Population partition: {sum(1 for r in eligible if r.get('nativeTransport') == 1 and r.get('linkStatus') == 'proven')} transport-1 proven + {sum(1 for r in eligible if r.get('id') == 'SYSLIST_EU.BIN@0009d8f2')} exact pinned ECMECT + {sum(1 for r in eligible if r.get('nativeTransport') == 5 and r.get('linkStatus') == 'unproven')} transport-5 unproven = {len(eligible)}.",
-        f"Exact parsed ECMECT entry (CODE-backed source reader): `{exact_entry}`. ECMECT control: **{control_status}**.",
-        f"Total groups processed: {len(group_members)}. Total systems: {len(eligible)}.",
-        f"Total probe step elapsed: {elapsed_total:.3f}s. Peak RSS: {memory_mib:.1f} MiB.",
-        "", "## Timings", "",
-        "| Group (Ecu_Data, function, selector) | Duration (s) |",
-        "|---|---:|"]
-    
-    for k, t in sorted(step_timings.items(), key=lambda x: -x[1])[:20]:
-        lines.append(f"| `{k}` | {t:.3f} |")
-    lines.append(f"| **Total** | **{elapsed_total:.3f}** |")
-    
-    lines += ["", "## Mode A per-category translator outcome", "", "| Category | Executable (strict translator) | Rejected | Error |", "|---|---:|---:|---:|"]
-    for c in CATEGORIES:
-        x = status_counts[c]
-        lines.append(f"| {c} | {x['executable']} | {x['rejected']} | {x['error']} |")
-        
-    lines += ["", "## Rejection reasons (top 20; eligible systems affected)", "", "| Category | Reason | Systems |", "|---|---|---:|"]
-    for (c, reason), n in reason_systems.most_common(20): lines.append(f"| {c} | `{reason}` | {n} |")
-    
-    lines += ["", "## Sample system keys (up to 5 per reason)", ""]
-    for (cat, reason), n in reason_systems.most_common(20):
-        lines.append(f"- `{cat}` / `{reason}` ({n} systems): " + ", ".join(f"`{x}`" for x in samples[(cat, reason)]))
-        
-    lines += ["", "## Oracle comparison (non-ECMECT)", ""]
-    non_ecmect_groups = [k for k in oracle_results.keys() if any(m.get("id") != "SYSLIST_EU.BIN@0009d8f2" for m in group_members[k])]
-    if not non_ecmect_groups:
-        lines.append("- **no oracle result for non-ECMECT DTC** (no non-ECMECT groups found or oracle not executed). Enable nothing.")
-    else:
-        passed_groups = [k for k, (p, f, fl) in oracle_results.items() if p]
-        if passed_groups:
-            lines.append(f"- **oracle passed** for {len(passed_groups)} non-ECMECT groups (function `{oracle_results[passed_groups[0]][1]}` in `{oracle_results[passed_groups[0]][2]}`); enabling only these groups.")
+                    mode_a_reasons[(category, reason)] += 1
+                    if len(mode_a_samples[(category, reason)]) < SAMPLE_LIMIT:
+                        mode_a_samples[(category, reason)].append(member['id'])
+        if representative_error is not None:
+            for category in CATEGORIES:
+                mode_a[category]['error_groups'] += 1
         else:
-            lines.append(f"- **oracle failed** for all {len(non_ecmect_groups)} non-ECMECT groups (function `{oracle_results[non_ecmect_groups[0]][1]}` in `{oracle_results[non_ecmect_groups[0]][2]}`); enable nothing. **no oracle result for non-ECMECT DTC passing example**.")
+            for category in CATEGORIES:
+                mode_a[category][outcome['categories'][category] + '_groups'] += 1
 
-    lines += ["", "## ECMECT control", "", f"- Status: **{control_status}** (byte-identical 1,414 DTCs: {control_outcome.get('counts',{}).get('dtcs', 'NOT_ESTABLISHED') if control_outcome else 'NOT_ESTABLISHED'})"]
-    
-    lines += ["", "## Errors and resources", "", f"Translator-classification exceptions by type: `{dict(errors)}`.",
-        f"Total elapsed: {elapsed_total:.3f}s. Peak RSS: {memory_mib:.1f} MiB.", ""]
+        if control_member and representative_error is None:
+            control['modeA'] = {
+                'system': representative['id'],
+                'groupId': list(key),
+                'counts': {c: outcome['counts'].get(c) for c in ('pids', 'dtcs', 'ecuInfo')},
+                'byteIdentical': outcome.get('ecmectControlByteIdentical'),
+                'entry': exact_entry}
+
+        # --- Mode B: parameterized P3/P4 DTC compile, once per group. ---
+        try:
+            raw = system_row(args.decoded, representative['region'], representative['id'])
+            function = int.from_bytes(raw[0:4], 'little')
+            selector = raw[27]
+            if (function, selector) != (representative['functionKey'], representative['entrySelector']):
+                raise ValueError(f'system_row_identity_mismatch:{function}/{selector}')
+            result = parameterized_dtc_group(
+                sources, libraries, region=representative['region'],
+                system_id=representative['id'], system_bytes=raw,
+                native_transport=representative['nativeTransport'])
+        except Exception as error:
+            result = {'executable': False, 'rejectReason': f'{type(error).__name__}:{error}',
+                      'dtcCount': 0, 'readRequest': None, 'clearRequest': None,
+                      'workflowQueries': 0, 'identificationCount': 0,
+                      'oracleStatus': NO_ORACLE, 'definition': None}
+        group_results[key] = {
+            'representative': representative['id'], 'systems': len(members),
+            'region': representative['region'],
+            'nativeTransport': representative['nativeTransport'],
+            'compiled': result['executable'], 'rejectReason': result['rejectReason'],
+            'dtcCount': result['dtcCount'], 'readRequest': result['readRequest'],
+            'clearRequest': result['clearRequest'], 'oracleStatus': result['oracleStatus']}
+        if result['executable']:
+            compile_counts['executable_groups'] += 1
+            compile_counts['executable_systems'] += len(members)
+            compile_counts['dtc_labels'] += result['dtcCount']
+            if result['clearRequest']:
+                compile_counts['groupsWithSourceClear'] += 1
+        else:
+            compile_counts['rejected_groups'] += 1
+            compile_counts['rejected_systems'] += len(members)
+            reason = result['rejectReason']
+            compile_reasons[reason] += 1
+            if len(compile_samples[reason]) < SAMPLE_LIMIT:
+                compile_samples[reason].append(representative['id'])
+        if control_member:
+            control['parameterized'] = {
+                'system': representative['id'], 'dtcCount': result['dtcCount'],
+                'executable': result['executable'], 'rejectReason': result['rejectReason'],
+                'readRequest': result['readRequest'],
+                'clearRequest': result['clearRequest'],
+                'matchesPinnedDtcCount': result['dtcCount'] == PINNED_DTCS}
+
+    oracle = oracle_status(args.native_oracle)
+    elapsed = time.perf_counter() - started
+    peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+    mode_a_control_valid = (control.get('modeA') is not None
+                            and control['modeA']['byteIdentical'] is True
+                            and control['modeA']['counts'] == CONTROL_COUNTS)
+    control_status = 'passed' if mode_a_control_valid else 'failed'
+    partial = not_processed['groups'] > 0
+    head = args.head_sha or os.environ.get('GITHUB_SHA') or 'NOT ESTABLISHED'
+    stamp = datetime.now(timezone.utc).isoformat()
+
+    lines = ['# Stage 1b parameterized DTC probe', '',
+             f'- Head SHA: `{head}`', f'- UTC: {stamp}',
+             f'- Corpus inputs (argument-supplied, opened before measuring): {len(checks)} checks passed.',
+             '- No write functions, no pack output, no definition file: this probe only reads decoded sources.',
+             '']
+
+    partition = Counter()
+    for row in eligible:
+        if row.get('id') == CONTROL_SYSTEM:
+            partition['pinnedEcmect'] += 1
+        elif row.get('nativeTransport') == 5:
+            partition['transport5Unproven'] += 1
+        else:
+            partition['transport1Proven'] += 1
+    lines += ['## Population and execution', '',
+              '| Measure | Value |', '|---|---:|',
+              f'| System records read from `systems.jsonl.gz` | {total_records:,} |',
+              f'| Eligible promotion-partition systems | {len(eligible):,} |',
+              f'| Partition: transport-1 proven | {partition["transport1Proven"]:,} |',
+              f'| Partition: exact pinned ECMECT | {partition["pinnedEcmect"]:,} |',
+              f'| Partition: transport-5 unproven | {partition["transport5Unproven"]:,} |',
+              f'| Distinct (Ecu_Data file, function, selector) groups | {len(group_keys):,} |',
+              f'| Groups executed | {len(group_keys) - not_processed["groups"]:,} |',
+              f'| Systems beyond one representative per group | {sum(max(0, len(v) - 1) for v in groups.values()):,} |',
+              '']
+
+    if partial:
+        lines += [f'**PARTIAL — {not_processed["reason"]}.** '
+                  f'{not_processed["groups"]} groups / {not_processed["systems"]:,} systems were not measured. '
+                  'Unmeasured groups are reported here, never as a per-system reject.', '']
+
+    lines += ['## ECMECT control (1,414 DTCs)', '']
+    if control.get('modeA'):
+        mode_a_control = control['modeA']
+        lines += [f'- Exact parsed ECMECT entry: `{mode_a_control["entry"]}` (system `{mode_a_control["system"]}`).',
+                  f'- Mode A strict pinned translator counts: {mode_a_control["counts"]}; '
+                  f'byte-identical to the enabled-pack output: **{mode_a_control["byteIdentical"]}**.',
+                  f'- Mode A control status: **{control_status}**.']
+    else:
+        lines += ['- Mode A control group was not reached: NOT ESTABLISHED.']
+    param_control = control.get('parameterized')
+    if param_control:
+        lines += [f'- Parameterized P3/P4 compile on the same pinned row (`{param_control["system"]}`): '
+                  f'executable={param_control["executable"]}, DTC labels={param_control["dtcCount"]}, '
+                  f'read request={param_control["readRequest"]}, clear request={param_control["clearRequest"]}, '
+                  f'1,414-label match={param_control["matchesPinnedDtcCount"]}.'
+                  + ('' if param_control['rejectReason'] is None else
+                     f' Reject reason: `{param_control["rejectReason"]}`.')]
+    lines += ['']
+
+    lines += ['## Mode A — strict pinned translator (existing path, group-executed)', '',
+              '| Category | Executable groups | Executable systems | Rejected groups | Rejected systems | Error groups | Error systems |',
+              '|---|---:|---:|---:|---:|---:|---:|']
+    for category in CATEGORIES:
+        counts = mode_a[category]
+        lines.append(f'| {category} | {counts["executable_groups"]:,} | {counts["executable_systems"]:,} | '
+                     f'{counts["rejected_groups"]:,} | {counts["rejected_systems"]:,} | '
+                     f'{counts["error_groups"]:,} | {counts["error_systems"]:,} |')
+    lines += ['', 'Group status is the status of the group representative row; the pinned ECMECT row is '
+              'preserved as representative exactly where it appears. System counts evaluate every member row.',
+              '']
+
+    lines += ['## Mode A rejection reasons (every literal reason)', '',
+              '| Category | Reason | Systems | 5 sample system keys |', '|---|---|---:|---|']
+    for (category, reason), count in mode_a_reasons.most_common():
+        samples = ', '.join(f'`{value}`' for value in mode_a_samples[(category, reason)])
+        lines.append(f'| {category} | `{reason}` | {count:,} | {samples} |')
+    lines += ['']
+
+    lines += ['## Stage 1b parameterized P3/P4 DTC compile (one execution per group)', '',
+              '| Measure | Value |', '|---|---:|',
+              f'| Executable groups | {compile_counts["executable_groups"]:,} |',
+              f'| Executable systems covered by those groups | {compile_counts["executable_systems"]:,} |',
+              f'| DTC labels produced by those groups | {compile_counts["dtc_labels"]:,} |',
+              f'| Groups with a source clear (`04`/`44`) definition | {compile_counts["groupsWithSourceClear"]:,} |',
+              f'| Rejected groups | {compile_counts["rejected_groups"]:,} |',
+              f'| Rejected systems covered by those groups | {compile_counts["rejected_systems"]:,} |',
+              f'| Groups without a decision (budget) | {not_processed["groups"]:,} |',
+              '']
+    lines += ['| Literal reject reason | Groups | Systems | 5 sample system keys |', '|---|---:|---:|---|']
+    if compile_reasons:
+        for reason, count in compile_reasons.most_common():
+            window = sum(group_results[k]['systems'] for k in group_results
+                         if group_results[k]['rejectReason'] == reason)
+            samples = ', '.join(f'`{value}`' for value in compile_samples[reason])
+            lines.append(f'| `{reason}` | {count:,} | {window:,} | {samples} |')
+    else:
+        lines.append('| (no rejects) | 0 | 0 | — |')
+    lines += ['', 'A compiled group is a **candidate** DTC translation: it is not oracle-approved and it is '
+              'not enabled. Compilation success proves only that the existing source compiler accepted that '
+              'exact source row.', '']
+
+    lines += ['## Oracle comparison (non-ECMECT)', '']
+    if not oracle['available']:
+        lines += [f"- **no oracle result for non-ECMECT DTC** — {oracle['reason']}. Enable nothing."]
+    else:
+        lines += [f'- `faultDecoderComparison` / `p5DecoderComparison` present in the native comparison output: '
+                  f'`{json.dumps(oracle["decoderComparisons"], sort_keys=True)}`.',
+                  f'- These comparisons are **decoder-level, not group-keyed** (CODE: {oracle["source"]}): they '
+                  'replay synthetic state/record vectors and source blocks, and emit no per (Ecu_Data file, '
+                  'function, selector) verdict.',
+                  '- Therefore **no oracle result for non-ECMECT DTC** exists in this run. Enable nothing.']
+    lines += ['', '## Timing and resources', '',
+              f'- Probe wall clock: {elapsed:.1f}s. Peak RSS: {peak_rss:.1f} MiB.',
+              f'- Distinct decoded source files opened and checksum-verified: {len(sources.reads)}.',
+              f'- Translator classification exceptions: `{dict(translate_errors)}`.', '']
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("\n".join(lines))
-    
-    # JSON output
-    json_out = {
-        "kind":"toyota-stage1b-parameterized-probe-v1",
-        "systems":len(systems),
-        "groups":len(group_members),
-        "elapsedSeconds":elapsed_total,
-        "peakRssMiB":memory_mib,
-        "stepTimings":{str(k):v for k,v in step_timings.items()},
-        "categoryOutcomes":{k:dict(v) for k,v in status_counts.items()},
-        "translatedDefinitionTotals":dict(translated_counts),
-        "ecmectControl":{"status":control_status,"byteIdentical":control_outcome.get("ecmectControlByteIdentical") if control_outcome else None,
-            "counts":control_outcome.get("counts") if control_outcome else None,"resultsValid":control_valid},
-        "reasonSystems":[{"category":k[0],"reason":k[1],"systems":v,"samples":samples[k]} for k,v in reason_systems.most_common()],
-        "oracleResults":{str(k):{"pass":v[0],"function":v[1],"fileLine":v[2]} for k,v in oracle_results.items()},
-        "classificationErrors":dict(errors)
-    }
-    args.json_output.write_text(json.dumps(json_out, sort_keys=True, indent=2) + "\n")
-    
-    if not control_valid:
-        raise SystemExit("ECMECT control failed: partial reports written and all translator results invalid")
+    args.output.write_text('\n'.join(lines))
+
+    payload = {
+        'kind': 'toyota-stage1b-parameterized-dtc-probe-v1',
+        'headSha': head, 'utc': stamp, 'partial': partial,
+        'corpusChecks': checks,
+        'population': {'systemRecords': total_records, 'eligible': len(eligible),
+                       'partition': dict(partition), 'groups': len(group_keys),
+                       'groupsExecuted': len(group_keys) - not_processed['groups'],
+                       'systemsBeyondRepresentative': sum(max(0, len(v) - 1) for v in groups.values())},
+        'notProcessed': not_processed,
+        'ecmectControl': {'status': control_status, **control},
+        'modeA': {category: dict(counts) for category, counts in mode_a.items()},
+        'modeAReasons': [{'category': key[0], 'reason': key[1], 'systems': count,
+                          'samples': mode_a_samples[key]}
+                         for key, count in mode_a_reasons.most_common()],
+        'parameterized': {'counts': dict(compile_counts),
+                          'rejects': [{'reason': key, 'groups': count, 'samples': compile_samples[key]}
+                                      for key, count in compile_reasons.most_common()],
+                          'groups': [{'group': list(key), **value} for key, value in group_results.items()]},
+        'oracle': oracle,
+        'elapsedSeconds': elapsed, 'peakRssMiB': peak_rss,
+        'decodedSourcesOpened': sources.reads,
+        'translatorExceptions': dict(translate_errors)}
+    args.json_output.parent.mkdir(parents=True, exist_ok=True)
+    args.json_output.write_text(json.dumps(payload, sort_keys=True, indent=2) + '\n')
+
+    print(json.dumps({key: payload[key] for key in ('headSha', 'partial', 'population',
+                                                    'ecmectControl', 'elapsedSeconds')}, sort_keys=True))
+    if not mode_a_control_valid:
+        print('ECMECT control failed: partial reports written and all translator results are invalid',
+              file=sys.stderr)
+        return 1
+    return 0
+
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--systems", type=Path, required=True)
-    p.add_argument("--decoded", type=Path, required=True)
-    p.add_argument("--english", type=Path, required=True)
-    p.add_argument("--native-oracle", type=Path)
-    p.add_argument("--ecmect-review-dir", type=Path, required=True)
-    p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--json-output", type=Path, required=True)
-    args = p.parse_args()
-    
-    # Run fail-fast check first
-    import subprocess
-    res = subprocess.run([sys.executable, str(Path(__file__).parent / "fail_fast_corpus_check.py")])
-    if res.returncode != 0:
-        sys.exit(res.returncode)
-        
-    run(args, group_timeout_seconds=300)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--archive', type=Path, required=True)
+    parser.add_argument('--decoded', type=Path, required=True)
+    parser.add_argument('--manifest', type=Path, required=True)
+    parser.add_argument('--english', type=Path, required=True)
+    parser.add_argument('--systems', type=Path, required=True)
+    parser.add_argument('--native-oracle', type=Path)
+    parser.add_argument('--ecmect-review-dir', type=Path, required=True)
+    parser.add_argument('--head-sha')
+    parser.add_argument('--max-seconds', type=float, default=600.0)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--json-output', type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        checks = fail_fast(args)
+    except CorpusError as error:
+        print(f'FAIL-FAST: {error}', file=sys.stderr)
+        return CORPUS_EXIT
+    return run(args, checks)
 
-if __name__ == "__main__":
-    main()
+
+if __name__ == '__main__':
+    sys.exit(main())
