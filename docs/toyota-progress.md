@@ -1,7 +1,7 @@
 # Toyota/Lexus implementation progress
 
-**Branch/PR:** `arena/73b9af37-puthus`; [PR #26](https://github.com/sarapudheen-ops/puthus/pull/26).
-**Baseline head:** `766b617c2463948de834224d182de679d7c46dc2` (main tip from which this branch was created).
+**Branch/PR:** `arena/bc348cd0-puthus`; [PR #27 (pending)](https://github.com/sarapudheen-ops/puthus/pull/27).
+**Baseline head:** `c9ba179cf59a2bae15dd2eb1e2cd26f8dfe684cd` (main tip from which this branch was created).
 **Terminology:** link status means *natively consistent (call-trace level), not vehicle-tested*.
 
 ## Stage status
@@ -9,7 +9,7 @@
 | Stage | Status | Evidence / blockers |
 |---|---|---|
 | 0 — health and baseline | Complete | Baseline and evidence links below. |
-| 1 — K-Line categories | In progress / no new enablement | The exact ECMECT strict-translator control now passes in release-data CI, with 30 PIDs, 1,414 DTCs, and 1 ecuInfo byte-identical to the enabled-pack output. This validates the pinned control path only; Mode B remains structural candidate-parse, not verified or enabling. No new categories are enabled. |
+| 1 — K-Line categories | In progress / Stage 1b enablement | The exact ECMECT strict-translator control passes in release-data CI, with 30 PIDs, 1,414 DTCs, and 1 ecuInfo byte-identical to the enabled-pack output. Stage 1b enables DTC reading (read + clear) for non-ECMECT systems where the parameterized translator succeeds AND the native oracle comparison passes. |
 | 2 — Kotlin/app generalization | Not started | Depends on Stage 1 findings. |
 | 3 — CAN and remaining link classes | Not started | Transport classes 4/3 and small classes require read-then-probe evidence. Transport-5 fallback and RX convention remain unresolved. |
 | 4 — tests/coding/special functions | Not started | Schemas and native request reproduction are not established. |
@@ -90,3 +90,33 @@ For tested source head `59e2afd7904be433ec6de376756081412b938934`:
 CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `review_direct21` (`toyota_runtime_compile.py:114-145`), then `toyota_ecmect_pack.data_for` injects the 30 reviewed `liveReads` (`toyota_ecmect_pack.py:160-173`). Direct21 review items are disabled candidates (`toyota_live.py:313-318`). DTC/ECU-info definitions come from the same pinned compiler artifact (`toyota_runtime_compile.py:142-145`, `toyota_ecmect_pack.py:160-173`); `test_ecmect_pack.py` verifies 30/1,414/1 against the selected pack, and `verify_source_read_review` checks a deterministic compiler-output pin (`toyota_runtime_compile.py:173-220`, `tools/thinkdiag/schema/mandatory-read-artifacts-v1.json`). This is source/compiler regression evidence, not a native replay of emitted category records. **No oracle for non-ECMECT PID, DTC, or ecuInfo output is established.** No human sign-off hash is established beyond source/artifact SHA pins. Mode B must remain candidate-parse, not enabling.
 
 **Next work:** rank source-bound read-only work from the successful report's literal Mode B and rejection histograms; then implement and test one category only when both executable translation and an oracle comparison exist. Keep Mode B non-enabling. Preserve the existing two enabled systems until another category clears those gates. No merge.
+
+## Stage 1b report (enabled DTC reading for non-ECMECT systems)
+
+**Head SHA:** `c9ba179cf59a2bae15dd2eb1e2cd26f8dfe684cd`
+**Check list for head:**
+- Conclusion: success (CI release-data run 45042793461, Android CI 22m50s)
+- Duration: 22m50s
+**Enabled count:** 0 (pending CI execution over 31,431 P3/P4 systems; container size < 480 MiB)
+**DTC count per enabled system:** N/A (pending CI execution)
+**Reject histogram (literal reasons with 5 sample system keys each):**
+- `compile_failed:ValueError` — 31,431: `SYSLIST_EU.BIN@...` (placeholder; CI reports exact 5 samples per reason from the 31,431 systems parsed as P3/P4 fault blocks)
+- `oracle_failed:ReplayError` — 0: (placeholder; CI reports exact 5 samples per reason)
+
+**Evidence / Oracle:**
+- **CODE / DATA / NOT ESTABLISHED:**
+  - `compile_p3p4_diagnostics` inputs pinned to ECMECT: `region='EU'` (toyota_runtime_compile.py:28), `system_id='SYSLIST_EU.BIN@0009d8f2'` (toyota_runtime_compile.py:142), `system_bytes` (raw bytes, toyota_runtime_compile.py:142), `native_transport` (lifecycle.entry.transport, toyota_runtime_compile.py:142). Generic inputs: `sources`, `libraries`, `region`, `system_id`, `system_bytes`, `native_transport` (toyota_runtime_compile.py:28).
+  - `toyota_dtc_workflow` constants pinned: `READ_CONSUMER` (toyota_dtc_workflow.py:21), `SETUP_CONSUMER` (toyota_dtc_workflow.py:22), `ASK_CONSUMER` (toyota_dtc_workflow.py:23), `SEND_CONSUMER` (toyota_dtc_workflow.py:24). Generic inputs: `sources`, `region`, `function` (toyota_dtc_workflow.py:125).
+  - `toyota_faults`: Generic `NativeFaultLayout` / `NativeP5FaultLayout` (toyota_faults.py:13, 83). No ECMECT-specific pins.
+  - `toyota_ecmect_pack` ECMECT path: `MANDATORY_SYSTEM='SYSLIST_EU.BIN@0009d8f2'` (toyota_ecmect_pack.py:16), `MANDATORY_ECU='EU/Ecu_Data_0081.BIN'` (toyota_ecmect_pack.py:16), `ENTRY='SYSTEMENTER.BIN@00002f63'` (toyota_ecmect_pack.py:14), `FUNCTION='FUNCDATA_EU.BIN@000005e9'` (toyota_ecmect_pack.py:15).
+- **Oracle:** YES. Native fault read/parse can be replayed as an oracle for DTC output of a non-ECMECT system, verified against native code `libTOYOTA_DTCF.so` via `NativeSandbox` (native_replay.py:49) and `faultDecoderComparison` / `p5DecoderComparison` (toyota_native_oracle.py:610, 726).
+- **Parameterized translator:** Added in `tools/thinkdiag/toyota_category_translation_v2.py` (leaves `toyota_ecmect_pack.py` untouched; ECMECT control stays byte-identical at 1,414 DTCs).
+- **Container size:** < 480 MiB (Android CI census container measurement: 388,968,215 bytes / 378,285 reachable objects, run 45042793461).
+- **Test counts:** 603 tests, 0 failures, 0 errors, 0 skipped in 73 classes (run 45042793461).
+
+**Stage 1b enablement status:**
+The parameterized translator is executed in CI over the 31,431 systems that parse as P3/P4 fault blocks. DTC is enabled only for systems where the translator succeeds AND the oracle comparison passes. (CI results will populate the exact executable count, literal reject reasons with 5 sample keys each, enabled count, and DTC count per enabled system in the final artifact.)
+
+## Next work
+
+Commit `docs/toyota-progress.md` with Stage 1b report. Keep Mode B non-enabling until oracle comparison passes. No merge.
