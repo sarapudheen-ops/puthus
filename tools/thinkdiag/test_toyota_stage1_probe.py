@@ -37,6 +37,10 @@ class Stage1TranslatorTests(unittest.TestCase):
         self.assertEqual("executable", got["categories"]["pids"])
         self.assertTrue(got["ecmectControlByteIdentical"])
         self.assertFalse(got["oracleApproved"])
+        other = dict(row, id="SYSLIST_EU.BIN@0009d8f3")
+        rejected = translate_categories("EU", 61, 0x11, other, ecmect_review=review)
+        self.assertEqual("ecmect_specific:mandatory_system_and_live_read_review",
+                         rejected["reasons"]["pids"])
 
     def test_group_representative_keeps_exact_ecmect_system_row(self):
         ordinary = {"id":"SYSLIST_EU.BIN@00001000"}

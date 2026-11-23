@@ -245,7 +245,13 @@ def run(args):
             errors[type(exc).__name__] += 1
             group_outcomes[key] = {"translationError": type(exc).__name__}
         for member in members:
-            outcome = group_outcomes[key]
+            # Translation authorization is exact-system pinned. Structural groups
+            # may share ECU/function/selector, but must not inherit ECMECT output.
+            if member.get("id") == "SYSLIST_EU.BIN@0009d8f2":
+                outcome = group_outcomes[key]
+            else:
+                outcome = translate_categories(member["region"], member["functionKey"],
+                    member["entrySelector"], member, ecmect_review=review)
             for category in CATEGORIES:
                 if "translationError" in outcome:
                     status_counts[category]["error"] += 1
