@@ -9,7 +9,7 @@
 | Stage | Status | Evidence / blockers |
 |---|---|---|
 | 0 — health and baseline | Complete | Baseline and evidence links below. |
-| 1 — K-Line categories | In progress / no new enablement | The exact ECMECT strict-translator control now passes in release-data CI, with 30 PIDs, 1,414 DTCs, and 1 ecuInfo byte-identical to the enabled-pack output. This validates the pinned control path only; Mode B remains structural candidate-parse, not verified or enabling. No new categories are enabled. |
+| 1 — K-Line categories | In progress / Stage 1d enablement landed | The exact ECMECT strict-translator control passes in release-data CI (30 PIDs, 1,414 DTCs, 1 ecuInfo, byte-identical). Stage 1d enabled 108 compiled-group DTC-read-only systems via the deterministic group pin (see Stage 1d); the two pinned slices stay byte-identical and the delivered pack is unchanged. The transport-5 link class (93 group systems) stays unproven; clear is deliberately unresolved. No physical validation is claimed. |
 | 2 — Kotlin/app generalization | Not started | Depends on Stage 1 findings. |
 | 3 — CAN and remaining link classes | Not started | Transport classes 4/3 and small classes require read-then-probe evidence. Transport-5 fallback and RX convention remain unresolved. |
 | 4 — tests/coding/special functions | Not started | Schemas and native request reproduction are not established. |
@@ -292,6 +292,75 @@ A group-keyed oracle pass is necessary but not sufficient, and the three blocker
 - Oracle step wall clock 18.1 s, peak RSS 163.9 MiB (whole inspect job stays inside the 45-minute budget).
 - Container: 421,223,645 bytes (401.7 MiB), under the 480 MiB limit and under the 460 MiB review threshold.
 - Tests in the same run's own discovery: `Ran 311 tests ... OK (skipped=1)`.
+
+## Stage 1d — compiled-group DTC read-only enablement
+
+STATUS: complete. All numbers below are DATA from the cited release-data runs; claims marked CODE are
+implementation facts. No physical ECU validation is claimed.
+
+### The gate that kept enabled at 0 (DATA)
+
+`tools/thinkdiag/schema/dtc-group-enable-v1.json` is the deterministic expected-output pin: an empty
+`groups` list enables nothing, and a group enables only when its representative's measured
+`definitionSha256`/`definitionHash` match byte-for-byte. Round 1 pushed the empty pin (head `d133329`,
+run 45310645082): the gate `group_pin_absent_or_mismatched:no pin entry` held every system at
+`unresolved-pin` — `- Pinned groups: 0 (none); Groups: 4; members: 201; qualified: 0; enabled: 0;
+unresolved: 201`. Round 2 (head `4129ad2`, run 45313528051) filled the pin with exactly the round-1
+measured hashes; enablement followed.
+
+### Per-system qualification (DATA, final run 45318134431, head `45177ba`)
+
+`Groups: 4; members: 203; qualified: 108; enabled: 108; unresolved: 93; pinned-path: 2` — 203/203
+systems accounted for.
+
+| Group (Ecu_Data, fn 61) | Representative | Members | Enabled | Unresolved | Pinned-path | Literal failure reason |
+|---|---|---|---|---|---|---|
+| EU/Ecu_Data_0081.BIN `0x11` | `SYSLIST_EU.BIN@0009d8f2` | 79 | 78 | 0 | 1 | — |
+| EU/Ecu_Data_0081.BIN `0x51` | `SYSLIST_EU.BIN@00023995` | 79 | 0 | 78 | 1 | `link_unproven:link_representation_unsupported:transport-5-flags-33` |
+| JP/Ecu_Data_0081.BIN `0x11` | `SYSLIST_JP.BIN@00003875` | 30 | 30 | 0 | 0 | — |
+| NA/Ecu_Data_0081.BIN `0x51` | `SYSLIST_NA.BIN@0002bf2a` | 15 | 0 | 15 | 0 | `link_unproven:link_representation_unsupported:transport-5-flags-33` |
+
+The two `pinned-path` rows are the pinned ECMECT and Innova slices (`SYSLIST_EU.BIN@0009d8f2`,
+`SYSLIST_EU.BIN@00023a75`): byte-identical packs, never group-enabled. All 93 failures are the
+transport-5 link representation gate (Stage 1's unresolved class); no member failed its definition hash.
+
+### The shipped slice is DTC READ only (CODE, deliberate)
+
+The shipped group slice is `read` + `layout` (labels) only, `readOnly=true`: executable `dtcs`
+category, `pids`/`ecuInfo` unresolved. ECMECT's DTC read depends on the 10 5F session-change workflow
+(`EcuWorkbench.kt:65` → `ToyotaFaultWorkflow.kt:127,:157`); ECMECT never ships a clear
+(`toyota_ecmect_pack.py:163`, `:258-259`) and no clear exchange is probe-verified (the probes are
+read-only), so clear cannot be shown to follow a verified shipped-clear path. Clear stays unresolved
+with the literal reason `clear_unresolved:read-only-slice-never-exposes-clearing`
+(`groupDtcEnable.clearReason`; `verify_group_dtc_system` rejects any shipped clear or workflow). The
+compiled workflow (10 5F) is likewise unshipped; the DTC read is the plain documented request
+(`ToyotaWorkflowTest.dtcOnlySliceReadsWithoutSessionAndNeverClears`). No safety guard, confirmation
+or session requirement was weakened.
+
+### Final enabled counts (DATA)
+
+- Enabled systems: **110** (2 pinned + 108 group DTC-read-only) — acceptance evidence, run 45313528051.
+- DTCs per enabled system: 1,414 labels for each of the 78 EU `0x11` systems; 1,111 labels for each of
+  the 30 JP systems. Pinned slices unchanged (30 PIDs/1,414 DTCs/1 ECU-info + the Innova slice).
+  Total executable definitions: **146,512** = 2,890 pinned + 78×1,414 + 30×1,111.
+- Promoted on-demand container: **424,385,502 bytes** (404.7 MiB; cap 503,316,480 = 480 MiB) —
+  qualification check-run, run 45318134431. Deterministic; reproduces on the final head's run.
+- ECMECT and Innova packs stay byte-identical (pinned-path rows; the delivered pack, baseline
+  conversion and `prepare-vehicle-packs` are untouched).
+
+### Verification (CODE)
+
+- `verify_vehicle_bundle.py:137-155`: enabled set = the two pinned slices + pin-verified extras
+  (`verify_group_dtc_system`: pin entry, representative `definitionSha256`, per-member `definitionHash`
+  over the shipped read surface, read-only slice shape, category truthfulness, `validate_system`).
+- Kotlin `VehiclePackCatalog.kt:212-218` accepts DTC-only enabled systems; JVM tests
+  `VehiclePackScenarios.dtcOnlyReadOnlySystemIsAcceptedByTheProductionValidator` and
+  `dtcOnlyCategoryTruthfulnessStaysEnforced` prove acceptance and the category gate.
+- Tests: Python `Ran 328 tests OK (skipped=1)` (`python3 -m unittest discover -s tools/thinkdiag
+  -p 'test_*.py'`); JVM additions `VehiclePackTest` +2 and `ToyotaWorkflowTest` +1 (fast unit tests).
+- Not established: physical ECU/transport validation, the transport-5 link representation (the 93
+  unresolved systems), any clear or session capability, and Android delivered-pack wiring (the
+  delivered container keeps the pinned two slices only).
 
 ## Evidence audit / next work
 
