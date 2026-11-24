@@ -13,16 +13,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -31,6 +37,8 @@ import com.bod3.app.bringup.BringUpState
 import com.bod3.app.catalog.CatalogData
 import com.bod3.app.diagnostics.EcuWorkbench
 import java.io.File
+import com.bod3.app.vehiclepack.PackSystemAction
+import com.bod3.app.vehiclepack.PackSystemStatusUi
 import com.bod3.app.vehiclepack.PackView
 import com.bod3.app.vehiclepack.VehiclePacksController
 import com.bod3.app.vehiclepack.VehiclePacksState
@@ -46,6 +54,11 @@ fun ToyotaVehiclePacksScreen(
     onImportSetups: () -> Unit,
 ) {
     fun reason(key: String) = state.reasons[key] ?: key
+    // Local UI-only filter state; resets when another variant is selected. The pure logic lives in
+    // PackSystemStatusUi and runs over the selected vehicle's already-loaded descriptors only.
+    var systemSearch by rememberSaveable(state.vehicle?.variantId) { mutableStateOf("") }
+    var linkVerifiedOnly by rememberSaveable(state.vehicle?.variantId) { mutableStateOf(false) }
+    val visibleSystems = PackSystemStatusUi.filter(state.vehicle?.systems ?: emptyList(), systemSearch, linkVerifiedOnly)
     Scaffold(topBar = {
         TopAppBar(title = { Text(when (state.view) { PackView.PICKER -> "Toyota vehicle packs"; PackView.SYSTEMS -> "Vehicle systems"; PackView.FEATURES -> state.system?.name ?: "System features" }) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
@@ -98,18 +111,45 @@ fun ToyotaVehiclePacksScreen(
                 PackView.SYSTEMS -> {
                     val vehicle = state.vehicle
                     if (vehicle != null) {
+                        val visible = visibleSystems
                         item { Text(vehicle.title, style = MaterialTheme.typography.titleSmall) }
-                        items(vehicle.systems, key = { it.id }) { system ->
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = systemSearch, onValueChange = { systemSearch = it },
+                                    label = { Text("Search systems by name") }, singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilterChip(selected = linkVerifiedOnly, onClick = { linkVerifiedOnly = !linkVerifiedOnly },
+                                        label = { Text("Link verified") })
+                                    Text("${visible.size} of ${vehicle.systems.size} systems", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                        items(visible, key = { it.id }) { system ->
                             SectionCard(system.name) {
+                                Text(PackSystemStatusUi.linkBadge(system.linkStatus, system.linkReasons),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (system.linkStatus == "proven") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
                                 Text(if (system.enabled) "Enabled · read-only · source verified" else "Disabled · mapping incomplete",
                                     color = if (system.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                PackSystemStatusUi.categoryLines(system.categoryStatus).forEach {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                PackSystemStatusUi.dtcOnlyLines(system.categoryStatus).forEach {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                                }
                                 system.counts.forEach { (kind, count) -> InfoRow(kind, count.label) }
+                                if (system.reasons.isNotEmpty()) Text("Reason: " + system.reasons.joinToString(),
+                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 system.reasons.forEach { Text(reason(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                 OutlinedButton(onClick = { controller.openSystem(system) }, enabled = !state.busy) {
                                     Text(if (system.enabled) "Open this system" else "Inspect disabled features and source IDs")
                                 }
                             }
                         }
+                        if (visible.isEmpty()) item { Text("No systems match this search and filter.") }
                     }
                 }
                 PackView.FEATURES -> {
@@ -119,23 +159,40 @@ fun ToyotaVehiclePacksScreen(
                         val runtime = bringUp.report?.workingCandidate?.runtime
                         val rawData = if (verified) runtime?.data ?: CatalogData() else CatalogData()
                         val data = if (runtime?.identityKind == com.bod3.app.bringup.EcuIdentityKind.ECU_SERIAL) rawData else rawData.copy(actuators = emptyList(), coding = emptyList())
+                        val choice = state.vehicle?.systems?.firstOrNull { it.id == system.id }
+                        val actions = PackSystemStatusUi.executableActions(choice)
                         item { BringUpSection(bringUp, bringUpController, connected, onStartBringUp, writeBringUpReport, writeVerifiedSetups, onImportSetups) }
                         item {
                             SectionCard(system.name) {
+                                choice?.let { c ->
+                                    Text(PackSystemStatusUi.linkBadge(c.linkStatus, c.linkReasons),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (c.linkStatus == "proven") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
+                                }
                                 Text(state.vehicle?.title.orEmpty(), style = MaterialTheme.typography.bodySmall)
                                 state.coverage?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
                                 if (system.enabled) {
                                     Text("Read-only: clearing, coding, actuators, security access and flashing are excluded from this system.",
                                         style = MaterialTheme.typography.bodySmall)
                                 }
+                                choice?.let { c ->
+                                    PackSystemStatusUi.categoryLines(c.categoryStatus).forEach {
+                                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    PackSystemStatusUi.dtcOnlyLines(c.categoryStatus).forEach {
+                                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                                    }
+                                }
                                 system.counts.forEach { (kind, count) -> InfoRow(kind, count.label) }
+                                if (system.reasons.isNotEmpty()) Text("Reason: " + system.reasons.joinToString(),
+                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 system.reasons.forEach { Text(reason(it), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
                                 Text("Source records: " + system.sourceRecords.joinToString(), style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         item {
                             SectionCard("Live data") {
-                                Button(onClick = onLive, enabled = connected && verified && data.pids.isNotEmpty()) { Text("Select values, graph and record") }
+                                Button(onClick = onLive, enabled = PackSystemAction.LIVE in actions && connected && verified && data.pids.isNotEmpty()) { Text("Select values, graph and record") }
                                 when {
                                     !system.enabled -> Text("No executable PID request/byte-position/formula mapping is available for this system.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     !verified -> Text("Run the read-only ECU bring-up above on this connection to unlock live data.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -146,7 +203,7 @@ fun ToyotaVehiclePacksScreen(
                         item {
                             SectionCard("Fault codes") {
                                 val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadDtcs) == true
-                                OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("Read fault codes") }
+                                OutlinedButton(onClick = onDiagnostics, enabled = PackSystemAction.FAULTS in actions && connected && available) { Text("Read fault codes") }
                                 when {
                                     !system.enabled -> Text("The selected system's DTC read request and record decoder have not been converted. No generic UDS or emissions request will be substituted here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     !verified -> Text("Run the read-only ECU bring-up above on this connection to unlock fault codes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -157,7 +214,7 @@ fun ToyotaVehiclePacksScreen(
                         }
                         item {
                             SectionCard("Active tests") {
-                                Button(onClick = onTests, enabled = verified && data.actuators.isNotEmpty()) { Text("View this system's tests") }
+                                Button(onClick = onTests, enabled = PackSystemAction.TESTS in actions && verified && data.actuators.isNotEmpty()) { Text("View this system's tests") }
                                 if (system.enabled && !verified) Text("Run the read-only ECU bring-up above on this connection to check available tests. Read-only restrictions still apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 else if (data.actuators.isEmpty()) Text("Start/stop/status and safety mappings remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Execution still requires Expert mode, one-time confirmation and passing safety checks. Output-off cleanup and audit remain mandatory.", style = MaterialTheme.typography.bodySmall)
@@ -165,7 +222,7 @@ fun ToyotaVehiclePacksScreen(
                         }
                         item {
                             SectionCard("Customize / Coding") {
-                                Button(onClick = onCoding, enabled = verified && data.coding.isNotEmpty()) { Text("View this system's customizations") }
+                                Button(onClick = onCoding, enabled = PackSystemAction.CODING in actions && verified && data.coding.isNotEmpty()) { Text("View this system's customizations") }
                                 if (system.enabled && !verified) Text("Run the read-only ECU bring-up above on this connection to check available customizations. Read-only restrictions still apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 else if (data.coding.isEmpty()) Text("Read/write identifiers and value maps remain unresolved.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Read → backup → diff → one-time confirmation → write → read-back. Rollback and audit use the existing guarded coding engine.", style = MaterialTheme.typography.bodySmall)
@@ -174,7 +231,7 @@ fun ToyotaVehiclePacksScreen(
                         item {
                             SectionCard("ECU information & special functions") {
                                 val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadIdentification) == true
-                                OutlinedButton(onClick = onDiagnostics, enabled = connected && available) { Text("ECU information") }
+                                OutlinedButton(onClick = onDiagnostics, enabled = PackSystemAction.ECU_INFO in actions && connected && available) { Text("ECU information") }
                                 when {
                                     !system.enabled -> Text("The exact identification definitions for this system have not been converted.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     !verified -> Text("Run the read-only ECU bring-up above on this connection to unlock ECU information.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
