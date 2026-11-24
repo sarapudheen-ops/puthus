@@ -575,7 +575,7 @@ jobs:
           {
             echo "## Masked step outcomes: $FAILS raw failure(s) among 13 continue-on-error steps"
             echo
-            echo 'Raw `steps.<id>.outcome` values are not masked; step conclusions and the job conclusion are.'
+            echo 'Raw steps.<id>.outcome values are not masked; step conclusions and the job conclusion are.'
             echo
             echo '| step id | raw outcome |'
             echo '|---|---|'
