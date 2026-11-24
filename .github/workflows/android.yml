@@ -1,7 +1,7 @@
 name: Android CI
 
-# Stage 2a final head: comment-only note. The actionlint workflow is paths-filtered to
-# `.github/**`, so this makes actionlint run on this PR head alongside Android CI and
+# Stage 2a head note: the actionlint workflow is paths-filtered to `.github/**`, so a
+# comment-only touch keeps actionlint running on the same head as Android CI and
 # release-data. No build, test, publish or trigger behavior changes.
 
 on:

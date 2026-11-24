@@ -414,8 +414,11 @@ claims executable — an unproven system can never show an enabled executable ac
 each `610 tests, 0 failures, 0 errors, 0 skipped in 73 classes`; Android 24 device job green with the
 existing 7 instrumented tests). The final head adds a comment-only `.github/workflows/android.yml`
 touch so the paths-filtered actionlint workflow (`pull_request` → `.github/**`) runs on the same SHA
-as release-data and Android CI. Check-runs for the final push SHA, the masked-step outcome table and
-the file:line change list are in the "Stage 2a report" comment on this PR.
+as release-data and Android CI. The instrumented suite (7 tests, unchanged) passed on the code head
+`7023d45` in the push run's Android 24 device job; one later device attempt on the final head was
+cancelled by that job's own 20-minute timeout while the emulator hung at APK install, with identical
+app code. Check-runs for the final push SHA, the masked-step outcome table and the file:line change
+list are in the "Stage 2a report" comment on this PR.
 
 **NOT ESTABLISHED.** Physical/vehicle validation for any link; the transport-5 link class; any clear,
 session, tests/coding/special-functions capability; any new enabled system or category (the enabled
