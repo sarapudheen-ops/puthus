@@ -209,14 +209,14 @@ class VehiclePackCatalog(val index: VehiclePackIndex, private val objects: PackO
             require(vehicle.hierarchyResolved && why.isEmpty() && data.ecus.isNotEmpty()) { "No exact vehicle/ECU mapping" }
             val ecus = data.ecus
             val targets = ecus.map { it.target }.toSet()
-            require(ecus.all { it.link != null && it.sourceRecords.isNotEmpty() } && data.pids.isNotEmpty()) {
-                "Enabled systems need exact ECU links and nonempty executable live data"
+            require(ecus.all { it.link != null && it.sourceRecords.isNotEmpty() }) {
+                "Enabled systems need exact ECU links and per-category executable definitions"
             }
             require(data.dtcs.isEmpty() && data.dtcGroups.isEmpty() && data.moduleNames.isEmpty() && data.security.isEmpty() &&
                 data.connection.values.isEmpty() && data.exclude == com.bod3.app.catalog.CatalogExclusions()) { "Executable system has unsupported global catalog/configuration definitions" }
-            val diagnostics = ecus.map { requireNotNull(it.diagnostics) { "Enabled ECU needs explicit identification and fault reads" } }
+            val diagnostics = ecus.map { requireNotNull(it.diagnostics) { "Enabled ECU needs explicit per-category reads" } }
             val faults = diagnostics.map { requireNotNull(it.faults) { "Enabled ECU has no executable fault read" } }
-            require(diagnostics.all { d -> d.identification.isNotEmpty() && d.identification.all { it.read.minBytes > 0 && it.read.sourceRecords.isNotEmpty() &&
+            require(diagnostics.all { d -> d.identification.all { it.read.minBytes > 0 && it.read.sourceRecords.isNotEmpty() &&
                 it.read.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } } } &&
                 faults.all { f -> f.read.sourceRecords.isNotEmpty() && f.read.supportChecks.all { check -> check.sourceRecords.isNotEmpty() } &&
                     f.layout.sourceRecords.isNotEmpty() && (f.clear == null || f.clear.sourceRecords.isNotEmpty()) }) {

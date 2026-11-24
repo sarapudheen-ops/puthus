@@ -9,7 +9,7 @@
 | Stage | Status | Evidence / blockers |
 |---|---|---|
 | 0 — health and baseline | Complete | Baseline and evidence links below. |
-| 1 — K-Line categories | In progress / no new enablement | The exact ECMECT strict-translator control now passes in release-data CI, with 30 PIDs, 1,414 DTCs, and 1 ecuInfo byte-identical to the enabled-pack output. This validates the pinned control path only; Mode B remains structural candidate-parse, not verified or enabling. No new categories are enabled. |
+| 1 — K-Line categories | In progress / Stage 1d enablement landed | The exact ECMECT strict-translator control passes in release-data CI (30 PIDs, 1,414 DTCs, 1 ecuInfo, byte-identical). Stage 1d enabled 108 compiled-group DTC-read-only systems via the deterministic group pin (see Stage 1d); the two pinned slices stay byte-identical and the delivered pack is unchanged. The transport-5 link class (93 group systems) stays unproven; clear is deliberately unresolved. Stage 1e made the release-data pipeline observable on main and fixed the promotion-comment posting (see Stage 1e). No physical validation is claimed. |
 | 2 — Kotlin/app generalization | Not started | Depends on Stage 1 findings. |
 | 3 — CAN and remaining link classes | Not started | Transport classes 4/3 and small classes require read-then-probe evidence. Transport-5 fallback and RX convention remain unresolved. |
 | 4 — tests/coding/special functions | Not started | Schemas and native request reproduction are not established. |
@@ -292,6 +292,89 @@ A group-keyed oracle pass is necessary but not sufficient, and the three blocker
 - Oracle step wall clock 18.1 s, peak RSS 163.9 MiB (whole inspect job stays inside the 45-minute budget).
 - Container: 421,223,645 bytes (401.7 MiB), under the 480 MiB limit and under the 460 MiB review threshold.
 - Tests in the same run's own discovery: `Ran 311 tests ... OK (skipped=1)`.
+
+## Stage 1d — compiled-group DTC read-only enablement
+
+STATUS: complete. All numbers below are DATA from the cited release-data runs; claims marked CODE are
+implementation facts. No physical ECU validation is claimed.
+
+### The gate that kept enabled at 0 (DATA)
+
+`tools/thinkdiag/schema/dtc-group-enable-v1.json` is the deterministic expected-output pin: an empty
+`groups` list enables nothing, and a group enables only when its representative's measured
+`definitionSha256`/`definitionHash` match byte-for-byte. Round 1 pushed the empty pin (head `d133329`,
+run 45310645082): the gate `group_pin_absent_or_mismatched:no pin entry` held every system at
+`unresolved-pin` — `- Pinned groups: 0 (none); Groups: 4; members: 201; qualified: 0; enabled: 0;
+unresolved: 201`. Round 2 (head `4129ad2`, run 45313528051) filled the pin with exactly the round-1
+measured hashes; enablement followed.
+
+### Per-system qualification (DATA, final run 45318134431, head `45177ba`)
+
+`Groups: 4; members: 203; qualified: 108; enabled: 108; unresolved: 93; pinned-path: 2` — 203/203
+systems accounted for.
+
+| Group (Ecu_Data, fn 61) | Representative | Members | Enabled | Unresolved | Pinned-path | Literal failure reason |
+|---|---|---|---|---|---|---|
+| EU/Ecu_Data_0081.BIN `0x11` | `SYSLIST_EU.BIN@0009d8f2` | 79 | 78 | 0 | 1 | — |
+| EU/Ecu_Data_0081.BIN `0x51` | `SYSLIST_EU.BIN@00023995` | 79 | 0 | 78 | 1 | `link_unproven:link_representation_unsupported:transport-5-flags-33` |
+| JP/Ecu_Data_0081.BIN `0x11` | `SYSLIST_JP.BIN@00003875` | 30 | 30 | 0 | 0 | — |
+| NA/Ecu_Data_0081.BIN `0x51` | `SYSLIST_NA.BIN@0002bf2a` | 15 | 0 | 15 | 0 | `link_unproven:link_representation_unsupported:transport-5-flags-33` |
+
+The two `pinned-path` rows are the pinned ECMECT and Innova slices (`SYSLIST_EU.BIN@0009d8f2`,
+`SYSLIST_EU.BIN@00023a75`): byte-identical packs, never group-enabled. All 93 failures are the
+transport-5 link representation gate (Stage 1's unresolved class); no member failed its definition hash.
+
+### The shipped slice is DTC READ only (CODE, deliberate)
+
+The shipped group slice is `read` + `layout` (labels) only, `readOnly=true`: executable `dtcs`
+category, `pids`/`ecuInfo` unresolved. ECMECT's DTC read depends on the 10 5F session-change workflow
+(`EcuWorkbench.kt:65` → `ToyotaFaultWorkflow.kt:127,:157`); ECMECT never ships a clear
+(`toyota_ecmect_pack.py:163`, `:258-259`) and no clear exchange is probe-verified (the probes are
+read-only), so clear cannot be shown to follow a verified shipped-clear path. Clear stays unresolved
+with the literal reason `clear_unresolved:read-only-slice-never-exposes-clearing`
+(`groupDtcEnable.clearReason`; `verify_group_dtc_system` rejects any shipped clear or workflow). The
+compiled workflow (10 5F) is likewise unshipped; the DTC read is the plain documented request
+(`ToyotaWorkflowTest.dtcOnlySliceReadsWithoutSessionAndNeverClears`). No safety guard, confirmation
+or session requirement was weakened.
+
+### Final enabled counts (DATA)
+
+- Enabled systems: **110** (2 pinned + 108 group DTC-read-only) — acceptance evidence, run 45313528051.
+- DTCs per enabled system: 1,414 labels for each of the 78 EU `0x11` systems; 1,111 labels for each of
+  the 30 JP systems. Pinned slices unchanged (30 PIDs/1,414 DTCs/1 ECU-info + the Innova slice).
+  Total executable definitions: **146,512** = 2,890 pinned + 78×1,414 + 30×1,111.
+- Promoted on-demand container: **424,385,502 bytes** (404.7 MiB; cap 503,316,480 = 480 MiB) —
+  qualification check-run, run 45318134431. Deterministic; reproduces on the final head's run.
+- ECMECT and Innova packs stay byte-identical (pinned-path rows; the delivered pack, baseline
+  conversion and `prepare-vehicle-packs` are untouched).
+
+### Verification (CODE)
+
+- `verify_vehicle_bundle.py:137-155`: enabled set = the two pinned slices + pin-verified extras
+  (`verify_group_dtc_system`: pin entry, representative `definitionSha256`, per-member `definitionHash`
+  over the shipped read surface, read-only slice shape, category truthfulness, `validate_system`).
+- Kotlin `VehiclePackCatalog.kt:212-218` accepts DTC-only enabled systems; JVM tests
+  `VehiclePackScenarios.dtcOnlyReadOnlySystemIsAcceptedByTheProductionValidator` and
+  `dtcOnlyCategoryTruthfulnessStaysEnforced` prove acceptance and the category gate.
+- Tests: Python `Ran 328 tests OK (skipped=1)` (`python3 -m unittest discover -s tools/thinkdiag
+  -p 'test_*.py'`); JVM additions `VehiclePackTest` +2 and `ToyotaWorkflowTest` +1 (fast unit tests).
+- Not established: physical ECU/transport validation, the transport-5 link representation (the 93
+  unresolved systems), any clear or session capability, and Android delivered-pack wiring (the
+  delivered container keeps the pinned two slices only).
+
+## Stage 1e — release-data observability on main and the promotion-step root cause
+
+Scope: `.github/workflows/thinkdiag-data.yml` only (no pack, converter, or Kotlin change; Python tests unchanged at `Ran 328 tests OK (skipped=1)`). No step's published targets were changed.
+
+**Trigger.** `push.branches` now includes `main` alongside `arena/**` (`thinkdiag-data.yml:11`); `workflow_dispatch` is unchanged. Overwrite analysis: every `ci-reports-v1` asset uses a fixed name uploaded with `--clobber` (`code1-link-evidence.json`, `code1-link-promotion.md/.json`, `stage-1b-probe.md/.json`, `stage-1c-oracle.md/.json`, `code1-lifecycle-sweep.md/.json`, `code1-link-evidence-summary.md/.json`, `stage-0-report.md`), so a run on main **would overwrite** the same-named assets from arena runs and vice versa (newest run wins). Check-runs are keyed per `head_sha`, PR comments are append-only, and actions artifacts (`toyota-vehicle-packs`, `toyota-recovered-data`, `toyota-data-inspection`) are per-run: those are never overwritten. Non-release publishers: check-runs only for the Innova join, ECU program input, native differential, convert-step log, Innova read candidate, source link evidence, sweep evidence (`sweep_reports.py publish`), static-analysis and DTC-shard loops, inspection report, and source-input recovery (`source_input_evidence.py publish`).
+
+**Masked-failure visibility.** All 13 `continue-on-error` steps now carry explicit `id`s (`code1_lifecycle_sweep`, `publish_ecu_input`, `publish_native_outcome`, `publish_link_promotion`, `publish_stage1b_report`, `publish_stage1c_report`, `publish_sweep_reports`, `publish_convert_log`, `publish_sweep_evidence`, `publish_static_reports`, `publish_dtc_shards`, `publish_inspection_check`, `publish_stage0_report`). A final `if: always()` step (`thinkdiag-data.yml:544`) publishes the raw `steps.<id>.outcome` for all of them (raw outcome is not masked; step conclusions and the job conclusion are) plus the last 80 lines of the promotion step's tee'd log (`exec > >(tee .local/thinkdiag/report/promotion-step.log) 2>&1`, `thinkdiag-data.yml:285`) into the check-run **"Toyota masked-step outcomes"** (its conclusion is `failure` iff any masked step's raw outcome is `failure`). On run 45320524658 two steps exited 1 (each produced a `failure` annotation "Process completed with exit code 1." on the job check-run): `publish_link_promotion` (root-caused below) and one further masked step — the annotations carry no step identity (`path: .github`, `start_line` 25/48 do not map to a step), so the second step is named by the per-run outcome table.
+
+**Promotion step root cause — a script error.** "Publish Code 1 link-promotion report" posts its comment to **PR #25** (hardcoded `issues/25/comments`, `thinkdiag-data.yml:316`) and then verifies the exact bodies (`thinkdiag-data.yml:318`). The failure is **not** the PR number (PR #25 is merged since 2026-11-22T16:15Z, yet ten comment pairs landed on it afterwards, through 2026-11-23T09:48:55Z, run 45148221180, head `c7ecc63be686756a01aef888b99897b0c1eaf863`) and **not** permissions (`permissions.pull-requests: write` unchanged since that head; sibling steps post `issues/{n}/comments` successfully on push runs today). It is a **Python syntax error** on that verification line: the `--jq` argument quoting was corrupted to `"".[].body"]` (unterminated string literal), so the poster heredoc dies at parse time before posting anything. The break was introduced between heads `c7ecc63b…` and `09f5b96b` (run 45181808200, first run with no post), in the same edit that wrapped the step in `continue-on-error: true` — masking the failure it introduced. The report generator and `gh release upload` still completed in every failing run (assets `code1-link-promotion.md/.json` were refreshed inside each failing run's step window, e.g. 03:52:28–29 on run 45320524658), which is why only the comments vanished. Fixed at the root (valid Python restored on the verification line); step-level `continue-on-error` kept; the publish target (PR #25) unchanged.
+
+**Known main-run caveat (left unchanged per "do not change what any step publishes").** On a main push `gh pr view "$GITHUB_REF_NAME"` resolves no PR: `publish_stage0_report`'s unguarded lookup (`thinkdiag-data.yml:540`) will fail raw and appear in the outcome table; the Stage 1b/1c comment steps guard with `|| true` and skip (`:333`, `:385`); the sweep publisher guards with `if [ -n "$PR_NUMBER" ]` (`:406`).
+
+**NOT ESTABLISHED.** (a) Which masked step produced the second exit-1 annotation on run 45320524658 (and on run 45318134431) — it reproduces but is only named by the per-run "Toyota masked-step outcomes" table. (b) Job-log downloads remain unreachable from the agent sandbox (blob redirect EOF on `productionresultssa15.blob.core.windows.net` and `results-receiver.actions.githubusercontent.com`); the tee'd promotion log tail in the check-run is the readable substitute.
 
 ## Evidence audit / next work
 
