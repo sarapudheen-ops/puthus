@@ -2,7 +2,7 @@ import struct
 import unittest
 
 from toyota_can_link_sweep import (address_evidence, can_tuples, classify, markdown,
-                                   oracle_verdict, probe_selection, reconciliation)
+                                   memory_matches, oracle_verdict, probe_selection, reconciliation)
 from toyota_entries import EntryIndex
 
 
@@ -85,6 +85,22 @@ class TupleTest(unittest.TestCase):
         self.assertIn({"api": "CanSetParameter", "argument": 0xE007, "sourceField": "runtime107b8",
                        "byteOrder": "littleEndian"}, swapped["callArgumentEqualsSourceField"])
         self.assertEqual([], address_evidence(entry, [])["callArgumentEqualsSourceField"])
+
+
+class MemoryTest(unittest.TestCase):
+    def test_parameter_block_words_are_reported_as_observations_only(self):
+        entry = self.entry_fixture = EntryIndex(document([
+            (61, [entry_row(0x1a, 3, 0x21, 500000, extra=bytes.fromhex("07e0" "07e8" "9000"))]),
+        ])).select(1, 61, 0x1a)
+        calls = [{"api": "CanSetParameterNormal", "arguments": [16, 0x6000000000, 0, 6],
+                  "memoryWindow": {"1": "0000000000000000" + "07e0" + "07e8" + "00" * 22}}]
+        matches = memory_matches(entry, calls)
+        self.assertIn({"api": "CanSetParameterNormal", "argumentIndex": 1,
+                       "sourceField": "runtime107b8", "byteOrder": "as stored"}, matches)
+        self.assertIn("runtime107bc", [match["sourceField"] for match in matches])
+        self.assertEqual([], memory_matches(entry, [{"api": "X", "arguments": [1]}]))
+        self.assertFalse(any("sourceField" in str(match) for match in memory_matches(entry, [])
+                             if isinstance(match, str)))
 
 
 class SelectionTest(unittest.TestCase):

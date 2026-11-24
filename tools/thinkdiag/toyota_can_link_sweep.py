@@ -144,9 +144,34 @@ def oracle_verdict(entry):
     return {"status": "projected_transport_class"}
 
 
-def _recorder(trace, name, count):
+POINTER_WINDOW = 32
+
+
+def _mapped_window(native, value):
+    """Bytes behind an argument only when the argument addresses emulated memory.
+
+    A read is attempted inside the sandbox's own mapped ranges and bounded; the
+    result is recorded as observed bytes, never interpreted as an identifier.
+    """
+    if native is None or not (native.HEAP <= value < native.HEAP + native.HEAP_BYTES):
+        return None
+    try:
+        return native.read(value, POINTER_WINDOW).hex()
+    except Exception:
+        return None
+
+
+def _recorder(trace, name, count, native=None):
     def callback(*args):
-        trace.append({"api": name, "arguments": [int(value) for value in args[:count]]})
+        call = {"api": name, "arguments": [int(value) for value in args[:count]]}
+        windows = {}
+        for index, value in enumerate(call["arguments"]):
+            window = _mapped_window(native, value)
+            if window is not None:
+                windows[str(index)] = window
+        if windows:
+            call["memoryWindow"] = windows
+        trace.append(call)
         return 1
     return callback
 
@@ -207,7 +232,7 @@ def build_probe(libraries, sources):
     bound = {}
     for hook, count in (*HOOKS, ("EndCombination", 0), ("SetLinkKeep", 4)):
         libraries = [name for name in (comm, sysp) if hook in native.libraries[name].symbols]
-        owners = bind_hook(native, hook, _recorder(trace, hook, count), libraries)
+        owners = bind_hook(native, hook, _recorder(trace, hook, count, native), libraries)
         if owners:
             bound[hook] = owners
     for region_id, region in enumerate(("EU", "NA", "JP"), 1):
@@ -266,6 +291,20 @@ def address_evidence(entry, calls):
     return {"sourceFields": fields, "callArgumentEqualsSourceField": matches}
 
 
+def memory_matches(entry, calls):
+    """Source words that also appear inside a recorded parameter block, as an observation."""
+    observed = []
+    for call in calls:
+        for index, window in (call.get("memoryWindow") or {}).items():
+            raw = bytes.fromhex(window)
+            for field, value in entry.fields.items():
+                word = bytes.fromhex(value)
+                if len(word) in (2, 4) and word in raw:
+                    observed.append({"api": call["api"], "argumentIndex": int(index),
+                                     "sourceField": field, "byteOrder": "as stored"})
+    return observed
+
+
 def classify(entry, oracle, native):
     """matched / mismatched need a source expectation; the transport-1/5 class is the only one."""
     if oracle["status"] == "projected_transport_class":
@@ -295,6 +334,7 @@ def build(args):
     rows, verdicts, stopped = [], collections.Counter(), collections.Counter()
     status_hist, call_hist = collections.Counter(), collections.Counter()
     api_hist = collections.Counter(); examples = []
+    memory_hist = collections.Counter()
     for key in chosen:
         rid, function, selector = key
         entry = entries[key]
@@ -323,12 +363,15 @@ def build(args):
         item["transportHookCalls"] = setup_calls(native_result.get("calls", []))
         for call in item["transportHookCalls"]:
             api_hist[call["api"]] += 1
+        for match in item["memoryMatches"]:
+            memory_hist[f"{match['api']}[{match['argumentIndex']}]={match['sourceField']}"] += 1
         if item["transportHookCalls"] and len(examples) < 5:
             examples.append({"region": item["region"], "function": item["function"],
                              "selector": item["selector"], "transport": item["transport"],
                              "rawHex": item["rawHex"], "sourceFields": entry.fields,
                              "calls": item["transportHookCalls"]})
         item["addressEvidence"] = address_evidence(entry, item["transportHookCalls"])
+        item["memoryMatches"] = memory_matches(entry, item["transportHookCalls"])
         rows.append(item)
         if time.monotonic() - started > PROBE_SECONDS:
             stopped["probe time budget exhausted"] += 1
@@ -356,7 +399,7 @@ def build(args):
                       "linkedCells": linked, "unlinkedCells": unlinked,
                       "nativeStatus": dict(status_hist), "callCounts": dict(call_hist),
                       "transportHookCallHistogram": dict(api_hist.most_common()),
-                      "callExamples": examples,
+                      "callExamples": examples, "memoryMatches": memory_hist,
                       "fakeBoundaries": ["adapter-facing COMM/SYSP hooks record arguments and return 1",
                                          "no CAN frame, timing or identifier is synthesized or inferred",
                                          "unbound calls stop the probe with the literal symbol name"]},
@@ -411,9 +454,14 @@ def markdown(payload):
     for example in payload["probe"].get("callExamples", [])[:2]:
         lines += ["", f"Example tuple {example['region']}/{example['function']}/{example['selector']:#04x} "
                       f"(transport {example['transport']}), exact calls:", "", "```text"]
-        lines += [f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
-                  for call in example["calls"]]
+        for call in example["calls"]:
+            lines.append(f"{call['api']}({', '.join(str(value) for value in call['arguments'])})")
+            for index, window in (call.get("memoryWindow") or {}).items():
+                lines.append(f"  arg[{index}] -> {POINTER_WINDOW} bytes: {window}")
         lines += ["```"]
+    if payload["probe"].get("memoryMatches"):
+        lines += ["", "### Source words found inside a recorded parameter block", ""]
+        lines += [f"- `{key}` x{count}" for key, count in payload["probe"]["memoryMatches"].most_common(10)]
     if payload["probe"].get("unlinkedCells"):
         lines += ["", "### Cells left unlinked (literal)", ""]
         lines += [f"- `{name}`: {reason}" for name, reason in sorted(payload["probe"]["unlinkedCells"].items())]
