@@ -134,7 +134,23 @@ def verify_enabled_policy(directory, enabled_objects, runnable_candidates, summa
         from toyota_innova_2007_pack import (SYSTEM as INNOVA_SYSTEM, candidate_for as candidate_2007,
                                              load_candidate, verify_enabled as verify_2007)
         second = load_candidate(directory)
-        require_enabled_ecmect_set(enabled_objects)
+        extras = sorted(set(enabled_objects) - {review['systemId'], INNOVA_SYSTEM})
+        if not extras:
+            require_enabled_ecmect_set(enabled_objects)
+        else:
+            # The two pinned slices stay mandatory; every extra must be a
+            # fail-closed Stage 1d group DTC slice bound to its exact pin entry.
+            require({review['systemId'], INNOVA_SYSTEM} <= set(enabled_objects) and
+                    len(enabled_objects) == 2 + len(extras),
+                    'Enabled systems differ from the two pinned read-only ECMECT slices plus group DTC slices')
+            require((directory / 'dtc-group-enable-v1.json').is_file(),
+                    'Enabled system outside the two pinned ECMECT slices without the group enable pin')
+            from toyota_group_dtc_enable import load_pin, verify_group_dtc_system
+            group_pins = load_pin(directory)['groups']
+            for system in extras:
+                problems = verify_group_dtc_system(enabled_objects[system], group_pins)
+                require(not problems,
+                        f'Group DTC system {system} failed independent verification: {"; ".join(problems)}')
         pilot_object, second_object = enabled_objects[review['systemId']], enabled_objects[INNOVA_SYSTEM]
         require(INNOVA_SYSTEM not in json.dumps(pilot_object) and review['systemId'] not in json.dumps(second_object),
                 'ECMECT definitions cross system provenance')

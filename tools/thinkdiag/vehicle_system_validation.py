@@ -234,7 +234,7 @@ def validate_system(system):
         require(any(r.startswith(ecu_source + '@') for r in refs) if ecu_record else function_source in refs,
                 path + ': not bound to the exact selected source')
     bound(ecu, 'ecu'); require(entry_source in ecu['sourceRecords'], 'ECU is not bound to the exact selected entry')
-    pids = sequence(data.get('pids'), 'pids'); require(bool(pids), 'Enabled system lacks live definitions'); ids = set()
+    pids = sequence(data.get('pids'), 'pids'); ids = set()
     for i, pid in enumerate(pids):
         p = f'pids[{i}]'; obj(pid, p, ('id', 'name', 'request', 'formula', 'unit', 'min', 'max', 'decimals', 'header', 'responseHeader', 'notes', 'link', 'dataOffset', 'sourceRecords', 'supportChecks'))
         bound(pid, p); bound(pid, p, ecu_record=True)
@@ -249,7 +249,7 @@ def validate_system(system):
         integer(pid.get('decimals'), p + '.decimals', maximum=6); integer(pid.get('dataOffset', 0), p + '.dataOffset', maximum=4095)
         support_checks(pid.get('supportChecks', []), p + '.supportChecks', ecu['protocol'], bound)
     diagnostics = obj(ecu.get('diagnostics'), 'diagnostics', ('identification', 'faults'))
-    identification = sequence(diagnostics.get('identification'), 'identification', 256); require(bool(identification), 'Enabled system lacks explicit identification'); ids = set()
+    identification = sequence(diagnostics.get('identification'), 'identification', 256); ids = set()
     for i, ident in enumerate(identification):
         p = f'identification[{i}]'; obj(ident, p, ('read', 'encoding', 'byteValues', 'defaultText', 'recordBytes'))
         req = read_definition(ident.get('read'), p + '.read', ecu['protocol'], bound)

@@ -139,6 +139,7 @@ jobs:
             --manifest .local/thinkdiag/report/decoded-manifest.json \
             --read-artifacts .local/thinkdiag/vehicle-packs \
             --oracle-evidence .local/thinkdiag/report/code1-link-evidence.json \
+            --group-enable-artifacts tools/thinkdiag/schema \
             --output .local/thinkdiag/vehicle-packs
           echo "[ecmect] lifecycle contracts"
           python3 tools/thinkdiag/toyota_lifecycle_contracts.py compile .local/thinkdiag/TOYOTA.zip \
@@ -168,6 +169,11 @@ jobs:
             -f status=completed -f conclusion=success \
             -f 'output[title]=Partial conversion: unresolved items remain disabled' \
             -F 'output[summary]=@.local/thinkdiag/vehicle-packs/conversion-report.md'
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota group DTC enable qualification' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion=success \
+            -f 'output[title]=Per-system group qualification; pin candidates are not an enablement' \
+            -F 'output[summary]=@.local/thinkdiag/vehicle-packs/group-dtc-enable.md'
       - name: Run read-only Code 1 lifecycle join sweep
         id: code1_lifecycle_sweep
         continue-on-error: true

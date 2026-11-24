@@ -39,6 +39,26 @@ class EcmectPackTest(unittest.TestCase):
         manual_2007 = read_object(cls.container, page['systemsSource'])
         cls.system_2007 = read_object(cls.container, next(s for s in manual_2007['systems'] if s['id'] == SYSTEM_2007)['object'])
 
+    def group_systems(self):
+        """Enabled systems beyond the two pinned slices: Stage 1d group DTC path.
+
+        Every one must carry a `groupDtcEnable` record that independently
+        verifies against the repo's `schema/dtc-group-enable-v1.json`; with no
+        pinned groups (or none enabled) this returns {} and the pinned
+        expectations reduce to the two read-only slices.
+        """
+        from toyota_group_dtc_enable import load_pin, verify_group_dtc_system
+        pin = load_pin(Path(__file__).resolve().parent / 'schema')['groups']
+        inventory = read_object(self.container, self.index['sourceInventory'])
+        groups = {}
+        for ref in inventory['systemPages']:
+            for row in read_object(self.container, ref)['systems']:
+                value = read_object(self.container, row['object'])
+                if value.get('groupDtcEnable'):
+                    self.assertEqual([], verify_group_dtc_system(value, pin))
+                    groups[value['id']] = value
+        return groups
+
     def test_stage1_category_translator_serializes_exact_ecmect_control(self):
         from toyota_category_translation import translate_categories
         from vehicle_bundle import canonical
@@ -77,7 +97,10 @@ class EcmectPackTest(unittest.TestCase):
         self.assertEqual('8113F08105', s['transportPolicy']['initialFrameHex'])
         self.assertEqual('PENDING', s['transportPolicy']['physicalValidation'])
         self.assertFalse(self.index['summary']['complete'])
-        self.assertEqual((2, 2890), (self.index['summary']['enabledSystems'], self.index['summary']['executableDefinitions']))
+        group = self.group_systems()
+        self.assertEqual(
+            (2 + len(group), 2890 + sum(v['counts']['dtcs']['converted'] for v in group.values())),
+            (self.index['summary']['enabledSystems'], self.index['summary']['executableDefinitions']))
 
     def test_2007_is_independently_joined_and_read_only(self):
         value = self.system_2007
@@ -215,7 +238,8 @@ class EcmectPackTest(unittest.TestCase):
                     self.assertEqual({}, value['data'])
                     self.assertTrue(value['reasons'])
                     self.assertTrue(all(c['converted'] == 0 for c in value['counts'].values()))
-        self.assertEqual(sorted([MANDATORY_SYSTEM, SYSTEM_2007]), sorted(enabled))
+        self.assertEqual(sorted([MANDATORY_SYSTEM, SYSTEM_2007, *self.group_systems()]),
+                         sorted(enabled))
 
     def test_enabled_empty_fake_cross_scope_changed_scaling_and_writes_are_rejected(self):
         mutations = [

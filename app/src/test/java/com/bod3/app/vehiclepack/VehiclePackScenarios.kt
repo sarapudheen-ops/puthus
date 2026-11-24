@@ -48,7 +48,7 @@ object VehiclePackScenarios {
     }
     private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false,
                           referenced: Boolean = false, corruptReference: String? = null, corruptExecutable: String? = null,
-                          linkOverride: String? = null, categoryOverride: Map<String, String>? = null) {
+                          linkOverride: String? = null, categoryOverride: Map<String, String>? = null, dtcOnly: Boolean = false) {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -56,35 +56,43 @@ object VehiclePackScenarios {
             return mapOf("offset" to at, "bytes" to data.size, "jsonBytes" to json.size, "sha256" to sha256(data))
         }
         private val why = if (enabled) emptyList() else listOf("mapping_missing")
-        private val link = com.bod3.app.obd.kwp.DiagnosticLink(com.bod3.app.obd.protocol.ObdProtocol.ISO_15765_4_CAN_11_500)
+        private val link = if (dtcOnly) com.bod3.app.obd.kwp.DiagnosticLink(com.bod3.app.obd.protocol.ObdProtocol.ISO_14230_4_KWP_FAST,
+            com.bod3.app.obd.kwp.DiagnosticDialect.KWP2000,
+            kLine = com.bod3.app.obd.kwp.KLineConfig(com.bod3.app.obd.kwp.KLineInit.FAST, 0x13), testerPresent = listOf(0x3E))
+        else com.bod3.app.obd.kwp.DiagnosticLink(com.bod3.app.obd.protocol.ObdProtocol.ISO_15765_4_CAN_11_500)
         private val reads = com.bod3.app.diagnostics.EcuReadDefinitions(
-            identification = if (corruptExecutable == "empty-id") emptyList() else listOf(com.bod3.app.diagnostics.IdentificationRead(
+            identification = if (corruptExecutable == "empty-id" || dtcOnly) emptyList() else listOf(com.bod3.app.diagnostics.IdentificationRead(
                 com.bod3.app.diagnostics.DiagnosticRead("synthetic-id", "Synthetic identity", "221234", "621234", minBytes = 1, maxBytes = 16,
                     sourceRecords = listOf("synthetic:id")))),
             faults = if (corruptExecutable == "empty-fault") null else com.bod3.app.diagnostics.FaultRead(
-                com.bod3.app.diagnostics.DiagnosticRead("synthetic-fault", "Synthetic faults", "1902FF", "5902", minBytes = 0, maxBytes = 255,
+                com.bod3.app.diagnostics.DiagnosticRead("synthetic-fault", "Synthetic faults",
+                    if (dtcOnly) "13B0" else "1902FF", if (dtcOnly) "53" else "5902",
+                    minBytes = if (dtcOnly) 1 else 0, maxBytes = 255,
                     sourceRecords = listOf("synthetic:fault")),
                 com.bod3.app.diagnostics.ToyotaFaultLayout(255, 0, 2, 2, false, 0, 1, 0,
                     labels = if (corruptExecutable == "empty-labels") emptyList() else listOf(com.bod3.app.diagnostics.ToyotaFaultLabel(
                         "00001234", "P1234", "Synthetic fault, not vehicle data", listOf("synthetic:label"))),
                     sourceRecords = listOf("synthetic:layout"))))
         val original = if (enabled || corruptExecutable == "disabled-data") CatalogData(
-            ecus = listOf(EcuDefinition(name = "Synthetic ECU", requestId = "7E0", responseId = "7E8", link = link, sourceRecords = listOf("synthetic:ecu"),
+            ecus = listOf(EcuDefinition(name = "Synthetic ECU",
+                requestId = if (dtcOnly) "8013F0" else "7E0", responseId = if (dtcOnly) "80F013" else "7E8",
+                protocol = if (dtcOnly) com.bod3.app.datapack.EcuProtocol.KWP else com.bod3.app.datapack.EcuProtocol.UDS,
+                link = link, sourceRecords = listOf("synthetic:ecu"),
                 diagnostics = if (explicitReads) reads else null)),
-            pids = if (corruptExecutable == "empty-live") emptyList() else listOf(CustomPid("synthetic-rpm", "Synthetic RPM", "221234", "(A*256+B)/4", header = if (crossEcu) "7E1" else "7E0", responseHeader = "7E8", link = link, sourceRecords = listOf("synthetic:pid"),
+            pids = if (dtcOnly || corruptExecutable == "empty-live") emptyList() else listOf(CustomPid("synthetic-rpm", "Synthetic RPM", "221234", "(A*256+B)/4", header = if (crossEcu) "7E1" else "7E0", responseHeader = "7E8", link = link, sourceRecords = listOf("synthetic:pid"),
                 supportChecks = supportProvenance?.let { listOf(com.bod3.app.datapack.PidSupportCheck("220001", "A",
                     sourceRecords = if (it) listOf("synthetic:prerequisite") else emptyList())) }.orEmpty())),
-            actuators = listOf(ActuatorRecipe("synthetic-io", "Synthetic output", "Not vehicle data",
+            actuators = if (dtcOnly) emptyList() else listOf(ActuatorRecipe("synthetic-io", "Synthetic output", "Not vehicle data",
                 ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8", link = link),
                 start = listOf(0x2F, 0x12, 0x34, 3, 1), stop = listOf(0x2F, 0x12, 0x34, 0),
                 safetyNotes = listOf("Synthetic only"), sourceRecords = listOf("synthetic:test"))),
-            coding = listOf(CodingRecipe("synthetic-coding", "Synthetic coding", module = ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8", link = link),
+            coding = if (dtcOnly) emptyList() else listOf(CodingRecipe("synthetic-coding", "Synthetic coding", module = ActuatorModule("Synthetic ECU", requestId = "7E0", responseId = "7E8", link = link),
                 method = CodingMethod.DID_VALUE, did = 0x1234, byteIndex = 0,
                 options = listOf(com.bod3.app.coding.CodingOption(0, "Off"), com.bod3.app.coding.CodingOption(1, "On")),
                 sourceRecords = listOf("synthetic:coding"))),
         ) else CatalogData()
         private val counts = listOf("pids", "dtcs", "tests", "coding", "specialFunctions", "ecuInfo").associateWith {
-            mapOf("converted" to if (enabled && it in setOf("pids", "tests", "coding", "dtcs", "ecuInfo")) (if (corruptExecutable == "counts" && it == "dtcs") 2 else 1) else 0, "unresolved" to if (enabled) 0 else null)
+            mapOf("converted" to if (enabled && (if (dtcOnly) it == "dtcs" else it in setOf("pids", "tests", "coding", "dtcs", "ecuInfo"))) (if (corruptExecutable == "counts" && it == "dtcs") 2 else 1) else 0, "unresolved" to if (enabled) 0 else null)
         }
         private val bringUpPage = if (bringUp) add(mapOf("kind" to "bring-up-candidates", "candidates" to listOf(
             com.bod3.app.bringup.BringUpCodec.candidateMap(com.bod3.app.bringup.BringUpScenarios.candidate())))) else null
@@ -98,7 +106,10 @@ object VehiclePackScenarios {
                 "functionKey" to if (corruptReference == "function") 2 else 1, "declaredLiveRows" to 1, "livePages" to emptyList<Any>()))) else null
         private val linkStatus = linkOverride ?: if (enabled) "proven" else "unproven"
         private val linkReasons = if (linkStatus == "proven") emptyList<String>() else (why.ifEmpty { listOf("ecu_entry_untranslated") })
-        private val categoryStatus = categoryOverride ?: listOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions").associateWith { category ->
+        private val categoryStatus = categoryOverride ?: if (dtcOnly) mapOf(
+            "pids" to "unresolved", "dtcs" to "executable", "ecuInfo" to "unresolved",
+            "actuators" to "unknown", "coding" to "unknown", "specialFunctions" to "unknown")
+        else listOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions").associateWith { category ->
             if (enabled && category != "specialFunctions") "executable" else "unknown"
         }
         private val system = add(mapOf("kind" to "vehicle-system", "id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
@@ -339,6 +350,43 @@ object VehiclePackScenarios {
         val withoutLegacyFlag = Fixture(enabled = true, corruptExecutable = "writable").client(cache)
         val wv = withoutLegacyFlag.selectedVehicle(listOf("make", "model", "generation", "variant"))
         check(withoutLegacyFlag.system(wv, wv.systems.single()).enabled)
+    }
+
+    /** A group DTC-only system is a read-only DTC slice: executable dtcs category, no clear/workflow. */
+    fun dtcOnlyReadOnlySystemIsAcceptedByTheProductionValidator() = temporary { cache ->
+        val f = Fixture(enabled = true, dtcOnly = true)
+        val c = f.client(cache)
+        val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
+        val s = c.system(v, v.systems.single())
+        check(s.enabled && s.readOnly)
+        check(s.coverage == "1 ECU · 0 PIDs · 1 DTCs") { s.coverage ?: "null coverage" }
+        check(s.data.pids.isEmpty() && s.data.actuators.isEmpty() && s.data.coding.isEmpty())
+        val ecu = s.data.ecus.single()
+        check(ecu.protocol == com.bod3.app.datapack.EcuProtocol.KWP)
+        val diagnostics = requireNotNull(ecu.diagnostics)
+        check(diagnostics.identification.isEmpty())
+        val faults = requireNotNull(diagnostics.faults)
+        check(faults.clear == null && faults.workflow == null)
+        check(s.counts.getValue("dtcs").converted == 1)
+        check(s.counts.getValue("pids").converted == 0 && s.counts.getValue("ecuInfo").converted == 0)
+    }
+
+    /** DTC-only category truthfulness: executable needs definitions; definitions need their category. */
+    fun dtcOnlyCategoryTruthfulnessStaysEnforced() = temporary { cache ->
+        for (bad in listOf(
+            mapOf("pids" to "executable", "dtcs" to "executable", "ecuInfo" to "unresolved",
+                "actuators" to "unknown", "coding" to "unknown", "specialFunctions" to "unknown"),
+            mapOf("pids" to "unresolved", "dtcs" to "unresolved", "ecuInfo" to "unresolved",
+                "actuators" to "unknown", "coding" to "unknown", "specialFunctions" to "unknown"),
+            mapOf("pids" to "unresolved", "dtcs" to "executable", "ecuInfo" to "unresolved",
+                "actuators" to "executable", "coding" to "unknown", "specialFunctions" to "unknown"))) {
+            val f = Fixture(enabled = true, dtcOnly = true, categoryOverride = bad)
+            rejects {
+                val c = f.client(cache)
+                val v = c.selectedVehicle(listOf("make", "model", "generation", "variant"))
+                c.system(v, v.systems.single())
+            }
+        }
     }
 
     fun cancelledDownloadNeverInstalls() = temporary { cache ->

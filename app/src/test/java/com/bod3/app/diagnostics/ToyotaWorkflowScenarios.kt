@@ -39,6 +39,12 @@ object ToyotaWorkflowScenarios {
     private val ecu = EcuDefinition(name = "Synthetic source-workflow exercise", requestId = "8013F0", responseId = "80F013",
         protocol = EcuProtocol.KWP, link = link, sourceRecords = records, diagnostics = EcuReadDefinitions(faults = fault))
 
+    /** The shipped group slice is DTC-read-only: plain documented read, no workflow session and no clear. */
+    private val dtcOnly = EcuDefinition(name = "Synthetic DTC-only slice", requestId = "8013F0", responseId = "80F013",
+        protocol = EcuProtocol.KWP, link = link, sourceRecords = records,
+        diagnostics = EcuReadDefinitions(faults = FaultRead(
+            DiagnosticRead("fixture-dtc-only", "Current", "13B0", "53", minBytes = 1, sourceRecords = records), layout)))
+
     private fun adapter(): SimulatedKwpAdapter = SimulatedKwpAdapter().also { a ->
         a.responseHeader = listOf(0x80, 0xF0, 0x13)
         a.ecu.replyOverride = { r -> when (Hex.format(r, "")) {
@@ -56,6 +62,24 @@ object ToyotaWorkflowScenarios {
         s.withReadOnlyBringUp { s.prepareBringUp(ecu.target) }
         a.commands.clear() // Fixture setup only; assertions below inspect operation commands.
         return s
+    }
+
+    /** The shipped group DTC slice reads through its documented request only: no session change, no clear. */
+    suspend fun dtcOnlySliceReadsWithoutSessionAndNeverClears() {
+        check(dtcOnly.problems().isEmpty()) { dtcOnly.problems().toString() }
+        check(!EcuWorkbench.canReadIdentification(dtcOnly))
+        check(EcuWorkbench.canReadDtcs(dtcOnly))
+        check(!EcuWorkbench.canClear(dtcOnly))
+        check(EcuWorkbench.clearRequestLabel(dtcOnly) == null)
+        val a = adapter()
+        val s = session(a)
+        val result = s.withReadOnlyEcuOperation(dtcOnly.target) { EcuWorkbench(s).readDtcs(dtcOnly) }
+        val read = result as? DtcReadResult.Read ?: error("DTC-only slice read failed: $result")
+        check(read.records.map { it.code } == listOf("SYNTHETIC"))
+        // Exactly the documented fault read; no 10 5F session setup and no clear request.
+        check(a.ecu.requests.map { Hex.format(it, "") } == listOf("13B0"))
+        // The confirmation entry cannot manufacture a clear for a slice without one.
+        check(runCatching { EcuWorkbench.confirmation(dtcOnly) }.exceptionOrNull() is IllegalStateException)
     }
 
     fun supportPredicateParityWithTheNativeFdataDomain() {

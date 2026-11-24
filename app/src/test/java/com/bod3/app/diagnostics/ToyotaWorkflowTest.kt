@@ -5,6 +5,7 @@ import org.junit.Test
 
 class ToyotaWorkflowTest {
     @Test fun supportNativeParity() = ToyotaWorkflowScenarios.supportPredicateParityWithTheNativeFdataDomain()
+    @Test fun dtcOnlySliceReadsWithoutSessionAndNeverClears() = runBlocking { ToyotaWorkflowScenarios.dtcOnlySliceReadsWithoutSessionAndNeverClears() }
     @Test fun completeSourceWorkflow() = runBlocking { ToyotaWorkflowScenarios.completeWorkflowRetainsSetupPendingCurrentHistoryAndNondecodedConditionalRead() }
     @Test fun scopedSessionConfirmation() = runBlocking { ToyotaWorkflowScenarios.noConfirmationWrongConnectionWorkflowExpiredAndReadOnlyLeaseSendNoSessionBytes() }
     @Test fun resetRoutingAndReconnectRevokePermission() = runBlocking { ToyotaWorkflowScenarios.sessionPermissionCannotSurviveResetRouteChangeReconnectOrExpiredInitialization() }

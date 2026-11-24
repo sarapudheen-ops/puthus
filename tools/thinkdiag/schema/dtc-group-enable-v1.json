@@ -1,0 +1,13 @@
+{
+  "kind": "compiled-dtc-group-enable-pin",
+  "formatVersion": 1,
+  "sourceSha256": "f83583e3d2d02b811db3f982f8ce7a015d74c14433a22752a71d4e3064ed2f75",
+  "note": "Deterministic expected-output pin for the Stage 1d compiled-group DTC read/clear slice, not transport, adapter or vehicle approval. An empty groups list enables nothing: the converter fails closed until a group entry carries the exact measured definition hashes of that group's Stage 1c representative compile.",
+  "oracleProvenance": {
+    "stage1cRun": "45226018714",
+    "head": "c17d25e",
+    "verdict": "4/4 compiled groups PASS; 203/203 compiled per-system rows; 5353 labels",
+    "note": "Group-oracle evidence proves the compile group only. It is NOT transport, adapter or vehicle approval, and no physical validation is claimed."
+  },
+  "groups": []
+}

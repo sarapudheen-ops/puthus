@@ -98,7 +98,8 @@ def load_sources(archive, decoded, manifest):
 
 
 class Converter:
-    def __init__(self, sources, texts, output, english=None, read_artifacts=None, oracle_evidence=None):
+    def __init__(self, sources, texts, output, english=None, read_artifacts=None,
+                 oracle_evidence=None, group_enable_artifacts=None):
         self.sources = sources
         self.texts = texts
         self.english = english
@@ -138,6 +139,17 @@ class Converter:
         self.bring_up_pages = {}
         self.entry_support = {}
         self.unclaimed_entry_pages = []
+        self.group_qualifier = None
+        if group_enable_artifacts is not None:
+            if english is None:
+                raise ValueError("group enable artifacts need the --english library directory")
+            from toyota_group_dtc_enable import GroupQualifier, load_pin
+            libraries = {
+                "TCODE_EN.GAG": json.loads((english / "TCODE_EN.GAG.json").read_text()),
+                "TEXT_EN.GAG": json.loads((english / "TEXT_EN.GAG.json").read_text()),
+            }
+            self.group_qualifier = GroupQualifier(sources, libraries,
+                                                  load_pin(group_enable_artifacts))
 
     def record(self, item):
         self.ledger.write(canonical(item) + b"\n")
@@ -399,6 +411,39 @@ class Converter:
                         enable(value, self.innova_2007_review, self.ecmect_review)
                         candidate = candidate_for(value, self.innova_2007_review)
                         value["bringUpPages"] = [self.writer.add({"kind": "bring-up-candidates", "candidates": [candidate]})]
+                    # Stage 1d group DTC path: same enable mechanics as ECMECT's
+                    # pinned DTC category, but for whole compiled groups. Every
+                    # gate (pin entry, per-system definition hash, per-system link
+                    # projection, validate_system) is fail-closed; the pinned two
+                    # systems above never take this path and stay byte-identical.
+                    group_record = None
+                    if (self.group_qualifier is not None and entry is not None
+                            and not is_ecmect
+                            and not (self.innova_2007_review is not None
+                                     and identity == self.innova_2007_review["systemId"])):
+                        from toyota_group_dtc_enable import TARGETS, enable_system
+                        ecu_path = ecu_file if "/" in ecu_file else f"{region}/{ecu_file}"
+                        group_record = self.group_qualifier.qualify(
+                            region, key, raw[27], ecu_path, identity, raw, entry.transport)
+                        if group_record is not None:
+                            if group_record["status"] == "enabled-ready":
+                                if evidence_status != "proven":
+                                    group_record["status"] = "unresolved"
+                                    group_record["reason"] = "link_unproven:" + (
+                                        evidence_reason or "oracle_evidence_missing")
+                                else:
+                                    problem = enable_system(
+                                        value, group_record["_compiled"],
+                                        TARGETS[tuple(group_record["group"])],
+                                        group_record, lifecycle)
+                                    if problem is not None:
+                                        group_record["status"] = "unresolved"
+                                        group_record["reason"] = problem
+                                    else:
+                                        group_record["status"] = "enabled"
+                            value["groupDtcStatus"] = {
+                                k: v for k, v in group_record.items()
+                                if not k.startswith("_") and v is not None}
                     # Link and category status are explicit; legacy count fields are not
                     # treated as proof. Separately reviewed paths retain their pinned
                     # authorization; other links require complete native evidence below.
@@ -423,9 +468,12 @@ class Converter:
                     category_keys = {"pids": "pids", "dtcs": "dtcs", "ecuInfo": "ecus",
                                      "actuators": "actuators", "coding": "coding", "specialFunctions": "specialFunctions"}
                     category_status = {}
-                    if evidence_status == 'proven' and value.get('enabled') is not True:
+                    if evidence_status == 'proven' and value.get('enabled') is not True \
+                            and not value.get('groupDtcEnable'):
                         category_status = {category: 'unresolved' for category in category_keys}
                         value['categoryReasons'] = {category: f'translator_not_ported:{category}' for category in category_keys}
+                        if group_record is not None and group_record.get('reason'):
+                            value['categoryReasons']['dtcs'] = group_record['reason']
                     else:
                         for category, field in category_keys.items():
                             definitions = category_definitions(data, category, field)
@@ -440,7 +488,16 @@ class Converter:
                             else:
                                 category_status[category] = "unknown"
                             if category_status[category] != "executable" and isinstance(data, dict) and field in data:
-                                data[field] = []
+                                if field == "ecus":
+                                    # ecus carry BOTH the DTC and identification
+                                    # definitions; drop only the non-executable
+                                    # category's section, never the whole mapping.
+                                    for ecu_definition in data.get("ecus", []):
+                                        diag = ecu_definition.get("diagnostics", {}) if isinstance(ecu_definition, dict) else {}
+                                        if isinstance(diag, dict):
+                                            diag["identification"] = []
+                                else:
+                                    data[field] = []
                     value["categoryStatus"] = category_status
                     value["enabled"] = value["linkStatus"] == "proven" and "executable" in category_status.values()
                     ref = self.writer.add(value)
@@ -459,7 +516,8 @@ class Converter:
                         "linkStatus": value["linkStatus"], "linkReasons": value["linkReasons"],
                         "link": value.get("link"), "linkSource": value.get("linkSource"),
                         "linkProvenance": value.get("linkProvenance"),
-                        "categoryStatus": value.get("categoryStatus"), "categoryReasons": value.get("categoryReasons", {})})
+                        "categoryStatus": value.get("categoryStatus"), "categoryReasons": value.get("categoryReasons", {}),
+                        "groupDtcStatus": value.get("groupDtcStatus")})
                 for key, block in index:
                     if block == offset:
                         self.vehicle_systems[region, key] = refs
@@ -665,7 +723,14 @@ class Converter:
                 report.append(f'| {title} | `{system["id"]}` {system["name"].replace("|", " ")} | {count("pids")} | '
                               f'{count("dtcs")} | {count("tests")} | {count("coding")} | '
                               f'{", ".join(system["reasons"]) or ("enabled read-only; physical validation PENDING" if system["enabled"] else "")} |')
-        report += ["", f"{enabled} reviewed systems are enabled, read-only: clearing, coding, actuators, security access and flashing are excluded.",
+        report += ["", f"{enabled} source systems are enabled: the pinned ECMECT and 2007 Innova slices are read-only, "
+                   "where clearing, coding, actuators, security access and flashing are excluded.",
+                   (f"{sum(1 for row in self.system_report if (row.get('groupDtcStatus') or {}).get('status') == 'enabled')} "
+                    "compiled-group systems are additionally enabled as DTC read/clear slices: the documented fault-memory "
+                    "clear stays behind its separate confirmation, and coding, actuators, security access and flashing "
+                    "stay excluded. Their pids and ecuInfo definitions stay unresolved.")
+                   if any((row.get('groupDtcStatus') or {}).get('status') == 'enabled' for row in self.system_report) else
+                   "No compiled-group DTC slices are enabled (fail-closed: absent or unmatched group pin).",
                    "No guessed CAN IDs, local identifiers, formulas, security algorithms or source applicability were enabled.",
                    "Source verification is distinct from completed conversion and from physical vehicle testing.", ""]
         (self.output / "conversion-report.md").write_text("\n".join(report))
@@ -715,6 +780,15 @@ class Converter:
                             for status in ('proven', 'unproven')},
         }
         (self.output / 'code1-link-promotion.json').write_bytes(canonical(promotion) + b'\n')
+        if self.group_qualifier is not None:
+            import shutil
+            from toyota_group_dtc_enable import qualification_report
+            markdown, payload = qualification_report(self.group_qualifier,
+                                                     self.group_qualifier.pin)
+            (self.output / 'group-dtc-enable.md').write_text(markdown)
+            (self.output / 'group-dtc-enable.json').write_text(payload)
+            shutil.copyfile(self.group_qualifier.pin['path'],
+                            self.output / 'dtc-group-enable-v1.json')
         return index
 
 
@@ -733,6 +807,11 @@ def main():
                         help="Directory with both pinned ECMECT source-read artifacts. "
                              "When given, exactly the two reviewed systems are enabled read-only; "
                              "everything else stays disabled.")
+    parser.add_argument("--group-enable-artifacts", type=Path,
+                        help="Directory with schema/dtc-group-enable-v1.json. When given, the "
+                             "Stage 1c-passing compiled groups are qualified per system and "
+                             "enabled as DTC read/clear slices only where the pin entry and the "
+                             "per-system definition hash match and the link is proven.")
     args = parser.parse_args()
     sources = load_sources(args.archive, args.decoded, args.manifest)
     texts = json.loads((args.english / "TEXT_EN.GAG.json").read_text())
@@ -747,7 +826,8 @@ def main():
         if not isinstance(oracle_evidence, list) or any(not isinstance(row, dict) for row in oracle_evidence):
             raise ValueError('Oracle evidence must be a list of records')
     index = Converter(sources, texts, args.output, english=args.english, read_artifacts=read_artifacts,
-                      oracle_evidence=oracle_evidence).finish()
+                      oracle_evidence=oracle_evidence,
+                      group_enable_artifacts=args.group_enable_artifacts).finish()
     print(json.dumps(index, indent=2))
 
 

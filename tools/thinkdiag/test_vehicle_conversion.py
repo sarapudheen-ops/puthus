@@ -350,5 +350,250 @@ class BundleVerificationTest(unittest.TestCase):
                     with self.assertRaises(ValueError): load_index(p / "index.json")
 
 
+class GroupDtcEnableConversionTest(unittest.TestCase):
+    """Stage 1d converter wiring: group DTC read/clear enablement (synthetic).
+
+    Two SYSLIST rows join one compiled group (function 61, selector 0x11) and
+    differ only in the caller-mode byte. Enablement requires the group pin, the
+    per-system definition hash and the per-system native link projection; every
+    gate is fail-closed and the outcome is recorded with literal reasons.
+    """
+
+    def corpus(self):
+        from test_toyota_entries import document
+        from toyota_functions import (ClearBlock, ClearQuery, FaultBlock,
+                                      FaultCondition, FaultMapping, FaultQuery)
+        from test_toyota_live import typed
+        block = FaultBlock(33, (5,), 1, 2, 0, 1, 2, 2,
+            (FaultQuery(0, 3, 0x3903, 13, (FaultCondition(0, 132, 0, 0),)),
+             FaultQuery(0, 1, 1, 10, ()), FaultQuery(0, 2, 2, 11, ()),
+             FaultQuery(0, 5, 43, 165, ())),
+            (FaultMapping(0, 0x123, 1, 1),))
+        clear = ClearBlock(0, (ClearQuery(0, 1, 1),))
+        functions = (bytes([28]) + struct.pack('<7I', 61, 33, 33 + len(block.encode()), 0, 0, 0, 1)
+                     + b'\xff' * 4 + block.encode() + clear.encode())
+        items = [(5, b'\x10\x5f', b'\x00\x40', b'\x50\x5f'), (13, b'\x07', b'', b'\x47'),
+            (10, b'\x13\xb0', b'', b'\x53'), (11, b'\x13\x80', b'\x00\xff', b'\x53'),
+            (132, b'\x01\x01', b'\xff\xff\x80', b'\x41\x01\x80'), (165, b'\x0a', b'', b''),
+            (136, b'\x09\x04', b'\xff\xff', b'\x49\x04'), (1, b'\x04', b'\xff', b'\x44'),
+            (10404, b'\x21\xe2', b'\0\0\0\0\0\0\x20', b'\x61\xe2')]
+        pool = []; frames = []; bindings = []
+        for key, req, mask, rep in items:
+            indexes = []
+            for raw in (req, mask, rep):
+                if raw: pool.append(raw); indexes.append(len(pool))
+                else: indexes.append(0)
+            frames.append(struct.pack('<4H', key, *indexes))
+            bindings.append(struct.pack('<8H', 61, key, 0, key, 0, 0, 0, 0))
+        # The exact SYSTEMENTER document() lifecycle binds templates 104/102/127.
+        for key, request, reply in ((200, b'\x81', None), (201, b'\x3e', None),
+                                    (202, b'\x3e', b'\x7e')):
+            pool.append(request); request_at = len(pool)
+            reply_at = 0
+            if reply is not None:
+                pool.append(reply); reply_at = len(pool)
+            frames.append(struct.pack('<4H', key, request_at, 0, reply_at))
+        for template, key in ((104, 200), (102, 201), (127, 202)):
+            bindings.append(struct.pack('<8H', 61, template, 1, key, 0, 0, 1, 0))
+        descriptors = []; at = 0
+        for raw in pool:
+            descriptors.append(struct.pack('<IBB', at, len(raw), 0)); at += len(raw)
+        body = b''.join(descriptors + pool)
+        details = []
+        for identity, support, frame, expected in ((1, 0, 0, 0), (2, 0, 0, 0), (3, 1, 13, 71),
+                                                   (43, 1, 10404, 32), (57, 0, 0, 0)):
+            raw = bytearray(24)
+            struct.pack_into('<6H', raw, 4, 61, 1, identity, frame, 0, support)
+            raw[20] = expected; details.append(bytes(raw))
+        labels = {"00000001": "Show Menu", "00000002": "Manual Select",
+                  "00000003": "Region", "00000004": "Synthetic variant",
+                  "00000005": "Synthetic ECU", "00000006": "Ecu_Data_ffff.BIN",
+                  "00000007": "K-Line"}
+        menu = bytearray()
+        for i, task in enumerate((0xFEF0, 0xFEF1, 0xFEE9, 7)):
+            children = 1 if i < 3 else 0
+            node = bytearray(38 + children * 23)
+            struct.pack_into("<I", node, 0, len(node))
+            struct.pack_into("<I", node, 8, i + 1)
+            struct.pack_into("<HH", node, 34, task, children)
+            if children: struct.pack_into("<I", node, 57, len(menu) + len(node))
+            menu += node
+        rows = []
+        for mode in (11, 3):
+            system = bytearray(37)
+            struct.pack_into("<I", system, 0, 61)
+            struct.pack_into("<I", system, 4, 5)
+            struct.pack_into("<I", system, 23, 6)
+            struct.pack_into("<I", system, 28, 7)
+            system[27] = 0x11; system[33] = mode
+            rows.append(bytes(system))
+        syslist = struct.pack("<IIIH", 7, 12, 0xFFFFFFFF, len(rows)) + b"".join(rows)
+        directory = struct.pack("<I", 1) + struct.pack("<BI", 10, 9)
+        ecu = directory + struct.pack("<HII", 0x1234, 2, 8) + b"12345678"
+        sources = {"MENU.BIN": bytes(menu), "SYSLIST_EU.BIN": syslist,
+            "FUNCDATA_EU.BIN": functions, "EU/Ecu_Data_ffff.BIN": ecu,
+            "SYSTEMENTER.BIN": document(),
+            "ECUPROGRAM.BIN": b'\x01' + struct.pack('<BIH', 1, 6, 1) + struct.pack('<IIB', 61, 2, 14),
+            "EU/Toyota_bin_00.BIN": struct.pack('<HII', 0, len(pool), len(body)) + body,
+            "EU/Toyota_bin_11.BIN": typed(17, frames),
+            "EU/Toyota_bin_12.BIN": typed(0x112, bindings),
+            "EU/Toyota_bin_1B.BIN": typed(0x11b, details)}
+        for region in ("NA", "JP"):
+            sources[f"SYSLIST_{region}.BIN"] = b"\xff" * 4
+            sources[f"FUNCDATA_{region}.BIN"] = bytes([28]) + b"\xff" * 4
+        return sources, labels, rows
+
+    def evidence(self, sources):
+        from toyota_entries import EntryIndex
+        from toyota_frames import SourceFrames
+        from toyota_lifecycle import selected_fast_kwp_lifecycle
+        rows = []
+        index = EntryIndex(sources["SYSTEMENTER.BIN"])
+        names = {1: "EU", 2: "NA", 3: "JP"}
+        for region_id, region_rows in index.regions.items():
+            for function, row in region_rows.items():
+                for entry in index.lists[row["listOffset"]].entries:
+                    if entry.transport not in (1, 5):
+                        continue
+                    lifecycle = selected_fast_kwp_lifecycle(
+                        index, SourceFrames(sources, names[region_id]),
+                        region=region_id, function=function,
+                        selector=entry.descriptor)
+                    rows.append({"region": region_id, "function": function,
+                                 "selector": entry.descriptor,
+                                 "projectionDigest": lifecycle.projection_digest()})
+        return rows
+
+    def target_and_pin(self, sources, rows):
+        import toyota_group_dtc_enable as group_dtc
+        from toyota_group_dtc_enable import (GroupQualifier, definition_hash,
+                                             definition_sha256)
+        rep_id = f"SYSLIST_EU.BIN@{12 + 2:08x}"
+        target = {'region': 'EU', 'ecuFile': 'EU/Ecu_Data_ffff.BIN',
+                  'function': 61, 'selector': 0x11, 'representative': rep_id,
+                  'systems': 2, 'dtcLabels': 1, 'readRequest': '13B0',
+                  'clearRequest': '04',
+                  'layout': {'countIndex': 0, 'recordStart': 1,
+                             'recordBytes': 2, 'assemblyKind': 2,
+                             'countIsPresence': False, 'modeLowBits': 1},
+                  'groupKey': ('EU', 'EU/Ecu_Data_ffff.BIN', 61, 0x11)}
+        libraries = {'TCODE_EN.GAG': {'00000123': 'SYNTHETIC' + chr(0) + 'Not vehicle data'},
+                     'TEXT_EN.GAG': {'FFFF0048': 'Synthetic missing text'}}
+        compiled = GroupQualifier(sources, libraries,
+                                  {'path': '', 'groups': {}})._compile(
+            'EU', rep_id, rows[0], 1)
+        entry = {'region': 'EU', 'ecuFile': 'EU/Ecu_Data_ffff.BIN',
+                 'function': 61, 'selector': 0x11, 'representative': rep_id,
+                 'systems': 2, 'dtcLabels': 1, 'readRequest': '13B0',
+                 'clearRequest': '04', 'layout': target['layout'],
+                 'definitionSha256': definition_sha256(compiled['faults']),
+                 'definitionHash': definition_hash(compiled['faults'])}
+        return target, entry
+
+    def run_conversion(self, *, pin_entry, evidence_rows, with_flag=True):
+        from unittest import mock
+        import toyota_group_dtc_enable as group_dtc
+        sources, labels, rows = self.corpus()
+        target, entry = self.target_and_pin(sources, rows)
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            english = p / "english"; english.mkdir()
+            libraries = {'TCODE_EN.GAG': {'00000123': 'SYNTHETIC' + chr(0) + 'Not vehicle data'},
+                         'TEXT_EN.GAG': {'FFFF0048': 'Synthetic missing text'}}
+            for name in ('TCODE_EN.GAG', 'TEXT_EN.GAG'):
+                (english / f"{name}.json").write_text(json.dumps(libraries[name]))
+            pin_dir = p / "pins"; pin_dir.mkdir()
+            (pin_dir / group_dtc.PIN_FILE).write_text(json.dumps(
+                {'kind': 'compiled-dtc-group-enable-pin', 'formatVersion': 1,
+                 'sourceSha256': group_dtc.SOURCE_SHA256, 'note': 'test',
+                 'oracleProvenance': group_dtc.ORACLE_PROVENANCE,
+                 'groups': [pin_entry] if pin_entry else []}))
+            out = p / "out"
+            with mock.patch.dict(group_dtc.TARGETS,
+                                 {target['groupKey']: target}, clear=True):
+                converter = Converter(sources, labels, out, english=english,
+                    oracle_evidence=evidence_rows,
+                    group_enable_artifacts=pin_dir if with_flag else None)
+                index = converter.finish()
+                records = {row['id']: row for row in converter.system_report}
+                systems = {}
+                for identity, ref in converter.systems.items():
+                    systems[identity] = read_object(out / index['container'], ref)
+                report = (out / 'group-dtc-enable.md').read_text() if with_flag else ''
+        return index, records, systems, report, rows
+
+    def test_group_systems_enable_only_with_pin_hash_and_link_proof(self):
+        import toyota_group_dtc_enable as group_dtc
+        sources, _labels, rows = self.corpus()
+        _target, entry = self.target_and_pin(sources, rows)
+        index, records, systems, report, _rows = self.run_conversion(
+            pin_entry=entry, evidence_rows=self.evidence(sources))
+        self.assertEqual(2, index['summary']['enabledSystems'])
+        self.assertIn('enabled: 2; unresolved: 0', report)
+        for identity in records:
+            record = records[identity]
+            self.assertEqual('enabled', record['groupDtcStatus']['status'])
+            self.assertTrue(record['enabled'])
+            self.assertEqual([], record['reasons'])
+            self.assertEqual('proven', record['linkStatus'])
+            self.assertEqual('executable', record['categoryStatus']['dtcs'])
+            self.assertEqual('unresolved', record['categoryStatus']['pids'])
+            self.assertEqual('unresolved', record['categoryStatus']['ecuInfo'])
+            system = systems[identity]
+            self.assertEqual({'pids', 'ecus'}, set(system['data']))
+            diagnostics = system['data']['ecus'][0]['diagnostics']
+            self.assertEqual([], diagnostics['identification'])
+            faults = diagnostics['faults']
+            self.assertEqual({'read', 'layout'}, set(faults))
+            self.assertNotIn('clear', faults)
+            self.assertNotIn('workflow', faults)
+            self.assertIs(True, system['readOnly'])
+            self.assertIs(False, system['groupDtcEnable']['clearShipped'])
+            self.assertEqual(group_dtc.CLEAR_UNRESOLVED_REASON,
+                             system['groupDtcEnable']['clearReason'])
+            self.assertIn(group_dtc.CLEAR_UNRESOLVED_REASON,
+                          system['data']['ecus'][0]['notes'][0])
+            self.assertEqual(1, system['counts']['dtcs']['converted'])
+            self.assertEqual(0, system['counts']['pids']['converted'])
+
+    def test_missing_pin_fails_closed_with_literal_reasons(self):
+        sources, _labels, rows = self.corpus()
+        _target, _entry = self.target_and_pin(sources, rows)
+        index, records, _systems, report, _rows = self.run_conversion(
+            pin_entry=None, evidence_rows=self.evidence(sources))
+        self.assertEqual(0, index['summary']['enabledSystems'])
+        self.assertIn('unresolved-pin', report)
+        self.assertIn('group_pin_absent_or_mismatched:no pin entry', report)
+        for record in records.values():
+            self.assertEqual('unresolved-pin', record['groupDtcStatus']['status'])
+            self.assertFalse(record['enabled'])
+
+    def test_unproven_link_fails_closed_even_with_matching_pin(self):
+        sources, _labels, rows = self.corpus()
+        _target, entry = self.target_and_pin(sources, rows)
+        index, records, _systems, _report, _rows = self.run_conversion(
+            pin_entry=entry, evidence_rows=[])
+        self.assertEqual(0, index['summary']['enabledSystems'])
+        for record in records.values():
+            self.assertEqual('unresolved', record['groupDtcStatus']['status'])
+            self.assertTrue(record['groupDtcStatus']['reason'].startswith(
+                'link_unproven:'), record['groupDtcStatus'])
+            self.assertFalse(record['enabled'])
+
+    def test_definition_hash_drift_stays_disabled_with_literal_reason(self):
+        sources, _labels, rows = self.corpus()
+        _target, entry = self.target_and_pin(sources, rows)
+        drifted = dict(entry, definitionHash='0' * 64)
+        index, records, _systems, report, _rows = self.run_conversion(
+            pin_entry=drifted, evidence_rows=self.evidence(sources))
+        self.assertEqual(0, index['summary']['enabledSystems'])
+        self.assertIn('unresolved-pin', report)
+        for record in records.values():
+            self.assertEqual('unresolved-pin', record['groupDtcStatus']['status'])
+            self.assertIn('pin definitionHash',
+                          record['groupDtcStatus']['reason'])
+            self.assertFalse(record['enabled'])
+
+
 if __name__ == "__main__":
     unittest.main()
