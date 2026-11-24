@@ -11,7 +11,7 @@
 | 0 — health and baseline | Complete | Baseline and evidence links below. |
 | 1 — K-Line categories | In progress / Stage 1d enablement landed | The exact ECMECT strict-translator control passes in release-data CI (30 PIDs, 1,414 DTCs, 1 ecuInfo, byte-identical). Stage 1d enabled 108 compiled-group DTC-read-only systems via the deterministic group pin (see Stage 1d); the two pinned slices stay byte-identical and the delivered pack is unchanged. The transport-5 link class (93 group systems) stays unproven; clear is deliberately unresolved. Stage 1e made the release-data pipeline observable on main and fixed the promotion-comment posting (see Stage 1e). No physical validation is claimed. |
 | 2 — Kotlin/app generalization | In progress — Stage 2a complete | Stage 2a: per-system link badge, literal per-category status, DTC-only contract lines, "Link verified" filter + name search over the selected vehicle's systems only (no corpus load), and JVM-gated executable actions so an unproven link never enables one. Evidence in the Stage 2a report comment on the PR. |
-| 3 — CAN and remaining link classes | Not started | Transport classes 4/3 and small classes require read-then-probe evidence. Transport-5 fallback and RX convention remain unresolved. |
+| 3 — CAN and remaining link classes | In progress — Stage 3a investigation complete | All 976 exact link tuples for native transport codes 3/4 are enumerated and reconcile to the census (245,356 systems). The pinned oracle's projection is a closed transport-1/5 class, so no CAN tuple is replayable there, and the native CAN setup produced no transport-hook call sequence. Where the CAN request/response IDs come from stays NOT ESTABLISHED. Nothing is enabled. See Stage 3a and the "Stage 3a report" PR comment. |
 | 4 — tests/coding/special functions | Not started | Schemas and native request reproduction are not established. |
 | 5 — speed/size/docs/final | Not started | Existing Android census container is below the cap; caching, staged documentation, and final measurements remain. |
 
@@ -424,6 +424,53 @@ list are in the "Stage 2a report" comment on this PR.
 session, tests/coding/special-functions capability; any new enabled system or category (the enabled
 set stays 110 and the two pinned slices stay byte-identical); instrumented coverage of the new
 filter UI (androidTest stays at the existing 7 tests).
+
+## Stage 3a — CAN links (native codes 3 and 4), investigation only
+
+Read-only. `tools/thinkdiag/toyota_can_link_sweep.py` plus its tests are the only new
+code; `thinkdiag-data.yml` gains a sweep step and a reporting-only publisher (now one
+of 14 continue-on-error steps in the masked table). No converter, pack, validator,
+APK, enabled system or category changes; ECMECT and Innova slices stay byte-identical.
+
+**Tuple definition.** The Code 1/5 definition is reused unchanged: one tuple per exact
+`(region, function, selector)` join of a SYSLIST row to a SYSTEMENTER entry, restricted
+to `entry.transport` 3 or 4, with no nibble, region or sibling-selector fallback
+(`toyota_code1_lifecycle_sweep.py:30-38`).
+
+**Census.** 976 tuples carrying 245,356 systems (code 3: 94,357 in 4 census classes;
+code 4: 150,999 in 3 census classes). The tuple-side total and `pack_census`'s
+`systemClasses` total for those codes agree exactly; the comparison against the
+published `pack-census.json` asset is shown in the same check-run.
+
+**Oracle verdict.** `FastKwpEntry.from_entry` rejects every one of these tuples
+literally (`toyota_transport.py:76` admits only `(1, 0x81)` and `(5, 0x33)` with
+selector low nibble 1), so matched 0 / mismatched 0 / not replayable 976: the pinned
+oracle has no CAN-class projection to compare against.
+
+**Native setup probe.** `GetInfoFromEnterList` then `SystemEnterPart` run in the
+bounded AArch64 sandbox with the adapter-facing COMM/SYSP hooks bound to argument
+recorders. The transport-hook calls, native return values, call counts and the literal
+stop reason of every probed tuple are in the check-run "Toyota CAN link sweep".
+
+**Where a CAN request/response ID would come from — NOT ESTABLISHED.** The
+SYSTEMENTER reader names its fields by runtime offset, not semantics
+(`toyota_entries.py:118-140`), and `Entry.report()` deliberately omits `requestId`
+(asserted in `test_toyota_entries.py:49`). The only identifier construction in the
+repository is the KWP rule `80` + the wire address words with the required address
+swap (`toyota_group_dtc_enable.py:441-455`, `toyota_ecmect_pack.py:29`,
+`toyota_innova_2007_pack.py:16`); `toyota_transport.py:52-55` states the two address
+bytes are "not a CAN ID". The app's generic ECU rows do require an 11/29-bit pair
+(`docs/vehicle-catalog.md:71`), and no Toyota source field is shown to supply one.
+
+**ISO-TP framing.** The oracle trace shows none: no `SetCan15765`, `CanSetEnterFrame`
+or `InitCanBusMode` call was recorded. ISO-TP exists only in the app's generic OBD
+layer (`app/src/main/java/com/bod3/app/obd/protocol/Frames.kt:37`,
+`obd/protocol/ObdProtocol.kt:43`), never in the Toyota source/oracle path.
+
+**NOT ESTABLISHED.** The CAN setup call sequence and its ordering; any CAN identifier,
+ISO-TP framing or timing for codes 3/4; a CAN-class source projection that could
+produce a comparable call expectation; any physical or vehicle validation. Nothing is
+enabled by this stage.
 
 ## Evidence audit / next work
 

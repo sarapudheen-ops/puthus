@@ -37,8 +37,16 @@ from vehicle_bundle import canonical
 REGION_IDS = {"EU": 1, "NA": 2, "JP": 3}
 REGION_NAMES = {1: "EU", 2: "NA", 3: "JP"}
 CAN_CODES = (3, 4)
-PROBE_LIMIT = 300
+PROBE_LIMIT = 1000
 PROBE_SECONDS = 600
+
+# Cells the reviewed symbol inventory (sweep_toyota.py SYMBOLS) places in both SYSP
+# and COMM. A cell is joined only when SYSP holds an eight-byte object of that name
+# and COMM defines the function of the same name: the shape the sandbox enforces.
+CAN_CELLS = ("InitCanBusMode", "InitExtendCanbusMode", "InitCanCommSet_MPT", "SetCan15765",
+             "SetCanComPara", "SetCanComParaFilterId", "MenuEnterCommunicationSet",
+             "GetBaseCanBusRecData", "MyCanSendOneFrameReceiveDatas", "GetKwpRecData",
+             "GetKwpRecDataWithFrame")
 
 # The adapter-facing COMM/SYSP hooks the native setup is observed through. Bound
 # callbacks are declared fakes: they record arguments and return a fixed value.
@@ -187,6 +195,14 @@ def build_probe(libraries, sources):
     for function in ("InitSetEnterFrame", "InitCommSet", "GetFuncCommFrameInfo",
                      "MultiPackFunc", "MultSetLinkKeepFunc", "CmdSendWithoutRec"):
         native.link_function_pointer(sysp, function, comm, function)
+    linked, unlinked = {}, {}
+    for cell in CAN_CELLS:
+        try:
+            native.link_function_pointer(sysp, cell, comm, cell)
+        except ReplayError as error:
+            unlinked[cell] = str(error)
+            continue
+        linked[cell] = "SYSP cell -> COMM function"
     trace = []
     bound = {}
     for hook, count in (*HOOKS, ("EndCombination", 0), ("SetLinkKeep", 4)):
@@ -198,7 +214,7 @@ def build_probe(libraries, sources):
         for offset, filename in ((0, "Toyota_bin_00.BIN"), (0x38, "Toyota_bin_11.BIN"), (0x40, "Toyota_bin_12.BIN")):
             raw = sources[region + "/" + filename]
             native.write(global_state + 0xc0 + offset, struct.pack("<Q", native.allocate(len(raw), raw)))
-    return native, files, handle, context, global_state, trace, bound
+    return native, files, handle, context, global_state, trace, bound, linked, unlinked
 
 
 def probe_tuple(native, files, handle, context, global_state, trace, index, rid, function, entry):
@@ -271,12 +287,13 @@ def build(args):
     libraries = load_libraries(Path(args.archive))
     probe_error = None
     try:
-        native, files, handle, context, global_state, trace, bound = build_probe(libraries, sources)
+        native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(libraries, sources)
     except (ReplayError, ValueError, KeyError, MemoryError) as error:
         # A sandbox limitation is reported as the literal blocker, never as a silent gap.
         probe_error = f"{type(error).__name__}: {error}"
-        native, bound = None, {}
+        native, bound, linked, unlinked = None, {}, {}, {}
     rows, verdicts, stopped = [], collections.Counter(), collections.Counter()
+    status_hist, call_hist = collections.Counter(), collections.Counter()
     for key in chosen:
         rid, function, selector = key
         entry = entries[key]
@@ -298,6 +315,10 @@ def build(args):
         verdicts[item["verdict"]] += 1
         if native_result["status"] == "blocked":
             stopped[native_result["reason"]] += 1
+        else:
+            status_hist[str(native_result.get("nativeStatus"))] += 1
+            calls = len(native_result.get("calls", []))
+            call_hist["0" if calls == 0 else ("1-3" if calls <= 3 else "4+")] += 1
         item["transportHookCalls"] = setup_calls(native_result.get("calls", []))
         item["addressEvidence"] = address_evidence(entry, item["transportHookCalls"])
         rows.append(item)
@@ -324,6 +345,8 @@ def build(args):
             "probe": {"selection": selection, "verdicts": dict(verdicts), "stopReasons": dict(stopped),
                       "isoTpConfigurationCalls": dict(iso), "boundHooks": bound,
                       "unavailableReason": probe_error,
+                      "linkedCells": linked, "unlinkedCells": unlinked,
+                      "nativeStatus": dict(status_hist), "callCounts": dict(call_hist),
                       "fakeBoundaries": ["adapter-facing COMM/SYSP hooks record arguments and return 1",
                                          "no CAN frame, timing or identifier is synthesized or inferred",
                                          "unbound calls stop the probe with the literal symbol name"]},
@@ -344,17 +367,37 @@ def markdown(payload):
               f"- tuple-side systems: {census_row['reconciliation'].get('tupleSystems')}",
               f"- census systems (codes 3/4): {census_row['reconciliation'].get('censusSystems')}",
               f"- agrees: {census_row['reconciliation'].get('agrees')}"]
+    if "publishedCensusSystems" in census_row["reconciliation"]:
+        lines.append(f"- published pack-census.json for codes 3/4: "
+                     f"{census_row['reconciliation']['publishedCensusSystems']}, "
+                     f"agrees: {census_row['reconciliation']['publishedCensusAgrees']}")
     for code, total in sorted(census_row.get("totals", {}).items()):
         lines.append(f"- native code {code}: {total['systems']} systems in {len(total['classes'])} census classes")
+    class_rows = [(code, row) for code, total in sorted(census_row.get("totals", {}).items())
+                  for row in total["classes"]]
+    if class_rows:
+        lines += ["", "| census class region | transportLabel | native code | selector | systems | enabled |",
+                  "|---|---|---:|---:|---:|---:|"]
+        lines += [f"| {row['region']} | {row['transportLabel']} | {code} | {row['selector']} | "
+                  f"{row['systems']} | {row['enabled']} |" for code, row in class_rows]
     lines += ["", "## Native setup probe", "",
               f"- selection: {payload['probe']['selection']['policy']} "
               f"({payload['probe']['selection']['probed']}/{payload['probe']['selection']['totalTuples']} tuples)",
               f"- verdicts: {payload['probe']['verdicts']}",
-              f"- ISO-TP configuration calls seen: {payload['probe']['isoTpConfigurationCalls'] or 'none'}", ""]
+              f"- ISO-TP configuration calls seen: {payload['probe']['isoTpConfigurationCalls'] or 'none'}",
+              f"- SYSP cells joined to their COMM function: {len(payload['probe'].get('linkedCells') or {})}; "
+              f"left unlinked: {len(payload['probe'].get('unlinkedCells') or {})}",
+              f"- native entry return values: {payload['probe'].get('nativeStatus') or 'none'}",
+              f"- recorded call counts per tuple: {payload['probe'].get('callCounts') or 'none'}", ""]
     lines += ["| region | function | selector | systems | verdict | stop reason |", "|---|---:|---:|---:|---|---|"]
     for row in payload["tuplesProbed"][:20]:
-        reason = row["nativeSetup"].get("reason", "-").replace("|", "/")[:110]
+        native = row["nativeSetup"]
+        reason = native.get("reason") or f"status={native.get('nativeStatus')}, calls={len(native.get('calls', []))}"
+        reason = reason.replace("|", "/")[:110]
         lines.append(f"| {row['region']} | {row['function']} | {row['selector']:#04x} | {row['systems']} | {row['verdict']} | {reason} |")
+    if payload["probe"].get("unlinkedCells"):
+        lines += ["", "### Cells left unlinked (literal)", ""]
+        lines += [f"- `{name}`: {reason}" for name, reason in sorted(payload["probe"]["unlinkedCells"].items())]
     if payload["probe"]["stopReasons"]:
         lines += ["", "### Stop reasons (literal)", ""]
         lines += [f"- `{reason}`: {count} tuple(s)" for reason, count in

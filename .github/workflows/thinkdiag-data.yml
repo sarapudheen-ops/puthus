@@ -198,15 +198,14 @@ jobs:
           mkdir -p .local/thinkdiag/report/can-link-sweep .local/thinkdiag/published-census
           gh release download ci-reports-v1 --pattern pack-census.json \
             --dir .local/thinkdiag/published-census --clobber || true
-          PUBLISHED=""
+          ARGS=(--packs .local/thinkdiag/vehicle-packs)
           if [ -f .local/thinkdiag/published-census/pack-census.json ]; then
-            PUBLISHED="--published-census .local/thinkdiag/published-census/pack-census.json"
+            ARGS+=(--published-census .local/thinkdiag/published-census/pack-census.json)
           fi
           python3 tools/thinkdiag/toyota_can_link_sweep.py .local/thinkdiag/TOYOTA.zip \
             --decoded .local/thinkdiag/decoded \
             --manifest .local/thinkdiag/report/decoded-manifest.json \
-            --packs .local/thinkdiag/vehicle-packs $PUBLISHED \
-            --output .local/thinkdiag/report/can-link-sweep
+            "${ARGS[@]}" --output .local/thinkdiag/report/can-link-sweep
       - name: Publish the native codes 3/4 evidence report
         id: publish_stage3a_report
         continue-on-error: true
