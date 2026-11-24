@@ -410,7 +410,11 @@ claims executable — an unproven system can never show an enabled executable ac
 `unprovenLinkNeverOffersExecutableActions`. Python tests unchanged: `OK (skipped=1)`
 (`python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py'`).
 
-**Evidence.** Check-runs for the last push SHA, the masked-step outcome table, the JVM test count and
+**Evidence.** Android CI passed on the code head `7023d45` (push run 45465273798, PR run 45465331592,
+each `610 tests, 0 failures, 0 errors, 0 skipped in 73 classes`; Android 24 device job green with the
+existing 7 instrumented tests). The final head adds a comment-only `.github/workflows/android.yml`
+touch so the paths-filtered actionlint workflow (`pull_request` → `.github/**`) runs on the same SHA
+as release-data and Android CI. Check-runs for the final push SHA, the masked-step outcome table and
 the file:line change list are in the "Stage 2a report" comment on this PR.
 
 **NOT ESTABLISHED.** Physical/vehicle validation for any link; the transport-5 link class; any clear,
