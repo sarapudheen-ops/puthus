@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: ['arena/**']
+    branches: ['arena/**', 'main']
     paths:
       - 'tools/thinkdiag/**'
       - '.github/workflows/thinkdiag-data.yml'
@@ -245,6 +245,7 @@ jobs:
           echo "[stage1c] elapsed=$((END-START))s exit=$STATUS" | tee -a "$LOG"
           exit "$STATUS"
       - name: Publish checksummed ECU program-dispatch input for exact reader work
+        id: publish_ecu_input
         continue-on-error: true
         # The agent workspace cannot follow the release-asset storage redirect. Keep
         # this small, owner-verified source input in research evidence, never Git/APK.
@@ -265,6 +266,7 @@ jobs:
             -f 'output[title]=Owner-source ECUPROGRAM input; not executable coverage' \
             -F 'output[summary]=@.local/thinkdiag/report/ecu-program-input.json'
       - name: Publish native comparison outcome (including failed reference gates)
+        id: publish_native_outcome
         continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/native-oracle.md') != ''
         run: |
@@ -277,8 +279,10 @@ jobs:
             -f 'output[title]=Bounded offline semantic comparison; no adapter or ECU' \
             -F 'output[summary]=@.local/thinkdiag/report/native-oracle.md'
       - name: Publish Code 1 link-promotion report
+        id: publish_link_promotion
         continue-on-error: true
         run: |
+          exec > >(tee .local/thinkdiag/report/promotion-step.log) 2>&1
           python3 tools/thinkdiag/report_code1_link_promotion.py .local/thinkdiag/vehicle-packs \
             --baseline-index .local/thinkdiag/vehicle-packs-baseline/index.json \
             --sweep-json .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json
@@ -311,12 +315,13 @@ jobs:
           for body in comments:
               subprocess.run(['gh','api','--method','POST',f"repos/{os.environ['GH_REPO']}/issues/25/comments",'-f',f'body={body}'],check=True,stdout=subprocess.DEVNULL)
           # Verify every exact body is now present; comments are never silently skipped.
-          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/25/comments","--jq","".[].body"],text=True)
+          existing=subprocess.check_output(['gh','api','--paginate',f"repos/{os.environ['GH_REPO']}/issues/25/comments",'--jq','.[].body'],text=True)
           assert all(body in existing for body in comments), 'Promotion report comment verification failed'
           print(f'Posted and verified {len(comments)-1} report parts and one key-numbers comment on PR #25')
           PY
           rm -rf .local/thinkdiag/vehicle-packs-baseline
       - name: Publish Stage 1b probe report and failure log
+        id: publish_stage1b_report
         if: always()
         continue-on-error: true
         env:
@@ -367,6 +372,7 @@ jobs:
                    f'\nProbe step conclusion: {outcome}\n\n````text\n{tail[-40000:]}\n````')
           PY
       - name: Publish Stage 1c oracle report
+        id: publish_stage1c_report
         if: always()
         continue-on-error: true
         env:
@@ -385,6 +391,7 @@ jobs:
             --log .local/thinkdiag/report/stage-1c-oracle-step.log \
             --release ci-reports-v1
       - name: Publish Code 1 lifecycle sweep reports
+        id: publish_sweep_reports
         continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.md') != ''
         env:
@@ -402,6 +409,7 @@ jobs:
             gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="Code 1 lifecycle sweep: $tuples. Full reports: code1-lifecycle-sweep.md and code1-lifecycle-sweep.json in ci-reports-v1."
           fi
       - name: Publish conversion step log (captures the exact failing command)
+        id: publish_convert_log
         continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/convert-step.log') != ''
         run: |
@@ -446,12 +454,14 @@ jobs:
       - name: Verify the bundled reference is exactly reproducible
         run: cmp .local/thinkdiag/converted/toyota-lexus-dtcs.json app/src/main/assets/datapacks/toyota-lexus-dtcs.json
       - name: Publish exhaustive sweep evidence
+        id: publish_sweep_evidence
         continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/sweep-reports.json') != ''
         run: |
           python3 tools/thinkdiag/sweep_reports.py publish \
             --reports .local/thinkdiag/report --output .local/thinkdiag/report/evidence-bundle
       - name: Publish static-analysis reports
+        id: publish_static_reports
         continue-on-error: true
         if: always()
         run: |
@@ -464,6 +474,7 @@ jobs:
               -F "output[summary]=@.local/thinkdiag/report/$report.md"
           done
       - name: Publish inspectable converted-data shards
+        id: publish_dtc_shards
         continue-on-error: true
         run: |
           for data in .local/thinkdiag/report/dtc-data-*.json; do
@@ -488,6 +499,7 @@ jobs:
             .local/thinkdiag/report/english-text.json
           retention-days: 14
       - name: Publish inspection as a check
+        id: publish_inspection_check
         continue-on-error: true
         run: |
           cat .local/thinkdiag/report/summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -505,6 +517,7 @@ jobs:
           path: .local/thinkdiag/report/
           retention-days: 7
       - name: Publish Stage 0 report to ci-reports-v1 and PR comments
+        id: publish_stage0_report
         continue-on-error: true
         if: github.event_name == 'push' && hashFiles('docs/toyota-progress.md') != ''
         env:
@@ -528,3 +541,66 @@ jobs:
           export PR_NUMBER
           gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
             -F body=@.local/thinkdiag/report/stage-0-report.md
+      - name: Publish masked-step outcomes and promotion log tail
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          O_code1_lifecycle_sweep: ${{ steps.code1_lifecycle_sweep.outcome }}
+          O_publish_ecu_input: ${{ steps.publish_ecu_input.outcome }}
+          O_publish_native_outcome: ${{ steps.publish_native_outcome.outcome }}
+          O_publish_link_promotion: ${{ steps.publish_link_promotion.outcome }}
+          O_publish_stage1b_report: ${{ steps.publish_stage1b_report.outcome }}
+          O_publish_stage1c_report: ${{ steps.publish_stage1c_report.outcome }}
+          O_publish_sweep_reports: ${{ steps.publish_sweep_reports.outcome }}
+          O_publish_convert_log: ${{ steps.publish_convert_log.outcome }}
+          O_publish_sweep_evidence: ${{ steps.publish_sweep_evidence.outcome }}
+          O_publish_static_reports: ${{ steps.publish_static_reports.outcome }}
+          O_publish_dtc_shards: ${{ steps.publish_dtc_shards.outcome }}
+          O_publish_inspection_check: ${{ steps.publish_inspection_check.outcome }}
+          O_publish_stage0_report: ${{ steps.publish_stage0_report.outcome }}
+        run: |
+          mkdir -p .local/thinkdiag/report
+          PROMO_LOG=.local/thinkdiag/report/promotion-step.log
+          FAILS=0
+          for out in "$O_code1_lifecycle_sweep" "$O_publish_ecu_input" "$O_publish_native_outcome" \
+            "$O_publish_link_promotion" "$O_publish_stage1b_report" "$O_publish_stage1c_report" \
+            "$O_publish_sweep_reports" "$O_publish_convert_log" "$O_publish_sweep_evidence" \
+            "$O_publish_static_reports" "$O_publish_dtc_shards" "$O_publish_inspection_check" \
+            "$O_publish_stage0_report"; do
+            if [ "$out" = failure ]; then FAILS=$((FAILS + 1)); fi
+          done
+          CONC=success
+          if [ "$FAILS" -gt 0 ]; then CONC=failure; fi
+          {
+            echo "## Masked step outcomes: $FAILS raw failure(s) among 13 continue-on-error steps"
+            echo
+            echo 'Raw `steps.<id>.outcome` values are not masked; step conclusions and the job conclusion are.'
+            echo
+            echo '| step id | raw outcome |'
+            echo '|---|---|'
+            echo "| code1_lifecycle_sweep | $O_code1_lifecycle_sweep |"
+            echo "| publish_ecu_input | $O_publish_ecu_input |"
+            echo "| publish_native_outcome | $O_publish_native_outcome |"
+            echo "| publish_link_promotion | $O_publish_link_promotion |"
+            echo "| publish_stage1b_report | $O_publish_stage1b_report |"
+            echo "| publish_stage1c_report | $O_publish_stage1c_report |"
+            echo "| publish_sweep_reports | $O_publish_sweep_reports |"
+            echo "| publish_convert_log | $O_publish_convert_log |"
+            echo "| publish_sweep_evidence | $O_publish_sweep_evidence |"
+            echo "| publish_static_reports | $O_publish_static_reports |"
+            echo "| publish_dtc_shards | $O_publish_dtc_shards |"
+            echo "| publish_inspection_check | $O_publish_inspection_check |"
+            echo "| publish_stage0_report | $O_publish_stage0_report |"
+            echo
+            echo '## Promotion step log tail (last 80 lines)'
+            echo
+            echo '```text'
+            tail -n 80 "$PROMO_LOG" 2>/dev/null || echo '(promotion log missing)'
+            echo '```'
+          } > .local/thinkdiag/report/masked-outcomes.md
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota masked-step outcomes' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion="$CONC" \
+            -f "output[title]=$FAILS raw failure(s) among 13 continue-on-error steps" \
+            -F 'output[summary]=@.local/thinkdiag/report/masked-outcomes.md'
