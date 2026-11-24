@@ -2,12 +2,97 @@
   "kind": "compiled-dtc-group-enable-pin",
   "formatVersion": 1,
   "sourceSha256": "f83583e3d2d02b811db3f982f8ce7a015d74c14433a22752a71d4e3064ed2f75",
-  "note": "Deterministic expected-output pin for the Stage 1d compiled-group DTC read/clear slice, not transport, adapter or vehicle approval. An empty groups list enables nothing: the converter fails closed until a group entry carries the exact measured definition hashes of that group's Stage 1c representative compile.",
+  "note": "Deterministic expected-output pin for the Stage 1d compiled-group DTC read-only slice, not transport, adapter or vehicle approval. Filled from the round-1 CI qualification (Inspect Toyota release data run 45310645082, head d133329): ONLY the exact measured definition hashes of that run, byte-identical. Empty or mismatched groups enable nothing; the two pinned ECMECT/Innova slices stay on their byte-identical read-only paths (pinned-path status in the qualification report).",
   "oracleProvenance": {
     "stage1cRun": "45226018714",
     "head": "c17d25e",
     "verdict": "4/4 compiled groups PASS; 203/203 compiled per-system rows; 5353 labels",
     "note": "Group-oracle evidence proves the compile group only. It is NOT transport, adapter or vehicle approval, and no physical validation is claimed."
   },
-  "groups": []
+  "groups": [
+    {
+      "region": "EU",
+      "ecuFile": "EU/Ecu_Data_0081.BIN",
+      "function": 61,
+      "selector": 17,
+      "representative": "SYSLIST_EU.BIN@0009d8f2",
+      "systems": 79,
+      "dtcLabels": 1414,
+      "readRequest": "13B0",
+      "clearRequest": "04",
+      "layout": {
+        "countIndex": 0,
+        "recordStart": 1,
+        "recordBytes": 2,
+        "assemblyKind": 2,
+        "countIsPresence": false,
+        "modeLowBits": 1
+      },
+      "definitionSha256": "4fee1e6fa6fb4925589eb7c572499595d61e1a6a47752345d248022f78c2e486",
+      "definitionHash": "972805f8225322eeddb553b6cfbef7bedc2b153ccdb009cb33b41e333984b764"
+    },
+    {
+      "region": "EU",
+      "ecuFile": "EU/Ecu_Data_0081.BIN",
+      "function": 61,
+      "selector": 81,
+      "representative": "SYSLIST_EU.BIN@00023995",
+      "systems": 79,
+      "dtcLabels": 1414,
+      "readRequest": "13B0",
+      "clearRequest": "04",
+      "layout": {
+        "countIndex": 0,
+        "recordStart": 1,
+        "recordBytes": 2,
+        "assemblyKind": 2,
+        "countIsPresence": false,
+        "modeLowBits": 1
+      },
+      "definitionSha256": "f2e5145d8ca5aff7cded81cfd14245877caf214ed419a657bbbaf065cdfcf9e7",
+      "definitionHash": "972805f8225322eeddb553b6cfbef7bedc2b153ccdb009cb33b41e333984b764"
+    },
+    {
+      "region": "JP",
+      "ecuFile": "JP/Ecu_Data_0081.BIN",
+      "function": 61,
+      "selector": 17,
+      "representative": "SYSLIST_JP.BIN@00003875",
+      "systems": 30,
+      "dtcLabels": 1111,
+      "readRequest": "13B0",
+      "clearRequest": "04",
+      "layout": {
+        "countIndex": 0,
+        "recordStart": 1,
+        "recordBytes": 2,
+        "assemblyKind": 2,
+        "countIsPresence": false,
+        "modeLowBits": 1
+      },
+      "definitionSha256": "31cac0155c9bac3d3da1fd1b7d7efc5ad5aebeee0151a0663b7a9d647772e833",
+      "definitionHash": "35064bcf25ac5e5125ffc09a60753c52eb9fe12409e4758585eec67db9ecd050"
+    },
+    {
+      "region": "NA",
+      "ecuFile": "NA/Ecu_Data_0081.BIN",
+      "function": 61,
+      "selector": 81,
+      "representative": "SYSLIST_NA.BIN@0002bf2a",
+      "systems": 15,
+      "dtcLabels": 1414,
+      "readRequest": "13B0",
+      "clearRequest": "04",
+      "layout": {
+        "countIndex": 0,
+        "recordStart": 1,
+        "recordBytes": 2,
+        "assemblyKind": 2,
+        "countIsPresence": false,
+        "modeLowBits": 1
+      },
+      "definitionSha256": "ad5155615cb9c4b3279f70ae4867baa60d16d0c1abbe35390b83b89403813e6c",
+      "definitionHash": "5e4fa89e7f3daec67ce52085793d714c0c7c6a4dd9e655d062d9aba0b4857625"
+    }
+  ]
 }

@@ -417,14 +417,20 @@ class Converter:
                     # projection, validate_system) is fail-closed; the pinned two
                     # systems above never take this path and stay byte-identical.
                     group_record = None
-                    if (self.group_qualifier is not None and entry is not None
-                            and not is_ecmect
-                            and not (self.innova_2007_review is not None
-                                     and identity == self.innova_2007_review["systemId"])):
+                    if self.group_qualifier is not None and entry is not None:
                         from toyota_group_dtc_enable import TARGETS, enable_system
                         ecu_path = ecu_file if "/" in ecu_file else f"{region}/{ecu_file}"
-                        group_record = self.group_qualifier.qualify(
-                            region, key, raw[27], ecu_path, identity, raw, entry.transport)
+                        if is_ecmect or (self.innova_2007_review is not None
+                                         and identity == self.innova_2007_review["systemId"]):
+                            # The two pinned read-only slices keep their
+                            # byte-identical packs; record their literal
+                            # per-system outcome instead of a group gate.
+                            self.group_qualifier.pinned_path(
+                                region, key, raw[27], ecu_path, identity)
+                        else:
+                            group_record = self.group_qualifier.qualify(
+                                region, key, raw[27], ecu_path, identity,
+                                raw, entry.transport)
                         if group_record is not None:
                             if group_record["status"] == "enabled-ready":
                                 if evidence_status != "proven":

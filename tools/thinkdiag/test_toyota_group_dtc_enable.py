@@ -272,6 +272,23 @@ class GroupQualifierTest(unittest.TestCase):
         self.assertEqual(first['definitionHash'], second['definitionHash'])
         self.assertIsNotNone(first['_compiled'])
 
+    def test_pinned_path_slices_are_counted_separately_and_never_enable(self):
+        qualifier = self.qualifier([self.group_entry()])
+        self.run_qualify(qualifier)
+        record = qualifier.pinned_path('EU', FUNCTION, SELECTOR, ECU_FILE,
+                                      'SYSLIST_EU.BIN@0009d8f2')
+        self.assertEqual('pinned-path', record['status'])
+        self.assertIsNone(qualifier.pinned_path('EU', FUNCTION, 0x99, ECU_FILE,
+                                                'SYSLIST_EU.BIN@0009d8f2'))
+        markdown, payload = qualification_report(qualifier, qualifier.pin)
+        totals = json.loads(payload)['totals']
+        self.assertEqual(3, totals['members'])
+        self.assertEqual(2, totals['enabledReady'])
+        self.assertEqual(1, totals['pinnedPath'])
+        self.assertEqual(0, totals['unresolved'])
+        self.assertIn('pinned-path: 1', markdown)
+        self.assertIn('SYSLIST_EU.BIN@0009d8f2: pinned-path', markdown)
+
     def test_member_hash_drift_is_literal_and_blocks(self):
         qualifier = self.qualifier([self.group_entry()])
         real_compile = qualifier._compile

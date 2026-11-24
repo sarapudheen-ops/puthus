@@ -287,6 +287,30 @@ class GroupQualifier:
             self.sources, self.libraries, region=region, system_id=system_id,
             system_bytes=system_bytes, native_transport=native_transport)
 
+    def pinned_path(self, region, key, selector, ecu_file, identity):
+        """Record one byte-identical pinned-path outcome (ECMECT/Innova slices).
+
+        The two pinned read-only slices belong to targeted groups but keep
+        their own verified enablements and byte-identical packs; their literal
+        per-system outcome is `pinned-path`, never a group enablement.
+        """
+        group_key = target_key(region, ecu_file, key, selector)
+        if group_key not in TARGETS:
+            return None
+        record = {
+            "system": identity,
+            "group": [region, ecu_file, key, selector],
+            "status": "pinned-path",
+            "reason": None,
+            "definitionHash": None,
+            "groupDefinitionHash": None,
+            "groupDefinitionSha256": None,
+            "pinMatched": False,
+            "_compiled": None,
+        }
+        self.records.setdefault(group_key, []).append(record)
+        return record
+
     def qualify(self, region, key, selector, ecu_file, identity, raw,
                 native_transport):
         """Qualify one SYSLIST row and record its report outcome; enables nothing.
@@ -589,7 +613,7 @@ def qualification_report(qualifier, pin):
     """(markdown, json) evidence for every targeted group and every member."""
     groups = []
     totals = {"groups": 0, "members": 0, "enabledReady": 0, "enabled": 0,
-              "unresolved": 0}
+              "pinnedPath": 0, "unresolved": 0}
     for key, target in TARGETS.items():
         group = qualifier.groups().get(key)
         entry = {
@@ -614,7 +638,9 @@ def qualification_report(qualifier, pin):
                       if not k.startswith("_") and v is not None}
             entry["members"].append(member)
             totals["members"] += 1
-            if record["status"] in ("enabled-ready", "enabled"):
+            if record["status"] == "pinned-path":
+                totals["pinnedPath"] += 1
+            elif record["status"] in ("enabled-ready", "enabled"):
                 totals["enabledReady"] += 1
             else:
                 totals["unresolved"] += 1
@@ -639,7 +665,8 @@ def qualification_report(qualifier, pin):
     lines.append(f"- Groups: {totals['groups']}; members: {totals['members']}; "
                  f"qualified: {totals['enabledReady']}; "
                  f"enabled: {totals['enabled']}; "
-                 f"unresolved: {totals['unresolved']}")
+                 f"unresolved: {totals['unresolved']}; "
+                 f"pinned-path: {totals['pinnedPath']}")
     for entry in groups:
         g = entry["group"]
         lines.append("")
