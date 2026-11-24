@@ -791,6 +791,8 @@ class Converter:
             from toyota_group_dtc_enable import qualification_report
             markdown, payload = qualification_report(self.group_qualifier,
                                                      self.group_qualifier.pin)
+            markdown += (f"- Container: {index['containerBytes']} bytes "
+                         f"(cap 503316480 = 480 MiB)\n")
             (self.output / 'group-dtc-enable.md').write_text(markdown)
             (self.output / 'group-dtc-enable.json').write_text(payload)
             shutil.copyfile(self.group_qualifier.pin['path'],
