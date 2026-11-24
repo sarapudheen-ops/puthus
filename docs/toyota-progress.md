@@ -449,8 +449,13 @@ oracle has no CAN-class projection to compare against.
 
 **Native setup probe.** `GetInfoFromEnterList` then `SystemEnterPart` run in the
 bounded AArch64 sandbox with the adapter-facing COMM/SYSP hooks bound to argument
-recorders. The transport-hook calls, native return values, call counts and the literal
-stop reason of every probed tuple are in the check-run "Toyota CAN link sweep".
+recorders. Every one of the 976 tuples was probed: the native entry returned −1 on 744
+of them after 1–3 recorded hook calls, and 232 stopped on a call through a null cell
+(`Replay stopped at 0x0: Invalid memory fetch (UC_ERR_FETCH_UNMAPPED)`). Nine reviewed
+SYSP CAN cells have no COMM function to join to and stay unlinked, literally
+"Missing explicitly selected guest linkage endpoint". The exact calls, their
+arguments, the per-tuple verdicts and stop reasons are in the check-run
+"Toyota CAN link sweep".
 
 **Where a CAN request/response ID would come from — NOT ESTABLISHED.** The
 SYSTEMENTER reader names its fields by runtime offset, not semantics

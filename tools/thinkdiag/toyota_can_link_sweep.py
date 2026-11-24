@@ -294,6 +294,7 @@ def build(args):
         native, bound, linked, unlinked = None, {}, {}, {}
     rows, verdicts, stopped = [], collections.Counter(), collections.Counter()
     status_hist, call_hist = collections.Counter(), collections.Counter()
+    api_hist = collections.Counter(); examples = []
     for key in chosen:
         rid, function, selector = key
         entry = entries[key]
@@ -320,6 +321,13 @@ def build(args):
             calls = len(native_result.get("calls", []))
             call_hist["0" if calls == 0 else ("1-3" if calls <= 3 else "4+")] += 1
         item["transportHookCalls"] = setup_calls(native_result.get("calls", []))
+        for call in item["transportHookCalls"]:
+            api_hist[call["api"]] += 1
+        if item["transportHookCalls"] and len(examples) < 5:
+            examples.append({"region": item["region"], "function": item["function"],
+                             "selector": item["selector"], "transport": item["transport"],
+                             "rawHex": item["rawHex"], "sourceFields": entry.fields,
+                             "calls": item["transportHookCalls"]})
         item["addressEvidence"] = address_evidence(entry, item["transportHookCalls"])
         rows.append(item)
         if time.monotonic() - started > PROBE_SECONDS:
@@ -347,6 +355,8 @@ def build(args):
                       "unavailableReason": probe_error,
                       "linkedCells": linked, "unlinkedCells": unlinked,
                       "nativeStatus": dict(status_hist), "callCounts": dict(call_hist),
+                      "transportHookCallHistogram": dict(api_hist.most_common()),
+                      "callExamples": examples,
                       "fakeBoundaries": ["adapter-facing COMM/SYSP hooks record arguments and return 1",
                                          "no CAN frame, timing or identifier is synthesized or inferred",
                                          "unbound calls stop the probe with the literal symbol name"]},
@@ -395,6 +405,15 @@ def markdown(payload):
         reason = native.get("reason") or f"status={native.get('nativeStatus')}, calls={len(native.get('calls', []))}"
         reason = reason.replace("|", "/")[:110]
         lines.append(f"| {row['region']} | {row['function']} | {row['selector']:#04x} | {row['systems']} | {row['verdict']} | {reason} |")
+    if payload["probe"].get("transportHookCallHistogram"):
+        lines += ["", "### Recorded transport-hook calls (all probed tuples)", ""]
+        lines += [f"- `{api}` x{count}" for api, count in payload["probe"]["transportHookCallHistogram"].items()]
+    for example in payload["probe"].get("callExamples", [])[:2]:
+        lines += ["", f"Example tuple {example['region']}/{example['function']}/{example['selector']:#04x} "
+                      f"(transport {example['transport']}), exact calls:", "", "```text"]
+        lines += [f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
+                  for call in example["calls"]]
+        lines += ["```"]
     if payload["probe"].get("unlinkedCells"):
         lines += ["", "### Cells left unlinked (literal)", ""]
         lines += [f"- `{name}`: {reason}" for name, reason in sorted(payload["probe"]["unlinkedCells"].items())]
