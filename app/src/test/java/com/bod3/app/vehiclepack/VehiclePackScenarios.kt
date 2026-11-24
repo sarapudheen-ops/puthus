@@ -48,7 +48,8 @@ object VehiclePackScenarios {
     }
     private class Fixture(enabled: Boolean = false, crossEcu: Boolean = false, explicitReads: Boolean = true, supportProvenance: Boolean? = null, bringUp: Boolean = false,
                           referenced: Boolean = false, corruptReference: String? = null, corruptExecutable: String? = null,
-                          linkOverride: String? = null, categoryOverride: Map<String, String>? = null, dtcOnly: Boolean = false) {
+                          linkOverride: String? = null, categoryOverride: Map<String, String>? = null, dtcOnly: Boolean = false,
+                          systemName: String = "Synthetic ECU") {
         private val container = ByteArrayOutputStream().also { it.write("BOD3PACKS1\n".toByteArray()) }
         private fun add(value: Any?): Map<String, Any> {
             val json = JsonWriter.write(value).toByteArray(); val data = packed(json); val at = container.size()
@@ -112,13 +113,13 @@ object VehiclePackScenarios {
         else listOf("pids", "dtcs", "ecuInfo", "actuators", "coding", "specialFunctions").associateWith { category ->
             if (enabled && category != "specialFunctions") "executable" else "unknown"
         }
-        private val system = add(mapOf("kind" to "vehicle-system", "id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
+        private val system = add(mapOf("kind" to "vehicle-system", "id" to "synthetic-system", "name" to systemName, "enabled" to enabled,
             "linkStatus" to linkStatus, "linkReasons" to linkReasons, "categoryStatus" to categoryStatus,
             "reasons" to why, "sourceVerified" to true, "sourceRecords" to listOf("synthetic:system"), "counts" to counts,
             "ecuSource" to ecuSource, "functionSource" to functionSource,
             "readOnly" to (enabled && corruptExecutable != "writable"),
             "bringUpPages" to listOfNotNull(bringUpPage), "data" to CatalogCodec.dataMap(original)))
-        private val systemChoice = mapOf("id" to "synthetic-system", "name" to "Synthetic ECU", "enabled" to enabled,
+        private val systemChoice = mapOf("id" to "synthetic-system", "name" to systemName, "enabled" to enabled,
             "linkStatus" to linkStatus, "linkReasons" to linkReasons, "categoryStatus" to categoryStatus, "reasons" to why, "counts" to counts,
             "readOnly" to enabled, "object" to system)
         val path = CatalogPack("synthetic-path", "Synthetic path", nodes = listOf(
@@ -387,6 +388,65 @@ object VehiclePackScenarios {
                 c.system(v, v.systems.single())
             }
         }
+    }
+
+    /** Stage 2a: badge text per link status and the literal per-category status lines. */
+    fun linkStatusBadgeAndCategoryLinesAreLiteral() = temporary { cache ->
+        val ids = listOf("make", "model", "generation", "variant")
+        val proven = Fixture(enabled = true).client(cache).selectedVehicle(ids).systems.single()
+        check(PackSystemStatusUi.linkBadge(proven.linkStatus, proven.linkReasons) == PackSystemStatusUi.PROVEN_LINK_BADGE)
+        check(PackSystemStatusUi.linkBadge("proven", emptyList()) == "Link natively consistent, not vehicle-tested")
+        val unproven = Fixture().client(cache).selectedVehicle(ids).systems.single()
+        check(unproven.linkStatus == "unproven" && unproven.linkReasons == listOf("mapping_missing"))
+        val badge = PackSystemStatusUi.linkBadge(unproven.linkStatus, unproven.linkReasons)
+        check(badge != PackSystemStatusUi.PROVEN_LINK_BADGE && badge.contains("mapping_missing"))
+        val provenLines = PackSystemStatusUi.categoryLines(proven.categoryStatus)
+        check(provenLines.size == 6 && provenLines.contains("pids: executable") && provenLines.contains("specialFunctions: unknown"))
+        check(PackSystemStatusUi.categoryLines(unproven.categoryStatus).contains("pids: unknown"))
+    }
+
+    /** Stage 2a: DTC-only systems carry the exact two-line read-only contract; full systems do not. */
+    fun dtcOnlySystemsStateTheReadOnlyContract() = temporary { cache ->
+        val ids = listOf("make", "model", "generation", "variant")
+        val dtcOnly = Fixture(enabled = true, dtcOnly = true).client(cache).selectedVehicle(ids).systems.single()
+        check(PackSystemStatusUi.isDtcOnly(dtcOnly.categoryStatus))
+        check(PackSystemStatusUi.dtcOnlyLines(dtcOnly.categoryStatus) == listOf(
+            "Reads DTCs only; clearing is not available",
+            "ECU may reject the read without a session; not vehicle-tested"))
+        val full = Fixture(enabled = true).client(cache).selectedVehicle(ids).systems.single()
+        check(!PackSystemStatusUi.isDtcOnly(full.categoryStatus))
+        check(PackSystemStatusUi.dtcOnlyLines(full.categoryStatus).isEmpty())
+    }
+
+    /** Stage 2a: Link-verified filter plus name search run over the selected vehicle's own
+     *  descriptors only — never a corpus-wide index (the 287,030-row source stays paginated). */
+    fun linkVerifiedFilterAndNameSearchStayWithinSelectedVehicleSystems() = temporary { cache ->
+        val ids = listOf("make", "model", "generation", "variant")
+        val alpha = Fixture(enabled = true, systemName = "Alpha system").client(cache).selectedVehicle(ids).systems.single()
+        val beta = Fixture(systemName = "beta system").client(cache).selectedVehicle(ids).systems.single()
+        val gamma = Fixture(enabled = true, systemName = "Gamma system").client(cache).selectedVehicle(ids).systems.single()
+        check(alpha.linkStatus == "proven" && beta.linkStatus == "unproven" && gamma.linkStatus == "proven")
+        val systems = listOf(alpha, beta, gamma)
+        check(PackSystemStatusUi.filter(systems, "", linkVerifiedOnly = true) == listOf(alpha, gamma))
+        check(PackSystemStatusUi.filter(systems, "BETA", linkVerifiedOnly = false) == listOf(beta))
+        check(PackSystemStatusUi.filter(systems, "system", linkVerifiedOnly = true) == listOf(alpha, gamma))
+        check(PackSystemStatusUi.filter(systems, "missing", linkVerifiedOnly = false).isEmpty())
+    }
+
+    /** Stage 2a: an unproven link never offers an executable action, whatever a category claims. */
+    fun unprovenLinkNeverOffersExecutableActions() = temporary { cache ->
+        val ids = listOf("make", "model", "generation", "variant")
+        val categories = mapOf("pids" to "unresolved", "dtcs" to "executable", "ecuInfo" to "unresolved",
+            "actuators" to "unknown", "coding" to "unknown", "specialFunctions" to "unknown")
+        val unprovenExecutable = Fixture(linkOverride = "unproven", categoryOverride = categories)
+            .client(cache).selectedVehicle(ids).systems.single()
+        check(unprovenExecutable.linkStatus == "unproven" && !unprovenExecutable.enabled)
+        check(unprovenExecutable.categoryStatus["dtcs"] == "executable")
+        check(PackSystemStatusUi.executableActions(unprovenExecutable).isEmpty())
+        val proven = Fixture(enabled = true).client(cache).selectedVehicle(ids).systems.single()
+        check(PackSystemStatusUi.executableActions(proven) == setOf(
+            PackSystemAction.LIVE, PackSystemAction.FAULTS, PackSystemAction.TESTS,
+            PackSystemAction.CODING, PackSystemAction.ECU_INFO))
     }
 
     fun cancelledDownloadNeverInstalls() = temporary { cache ->

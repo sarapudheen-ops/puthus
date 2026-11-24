@@ -10,7 +10,7 @@
 |---|---|---|
 | 0 — health and baseline | Complete | Baseline and evidence links below. |
 | 1 — K-Line categories | In progress / Stage 1d enablement landed | The exact ECMECT strict-translator control passes in release-data CI (30 PIDs, 1,414 DTCs, 1 ecuInfo, byte-identical). Stage 1d enabled 108 compiled-group DTC-read-only systems via the deterministic group pin (see Stage 1d); the two pinned slices stay byte-identical and the delivered pack is unchanged. The transport-5 link class (93 group systems) stays unproven; clear is deliberately unresolved. Stage 1e made the release-data pipeline observable on main and fixed the promotion-comment posting (see Stage 1e). No physical validation is claimed. |
-| 2 — Kotlin/app generalization | Not started | Depends on Stage 1 findings. |
+| 2 — Kotlin/app generalization | In progress — Stage 2a complete | Stage 2a: per-system link badge, literal per-category status, DTC-only contract lines, "Link verified" filter + name search over the selected vehicle's systems only (no corpus load), and JVM-gated executable actions so an unproven link never enables one. Evidence in the Stage 2a report comment on the PR. |
 | 3 — CAN and remaining link classes | Not started | Transport classes 4/3 and small classes require read-then-probe evidence. Transport-5 fallback and RX convention remain unresolved. |
 | 4 — tests/coding/special functions | Not started | Schemas and native request reproduction are not established. |
 | 5 — speed/size/docs/final | Not started | Existing Android census container is below the cap; caching, staged documentation, and final measurements remain. |
@@ -375,6 +375,48 @@ Scope: `.github/workflows/thinkdiag-data.yml` only (no pack, converter, or Kotli
 **Known main-run caveat (left unchanged per "do not change what any step publishes").** On a main push `gh pr view "$GITHUB_REF_NAME"` resolves no PR: `publish_stage0_report`'s unguarded lookup (`thinkdiag-data.yml:540`) will fail raw and appear in the outcome table; the Stage 1b/1c comment steps guard with `|| true` and skip (`:333`, `:385`); the sweep publisher guards with `if [ -n "$PR_NUMBER" ]` (`:406`).
 
 **NOT ESTABLISHED.** (a) Which masked step produced the second exit-1 annotation on run 45320524658 (and on run 45318134431) — it reproduces but is only named by the per-run "Toyota masked-step outcomes" table. (b) Job-log downloads remain unreachable from the agent sandbox (blob redirect EOF on `productionresultssa15.blob.core.windows.net` and `results-receiver.actions.githubusercontent.com`); the tee'd promotion log tail in the check-run is the readable substitute.
+
+## Stage 2a — the app shows what the data really supports
+
+Scope: Kotlin UI + JVM tests only — `app/src/main/java/com/bod3/app/vehiclepack/PackSystemStatusUi.kt`
+(new), `app/src/main/java/com/bod3/app/ui/screens/ToyotaVehiclePacksScreen.kt`, and tests in
+`app/src/test/java/com/bod3/app/vehiclepack/VehiclePackScenarios.kt` / `VehiclePackTest.kt`. No converter,
+validator, write-safety guard, workflow, pack or Python change; ECMECT and Innova packs stay
+byte-identical; androidTest stays at the existing 7 tests.
+
+**Per-system evidence display.** Every system card (systems list and system detail) shows a link-status
+badge: `linkStatus=proven` renders the exact text "Link natively consistent, not vehicle-tested";
+unproven renders "Link not verified: \<literal linkReasons>". Each card then lists the literal
+per-category status (`pids: executable`, `dtcs: unresolved`, `ecuInfo: unknown`, …) and the literal
+disabling reasons (`Reason: <keys>`), and DTC-only systems (dtcs the only executable category) add the
+two contract lines "Reads DTCs only; clearing is not available" and "ECU may reject the read without a
+session; not vehicle-tested".
+
+**Link-verified filter and name search.** The systems list gains a case-insensitive name search field
+and a "Link verified" toggle chip; both run through `PackSystemStatusUi.filter` over the selected
+vehicle's pinned system descriptors only (validator bound: 1,024 loaded with that vehicle,
+`VehiclePackCatalog.kt:163`). The 287,030-row source corpus is never loaded or indexed here — the
+source library keeps its paginated SQL query path (`SourceBrowser`, PAGE_SIZE 40). Filter state is
+local UI state keyed to the selected variant.
+
+**Executable-action gating.** The five feature actions in the detail view (live, fault codes, tests,
+coding, ECU information) are enabled only when `PackSystemStatusUi.executableActions` includes them:
+link status is checked first, so an unproven link yields an empty action set even when a category
+claims executable — an unproven system can never show an enabled executable action.
+
+**Tests (JVM, fast).** `VehiclePackTest` +4 wrappers over `VehiclePackScenarios`:
+`linkStatusBadgeAndCategoryLinesAreLiteral`, `dtcOnlySystemsStateTheReadOnlyContract`,
+`linkVerifiedFilterAndNameSearchStayWithinSelectedVehicleSystems`,
+`unprovenLinkNeverOffersExecutableActions`. Python tests unchanged: `OK (skipped=1)`
+(`python3 -m unittest discover -s tools/thinkdiag -p 'test_*.py'`).
+
+**Evidence.** Check-runs for the last push SHA, the masked-step outcome table, the JVM test count and
+the file:line change list are in the "Stage 2a report" comment on this PR.
+
+**NOT ESTABLISHED.** Physical/vehicle validation for any link; the transport-5 link class; any clear,
+session, tests/coding/special-functions capability; any new enabled system or category (the enabled
+set stays 110 and the two pinned slices stay byte-identical); instrumented coverage of the new
+filter UI (androidTest stays at the existing 7 tests).
 
 ## Evidence audit / next work
 
