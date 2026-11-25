@@ -31,6 +31,7 @@ from capstone.arm64 import ARM64_OP_MEM
 
 from convert_vehicle_packs import REGIONS, load_sources, system_lists
 from native_replay import XREGS, NativeSandbox, ReplayError
+from unicorn import UC_HOOK_MEM_FETCH_UNMAPPED
 from unicorn.arm64_const import UC_ARM64_REG_PC
 from pack_census import census
 from toyota_entries import EntryIndex
@@ -290,65 +291,107 @@ def _library_of(native, address):
     return None, None
 
 
-def fault_context(native):
-    """Never raises: a stop-context failure must not hide the stop itself."""
-    try:
-        return _fault_context(native)
-    except Exception:
-        return None
+class FaultTap:
+    """Snapshot the machine at an invalid fetch; the tap itself never raises.
 
-
-def _fault_context(native):
-    """Caller and jump slot of a fault, read from the stopped sandbox (never inferred).
-
-    The call target was 0, so the return address in X30 names the caller; the branch
-    instruction and the load that produced the register are disassembled from the
-    caller's own bytes. A resolved symbol means the slot is a named cell/import.
+    Reading registers after the error returns is not relied on: Unicorn reports the
+    invalid fetch to this hook first, with the null target already in PC.
     """
+
+    def __init__(self, native):
+        self.native = native
+        self.record = None
+        native.uc.hook_add(UC_HOOK_MEM_FETCH_UNMAPPED, self._on_fetch)
+
+    def _on_fetch(self, uc, access, address, size, value, _):
+        try:
+            registers = [uc.reg_read(register) for register in XREGS]
+            self.record = {"fetchAddress": address, "pc": uc.reg_read(UC_ARM64_REG_PC),
+                           "linkRegister": registers[30], "registers": registers}
+        except Exception as error:
+            self.record = {"error": f"{type(error).__name__}: {error}"}
+        return False
+
+    def take(self):
+        record, self.record = self.record, None
+        return record
+
+
+def _code_at(native, address, after=4):
+    """Instructions ending at the caller, in the longest run the mapping allows.
+
+    A caller near the start of its page makes a long read fail, so shorter windows are
+    tried; four bytes are always enough to decode the branch itself.
+    """
+    disassembler = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    disassembler.detail = True
+    for before in (48, 36, 24, 16, 8, 4):
+        start = address - before
+        if start < 0:
+            continue
+        try:
+            code = native.read(start, before + after)
+        except Exception:
+            continue
+        return list(disassembler.disasm(code, start))
+    return []
+
+
+def fault_context(native, record):
+    """Decode the snapshot; a decoding failure is reported as a field, never raised."""
     try:
-        pc = native.uc.reg_read(UC_ARM64_REG_PC)
-        lr = native.uc.reg_read(XREGS[30])
-    except Exception:
+        return _fault_context(native, record)
+    except Exception as error:
+        return {"decodeError": f"{type(error).__name__}: {error}",
+                "linkRegister": (record or {}).get("linkRegister")}
+
+
+def _fault_context(native, record):
+    """Caller, branch and jump slot of a null fetch, decoded from the fault snapshot.
+
+    Returns a dict even when only part of the picture is available; a missing field is
+    reported as a missing field, never filled in.
+    """
+    if not record:
         return None
-    library, offset = _library_of(native, lr)
-    context = {"pc": pc, "caller": lr,
-               "callerLibrary": library, "callerOffset": None if offset is None else hex(offset)}
-    try:
-        windows = list(Cs(CS_ARCH_ARM64, CS_MODE_ARM).disasm(native.read(lr - 64, 68), lr - 64))
-    except Exception:
-        windows = []
-    branch = None
-    for item in windows:
-        if item.address < lr and item.mnemonic in ("blr", "br", "blraa", "blrab"):
-            branch = item
-    if branch is None:
-        context["branch"] = None
+    context = {"pc": record.get("pc"), "fetchAddress": record.get("fetchAddress"),
+               "linkRegister": record.get("linkRegister")}
+    if record.get("error"):
+        context["error"] = record["error"]
         return context
-    register = branch.op_str.split(",")[0].strip() if branch.op_str else ""
-    value = _register_value(native, register)
+    registers = record.get("registers") or []
+    if len(registers) < 31:
+        return context
+    caller = record.get("linkRegister")
+    library, offset = _library_of(native, caller)
+    context.update({"caller": caller, "callerLibrary": library,
+                    "callerOffset": None if offset is None else hex(offset)})
+    instructions = _code_at(native, caller)
+    branch = next((item for item in reversed(instructions) if item.mnemonic in ("blr", "br")), None)
+    if branch is None:
+        return context
+    operands = list(branch.operands)
+    register_name = branch.reg_name(operands[0].reg) if operands else ""
+    register_index = int(register_name[1:]) if register_name[:1] == "x" and register_name[1:].isdigit() else None
     context.update({"branch": f"{branch.mnemonic} {branch.op_str}", "branchAddress": hex(branch.address),
-                    "branchRegister": register, "branchRegisterValue": value,
-                    "branchOffsetInLibrary": None if offset is None else hex(branch.address -
-                                                                           native.libraries[library].base)})
-    # The load that filled the branch register identifies the cell it came from.
-    for item in reversed([entry for entry in windows if entry.address < branch.address]):
-        if item.mnemonic.startswith("ldr") and register in item.op_str.split("[")[0]:
-            operands = list(item.operands)
-            memory = next((op for op in operands if op.type == ARM64_OP_MEM), None)
-            if memory is None:
-                break
-            base = None
-            if memory.mem.base:
-                base_name = item.reg_name(memory.mem.base)
-                base = _register_value(native, base_name)
-            if base is None:
-                context["slotLoad"] = f"{item.mnemonic} {item.op_str}"
-                break
-            slot = (base + memory.mem.disp) & 0xFFFFFFFFFFFFFFFF
-            context.update({"slotLoad": f"{item.mnemonic} {item.op_str}",
-                            "slotAddress": hex(slot),
-                            "slotSymbol": _slot_index(native).get(slot)})
+                    "branchOffsetInLibrary": (hex(branch.address - native.libraries[library].base)
+                                              if library in native.libraries else None),
+                    "branchRegister": register_name, "branchRegisterValue":
+                        registers[register_index] if register_index is not None and register_index < 31 else None})
+    for item in reversed([entry for entry in instructions if entry.address < branch.address]):
+        if not item.mnemonic.startswith("ldr") or register_name not in item.op_str.split("[")[0]:
+            continue
+        memory = next((op for op in item.operands if op.type == ARM64_OP_MEM), None)
+        if memory is None:
+            continue
+        base_name = item.reg_name(memory.mem.base) if memory.mem.base else ""
+        base_index = int(base_name[1:]) if base_name[:1] == "x" and base_name[1:].isdigit() else None
+        context["slotLoad"] = f"{item.mnemonic} {item.op_str}"
+        if base_index is None or base_index >= 31:
             break
+        slot = (registers[base_index] + memory.mem.disp) & 0xFFFFFFFFFFFFFFFF
+        context.update({"slotAddress": hex(slot), "slotSymbol": _slot_index(native).get(slot)})
+        break
     return context
 
 
@@ -450,6 +493,7 @@ def exploratory_run(libraries, sources, chosen, entries, index, limit=32):
     """Re-run the native setup with the CAN hook returning success (explicit stand-in)."""
     native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(
         libraries, sources, can_success=0)
+    FaultTap(native)
     rows = []
     for key in chosen:
         if len(rows) >= limit:
@@ -464,11 +508,13 @@ def exploratory_run(libraries, sources, chosen, entries, index, limit=32):
     return rows
 
 
-def probe_tuple(native, files, handle, context, global_state, trace, index, rid, function, entry):
+def probe_tuple(native, files, handle, context, global_state, trace, index, rid, function, entry, tap=None):
     """Run the native system-entry dispatch for one exact tuple; record, never infer."""
     row = index.regions.get(rid, {}).get(function)
     if row is None:
         return {"status": "blocked", "reason": "no exact SYSTEMENTER region/function directory row"}
+    if tap is not None:
+        tap.take()
     native.write(context, bytes(0x20000))
     if native.call("libTOYOTA_FILE.so", "GetInfoFromEnterList", handle, row["listOffset"],
                    entry.descriptor, context) != 0:
@@ -479,8 +525,10 @@ def probe_tuple(native, files, handle, context, global_state, trace, index, rid,
     try:
         status = signed16(native.call("libTOYOTA_SYSP.so", "SystemEnterPart", function, context))
     except ReplayError as error:
-        context = fault_context(native) if "fetch" in str(error).lower() else None
-        return {"status": "blocked", "reason": str(error), "calls": list(trace), "fault": context}
+        record = tap.take() if tap is not None else None
+        fault = fault_context(native, record) if record else None
+        return {"status": "blocked", "reason": str(error), "calls": list(trace), "fault": fault,
+                "faultRecord": record}
     return {"status": "traced", "nativeStatus": status, "calls": list(trace)}
 
 
@@ -550,15 +598,16 @@ def build(args):
     probe_error = None
     try:
         native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(libraries, sources)
+        tap = FaultTap(native)
     except (ReplayError, ValueError, KeyError, MemoryError) as error:
         # A sandbox limitation is reported as the literal blocker, never as a silent gap.
         probe_error = f"{type(error).__name__}: {error}"
-        native, bound, linked, unlinked = None, {}, {}, {}
+        native, bound, linked, unlinked, tap = None, {}, {}, {}, None
     rows, verdicts, stopped = [], collections.Counter(), collections.Counter()
     status_hist, call_hist = collections.Counter(), collections.Counter()
     api_hist = collections.Counter(); examples = []
     memory_hist = collections.Counter()
-    fault_groups = collections.Counter(); fault_contexts = {}; window_records = []
+    fault_groups = collections.Counter(); fault_contexts = {}; window_records = []; fault_errors = collections.Counter()
     for key in chosen:
         rid, function, selector = key
         entry = entries[key]
@@ -571,7 +620,7 @@ def build(args):
         else:
             try:
                 native_result = probe_tuple(native, files, handle, context, global_state, trace,
-                                            index, rid, function, entry)
+                                            index, rid, function, entry, tap)
             except Exception as error:  # one tuple can never abort the sweep
                 native_result = {"status": "blocked", "reason": f"{type(error).__name__}: {error}"}
         item["oraclePath"] = oracle
@@ -591,6 +640,10 @@ def build(args):
             api_hist[call["api"]] += 1
         for match in item["memoryMatches"]:
             memory_hist[f"{match['api']}[{match['argumentIndex']}]={match['sourceField']}"] += 1
+        if native_result.get("faultRecord") and not native_result.get("fault"):
+            fault_errors["no fault context"] += 1
+        elif native_result.get("fault", {}).get("error"):
+            fault_errors[native_result["fault"]["error"]] += 1
         if native_result.get("fault"):
             item["fault"] = native_result["fault"]
             key = failure_group(native_result["fault"])
@@ -646,6 +699,8 @@ def build(args):
                                        "cause": fault_cause(fault_contexts[key])}
                                       for key, count in fault_groups.most_common()],
                       "faultTuples": sum(fault_groups.values()),
+                      "faultWithContext": sum(fault_groups.values()),
+                      "faultAnalysisErrors": dict(fault_errors),
                       "windowDecode": decode_windows(window_records),
                       "exploratory": {
                           "label": "exploratory, hook behavior is a stand-in, not vehicle evidence",
@@ -718,6 +773,10 @@ def markdown(payload):
     lines += ["### Fetch-at-0x0 stops (groups)", "",
               f"Grouped tuples: {probe.get('faultTuples')} in {len(fault_groups)} distinct contexts; "
               f"counts sum to {sum(group['tuples'] for group in fault_groups)}.", ""]
+    errors = probe.get("faultAnalysisErrors") or {}
+    missing = sum(errors.values())
+    if missing:
+        lines += [f"{missing} fetch stop(s) had no decodable context: {errors}.", ""]
     if fault_groups:
         lines += ["| caller library | caller offset | branch | register value | slot symbol | slot address | cause | tuples |",
                   "|---|---:|---|---:|---|---|---:|---:|"]
@@ -753,6 +812,8 @@ def markdown(payload):
               f"**{exploratory.get('label', 'exploratory')}**. CAN configuration hooks return "
               f"{exploratory.get('returnValue')} instead of 1; {exploratory.get('tuples')} tuples re-run.", "",
               f"- calls seen: {dict(calls_after) or 'none'}",
+              f"- native entry return values seen: "
+              f"{dict(collections.Counter(str(row.get('nativeStatus')) for row in rows))}",
               f"- tuples whose call sequence differs from the baseline three: {len(changed)}"]
     for row in changed[:3]:
         lines.append(f"- {row['region']}/{row['function']}/{row['selector']:#04x}: "

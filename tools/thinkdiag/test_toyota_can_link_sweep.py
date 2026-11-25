@@ -2,7 +2,7 @@ import struct
 import unittest
 
 from toyota_can_link_sweep import (address_evidence, can_tuples, classify, decode_windows,
-                                   failure_group, fault_cause, markdown, memory_matches, oracle_verdict,
+                                   failure_group, fault_cause, fault_context, markdown, memory_matches, oracle_verdict,
                                    probe_selection, reconciliation, window_candidates)
 from toyota_entries import EntryIndex
 
@@ -145,6 +145,99 @@ class WindowTest(unittest.TestCase):
                          fault_cause({"branchRegisterValue": 0, "slotSymbol": None}))
         self.assertEqual("jump target outside emulated memory", fault_cause({"branchRegisterValue": 0x40}))
         self.assertEqual("context unavailable", fault_cause(None))
+
+
+class FaultTapTest(unittest.TestCase):
+    """A real Unicorn null fetch: the tap snapshots it and the slot resolves by name."""
+
+    def test_a_emulated_null_fetch_yields_caller_branch_and_named_slot(self):
+        from unicorn import UC_ARCH_ARM64, UC_MODE_ARM, Uc
+        from unicorn.arm64_const import UC_ARM64_REG_X9
+        from toyota_can_link_sweep import FaultTap
+
+        class Library:
+            def __init__(self, base, symbols):
+                self.base, self.symbols = base, symbols
+
+        class Sandbox:
+            MAX_LIBRARY_SPAN = 32 * 1024 * 1024
+            libraries = {"libTOYOTA_COMM.so": Library(0x200000, {"GetBaseCanBusRecData": {"st_value": 0x18}})}
+
+            def __init__(self, machine):
+                self.uc = machine
+                self.read = lambda address, size: bytes(machine.mem_read(address, size))
+
+        base = 0x100000
+        machine = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
+        machine.mem_map(base, 0x1000)
+        machine.mem_map(0x200000, 0x1000)
+        machine.mem_write(base, FaultContextTest.CODE)
+        machine.reg_write(UC_ARM64_REG_X9, 0x200000)
+        sandbox = Sandbox(machine)
+        tap = FaultTap(sandbox)
+        with self.assertRaises(Exception):
+            machine.emu_start(base, base + 8)
+        context = fault_context(sandbox, tap.take())
+        self.assertEqual(0, context["pc"])
+        self.assertEqual(base + 8, context["caller"])
+        self.assertEqual("blr x8", context["branch"])
+        self.assertEqual(0, context["branchRegisterValue"])
+        self.assertEqual("0x200018", context["slotAddress"])
+        self.assertEqual("libTOYOTA_COMM.so:GetBaseCanBusRecData", context["slotSymbol"])
+        self.assertEqual("unlinked slot: named cell holding 0", fault_cause(context))
+
+
+class FaultContextTest(unittest.TestCase):
+    """The fault snapshot is decoded from bytes, with a stub standing in for the sandbox."""
+
+    CODE = struct.pack("<II", 0xF9400D28, 0xD63F0100)  # ldr x8, [x9, #0x18]; blr x8
+
+    def native(self):
+        memory = {0x1000: self.CODE}
+
+        class Library:
+            def __init__(self, base, symbols):
+                self.base, self.symbols = base, symbols
+
+        class Stub:
+            MAX_LIBRARY_SPAN = 32 * 1024 * 1024
+            libraries = {"libTOYOTA_SYSP.so": Library(0x1000, {"Caller": {"st_value": 0x10}}),
+                         "libTOYOTA_COMM.so": Library(0x2000, {"GetBaseCanBusRecData": {"st_value": 0x18}})}
+
+            @staticmethod
+            def read(address, size):
+                return b"".join(bytes(memory.get(page, b"\x1f\x20\x03\xd5"))
+                                for page in range(address, address + size))
+
+        return Stub()
+
+    def record(self, registers):
+        values = [0] * 31
+        for index, value in registers.items():
+            values[index] = value
+        return {"pc": 0, "fetchAddress": 0, "linkRegister": values[30], "registers": values}
+
+    def test_caller_branch_register_and_named_slot_are_decoded(self):
+        context = fault_context(self.native(), self.record({9: 0x2000, 30: 0x1008}))
+        self.assertEqual("libTOYOTA_SYSP.so", context["callerLibrary"])
+        self.assertEqual("0x8", context["callerOffset"])
+        self.assertEqual("blr x8", context["branch"])
+        self.assertEqual("x8", context["branchRegister"])
+        self.assertEqual(0, context["branchRegisterValue"])
+        self.assertEqual("0x2018", context["slotAddress"])
+        self.assertEqual("libTOYOTA_COMM.so:GetBaseCanBusRecData", context["slotSymbol"])
+        self.assertEqual("unlinked slot: named cell holding 0", fault_cause(context))
+
+    def test_a_non_zero_branch_register_is_not_called_an_unlinked_slot(self):
+        context = fault_context(self.native(), self.record({8: 0x4000, 9: 0x2000, 30: 0x1008}))
+        self.assertEqual(0x4000, context["branchRegisterValue"])
+        self.assertEqual("jump target outside emulated memory", fault_cause(context))
+
+    def test_a_tap_error_is_reported_not_hidden(self):
+        context = fault_context(self.native(), {"error": "RuntimeError: no state"})
+        self.assertEqual("RuntimeError: no state", context["error"])
+        self.assertIsNone(context["pc"])
+        self.assertIsNone(fault_context(self.native(), None))
 
 
 class SelectionTest(unittest.TestCase):
