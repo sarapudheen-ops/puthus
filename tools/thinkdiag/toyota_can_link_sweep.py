@@ -18,6 +18,7 @@ whose native setup stops on an unbound external call reports that literal symbol
 from __future__ import annotations
 
 import argparse
+import re
 import collections
 import hashlib
 import json
@@ -27,12 +28,12 @@ import traceback
 from pathlib import Path
 
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
-from capstone.arm64 import ARM64_OP_MEM
+from capstone.arm64 import ARM64_OP_MEM, ARM64_OP_REG
 
 from convert_vehicle_packs import REGIONS, load_sources, system_lists
 from native_replay import XREGS, NativeSandbox, ReplayError
-from unicorn import UC_HOOK_MEM_FETCH_UNMAPPED
-from unicorn.arm64_const import UC_ARM64_REG_PC
+from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_FETCH_UNMAPPED
+from unicorn.arm64_const import UC_ARM64_REG_NZCV, UC_ARM64_REG_PC, UC_ARM64_REG_SP
 from pack_census import census
 from toyota_entries import EntryIndex
 from toyota_entry_runtime import signed16
@@ -378,6 +379,10 @@ def _fault_context(native, record):
                                               if library in native.libraries else None),
                     "branchRegister": register_name, "branchRegisterValue":
                         registers[register_index] if register_index is not None and register_index < 31 else None})
+    preceding = []
+    for item in [entry for entry in instructions if branch.address - 32 <= entry.address < branch.address]:
+        preceding.append(f"{hex(item.address - native.libraries[library].base) if library in native.libraries else hex(item.address)} {item.mnemonic} {item.op_str}".strip())
+    context["preceding"] = preceding
     for item in reversed([entry for entry in instructions if entry.address < branch.address]):
         if not item.mnemonic.startswith("ldr") or register_name not in item.op_str.split("[")[0]:
             continue
@@ -584,6 +589,269 @@ def memory_matches(entry, calls):
     return observed
 
 
+def _segment_of(library, address):
+    """The PT_LOAD segment of a library covering a link-time address, or None."""
+    for segment in library.elf.iter_segments():
+        if segment["p_type"] != "PT_LOAD":
+            continue
+        if segment["p_vaddr"] <= address < segment["p_vaddr"] + segment["p_memsz"]:
+            return segment
+    return None
+
+
+def _provider(native, library_name, symbol_name, addend):
+    """Which supplied object defines what a relocation would store, if anything."""
+    if symbol_name:
+        owners = [f"{name}:{symbol_name} ({library.symbols[symbol_name]['st_info']['type']}, "
+                  f"size {library.symbols[symbol_name]['st_size']})"
+                  for name, library in native.libraries.items() if symbol_name in library.symbols]
+        return owners or [f"NOT ESTABLISHED: no supplied object defines {symbol_name}"]
+    if addend is None:
+        return ["NOT ESTABLISHED: relocation carries no addend"]
+    owners = [name for name, library in native.libraries.items() if _segment_of(library, addend)]
+    return [f"link-time address {addend:#x} inside {name}" for name in owners] or [
+        f"NOT ESTABLISHED: link-time address {addend:#x} inside no supplied object"]
+
+
+def elf_cell_report(native, address):
+    """What a cell is, read from the supplied ELF: section, symbol relation, relocation.
+
+    Reported literally: an exact symbol is not confused with a nearest one, and a
+    relocation that does not cover the cell is stated as absent rather than inferred.
+    """
+    for name, library in native.libraries.items():
+        if not library.base <= address < library.base + native.MAX_LIBRARY_SPAN:
+            continue
+        offset = address - library.base
+        report = {"library": name, "offset": hex(offset), "address": hex(address), "sections": []}
+        for section in library.elf.iter_sections():
+            start = section["sh_addr"]
+            if not start or not start <= offset < start + max(section["sh_size"], 1):
+                continue
+            item = {"name": section.name, "type": str(section["sh_type"]),
+                    "offsetInSection": hex(offset - start), "size": section["sh_size"]}
+            if section["sh_type"] != "SHT_NOBITS":
+                item["fileBytes"] = section.data()[offset - start:][:8].hex()
+            report["sections"].append(item)
+        symbols = library.symbols
+        report["exactSymbols"] = [symbol_name for symbol_name, symbol in symbols.items()
+                                  if symbol["st_value"] == offset]
+        covering = [(symbol_name, symbol) for symbol_name, symbol in symbols.items()
+                    if symbol["st_value"] <= offset < symbol["st_value"] + max(symbol["st_size"], 1)]
+        report["coveringSymbols"] = [{"name": symbol_name, "type": symbol["st_info"]["type"],
+                                     "size": symbol["st_size"],
+                                     "distance": hex(offset - symbol["st_value"])}
+                                    for symbol_name, symbol in covering]
+        preceding = [(symbol_name, symbol) for symbol_name, symbol in symbols.items()
+                     if symbol["st_value"] <= offset]
+        if preceding:
+            symbol_name, symbol = max(preceding, key=lambda item: item[1]["st_value"])
+            report["nearestSymbol"] = {"name": symbol_name, "type": symbol["st_info"]["type"],
+                                       "size": symbol["st_size"], "stValue": hex(symbol["st_value"]),
+                                       "distance": hex(offset - symbol["st_value"])}
+            if symbol["st_value"] + max(symbol["st_size"], 1) <= offset:
+                report["nearestSymbol"]["note"] = "nearest only: its size does not reach the cell"
+        relocations = [{"type": reloc["r_info_type"], "offset": hex(reloc["r_offset"]),
+                        "addend": (reloc["r_addend"]
+                                   if "r_addend" in getattr(reloc, "entry", {"r_addend": 0}) else None),
+                        "symbol": relocation_symbol.name if relocation_symbol else None}
+                       for reloc, relocation_symbol in library.relocations
+                       if reloc["r_offset"] == offset]
+        report["relocations"] = relocations
+        providers = []
+        for relocation in relocations:
+            providers += _provider(native, name, relocation["symbol"], relocation["addend"])
+        if not relocations:
+            report["provider"] = ["NOT ESTABLISHED: no supplied provider - no relocation covers the cell"]
+        else:
+            report["provider"] = providers
+        return report
+    return {"library": None, "offset": None, "address": hex(address),
+            "sections": [], "relocations": [],
+            "provider": ["NOT ESTABLISHED: the address lies inside no supplied object"]}
+
+
+def _mapping(native, address):
+    """Which emulated region an address belongs to; "unmapped" is reported as such."""
+    for name, library in native.libraries.items():
+        if library.base <= address < library.base + native.MAX_LIBRARY_SPAN:
+            return name
+    for region, low, size in (("stack", native.STACK, native.STACK_BYTES),
+                              ("heap", native.HEAP, native.HEAP_BYTES),
+                              ("tls", native.TLS, 4096), ("shims", native.SHIMS, native.SHIM_BYTES)):
+        if low <= address < low + size:
+            return region
+    return "unmapped"
+
+
+def _register_index(name, limit):
+    """Index into the captured register tuple: x0-x9, then sp."""
+    if name == "sp":
+        return 10 if limit > 10 else None
+    if name[:1] in ("x", "w") and name[1:].isdigit():
+        index = int(name[1:])
+        return index if index < min(limit, 10) else None
+    return None
+
+
+def annotate_steps(native, steps, length=60):
+    """One line per executed instruction: offset, text, flow, operand values and sources."""
+    disassembler = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    disassembler.detail = True
+    rows = []
+    for position, (address, registers, flags) in enumerate(steps):
+        try:
+            instruction = next(iter(disassembler.disasm(native.read(address, 4), address)))
+            text = f"{instruction.mnemonic} {instruction.op_str}".strip()
+        except Exception:
+            instruction, text = None, "(undecodable)"
+        library, offset = _library_of(native, address)
+        flow = "-"
+        if position + 1 < len(steps):
+            flow = "falls through" if steps[position + 1][0] == address + 4 else "TAKEN"
+            if instruction is None or not text.startswith(("b", "cb", "tb")):
+                flow = "next=" + ("+4" if flow == "falls through" else hex(steps[position + 1][0]))
+        values = []
+        if instruction is not None:
+            for operand in instruction.operands:
+                if operand.type == ARM64_OP_REG:
+                    index = _register_index(instruction.reg_name(operand.reg), len(registers))
+                    if index is not None:
+                        values.append(f"{instruction.reg_name(operand.reg)}={registers[index]:#x}")
+                elif operand.type == ARM64_OP_MEM:
+                    index = _register_index(instruction and
+                                            (instruction.reg_name(operand.mem.base) if operand.mem.base else ""),
+                                            len(registers))
+                    if index is not None:
+                        target = (registers[index] + operand.mem.disp) & 0xFFFFFFFFFFFFFFFF
+                        values.append(f"[{target:#x} {_mapping(native, target)}]")
+        if native.SHIMS <= address < native.SHIMS + native.SHIM_BYTES:
+            hook = getattr(native, "hooks", {}).get(address)
+            if hook is not None:
+                values.append(f"(shim for {hook[0]})")
+        rows.append({"offset": f"{library}+{hex(offset)}" if library else hex(address),
+                     "text": text, "flow": flow, "values": " ".join(values),
+                     "flags": f"nzcv={flags:#x}" if text.startswith(("cmp", "tst", "b.", "cb", "tb")) else ""})
+    return rows
+
+
+def instruction_tail(libraries, sources, keys, entries, index, length=60):
+    """The last `length` instructions before the guest returns, in two cheap passes.
+
+    Pass one records addresses only, so the sandbox stays inside its instruction/time
+    budget; pass two re-runs identically and snapshots registers at exactly those
+    addresses. Determinism is what makes the pair valid, and both passes are replayed
+    from the same inputs.
+    """
+    addresses = {}
+    native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(libraries, sources)
+    FaultTap(native)
+    ring = collections.deque(maxlen=length)
+
+    def on_address(uc, address, size, _):
+        ring.append(address)
+
+    hook = native.uc.hook_add(UC_HOOK_CODE, on_address)
+    try:
+        for key in keys:
+            ring.clear()
+            result = probe_tuple(native, files, handle, context, global_state, trace,
+                                index, key[0], key[1], entries[key])
+            addresses[key] = {"addresses": list(ring), "status": result["status"],
+                              "nativeStatus": result.get("nativeStatus"),
+                              "calls": setup_calls(result.get("calls", [])),
+                              "reason": result.get("reason")}
+    finally:
+        native.uc.hook_del(hook)
+
+    rows = []
+    native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(libraries, sources)
+    FaultTap(native)
+    snapshots = collections.deque(maxlen=length)
+    wanted = set()
+
+    def on_snapshot(uc, address, size, _):
+        if address not in wanted:
+            return
+        try:
+            snapshots.append((address, tuple(uc.reg_read(register) for register in XREGS[:10])
+                              + (uc.reg_read(UC_ARM64_REG_SP),), uc.reg_read(UC_ARM64_REG_NZCV)))
+        except Exception:
+            pass
+
+    hook = native.uc.hook_add(UC_HOOK_CODE, on_snapshot)
+    try:
+        for key in keys:
+            wanted = set(addresses[key]["addresses"])
+            snapshots.clear()
+            result = probe_tuple(native, files, handle, context, global_state, trace,
+                                index, key[0], key[1], entries[key])
+            rows.append({"region": REGION_NAMES[key[0]], "function": key[1], "selector": key[2],
+                         "status": result["status"], "nativeStatus": result.get("nativeStatus"),
+                         "calls": setup_calls(result.get("calls", [])),
+                         "reason": result.get("reason"),
+                         "reproduced": [address for address in addresses[key]["addresses"]] ==
+                                       [step[0] for step in snapshots],
+                         "steps": annotate_steps(native, list(snapshots))})
+    finally:
+        native.uc.hook_del(hook)
+    return rows
+
+
+def trace_selection(rows, count=3):
+    """The heaviest replayed tuple in each of the heaviest census classes, for the tail."""
+    best = {}
+    for row in rows:
+        if row["status"] != "traced" or row.get("nativeStatus") != -1:
+            continue
+        key = (row["region"], row["transport"], row["selector"])
+        systems_of_row = row["systems"]
+        if key not in best or systems_of_row > best[key]["systems"]:
+            best[key] = row
+    ordered = sorted(best.values(), key=lambda row: (-row["systems"], row["region"], row["function"]))
+    return [(REGION_IDS[row["region"]], row["function"], row["selector"]) for row in ordered[:count]]
+
+
+PROVIDER = re.compile(r"(?P<library>[A-Za-z0-9_.-]+\.so):(?P<symbol>\S+) \((?P<type>STT_[A-Z]+), size (?P<size>\d+)\)")
+
+
+def provider_symbol(cell):
+    """The supplied function a relocation names, when the ELF analysis found one."""
+    for entry in (cell or {}).get("provider") or []:
+        match = PROVIDER.fullmatch(entry)
+        if match and match.group("type") == "STT_FUNC" and int(match.group("size")) >= 4:
+            return match.group("library"), match.group("symbol")
+    return None
+
+
+def link_exploratory(libraries, sources, cell, keys, entries, index, limit=32):
+    """Exploratory only: store a supplied function into the null cell and re-run.
+
+    Runs only when the ELF names a supplied provider. It is a stand-in measurement of
+    what the guest would do with the slot filled; it is not vehicle evidence.
+    """
+    provider = provider_symbol(cell)
+    if provider is None:
+        return {"label": "exploratory, not vehicle evidence", "skipped":
+                "no supplied provider fills the cell: " + "; ".join((cell or {}).get("provider") or
+                                                                    ["no ELF analysis available"])}
+    library, symbol = provider
+    native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(libraries, sources)
+    FaultTap(native)
+    slot = int(cell["address"], 16)
+    target = native.symbol(library, symbol)
+    native.write(slot, struct.pack("<Q", target))
+    rows = []
+    for key in keys[:limit]:
+        rid, function, selector = key
+        result = probe_tuple(native, files, handle, context, global_state, trace, index, rid, function, entries[key])
+        rows.append({"region": REGION_NAMES[rid], "function": function, "selector": selector,
+                     "status": result["status"], "nativeStatus": result.get("nativeStatus"),
+                     "calls": setup_calls(result.get("calls", [])), "reason": result.get("reason")})
+    return {"label": "exploratory, not vehicle evidence", "linked": f"{library}:{symbol}",
+            "cell": cell["address"], "tuples": len(rows), "rows": rows}
+
+
 def classify(entry, oracle, native):
     """matched / mismatched need a source expectation; the transport-1/5 class is the only one."""
     if oracle["status"] == "projected_transport_class":
@@ -673,6 +941,31 @@ def build(args):
         if time.monotonic() - started > PROBE_SECONDS:
             stopped["probe time budget exhausted"] += 1
             break
+    slot = next((context["slotAddress"] for context in fault_contexts.values()
+                 if context.get("slotAddress")), None)
+    cell = elf_cell_report(native, int(slot, 16)) if native is not None and slot else None
+    link = {"label": "exploratory, not vehicle evidence",
+            "skipped": ("no supplied provider fills the cell: " + "; ".join(cell["provider"])
+                        if cell else "no ELF analysis of the null slot was available")}
+    if native is not None and cell and provider_symbol(cell):
+        stopped_keys = [key for key, row in zip(chosen, rows)
+                        if (row["nativeSetup"].get("fault") or {}).get("slotAddress") == cell["address"]]
+        try:
+            link = link_exploratory(libraries, sources, cell, stopped_keys, entries, index)
+        except Exception as error:
+            link = {"label": "exploratory, not vehicle evidence",
+                    "skipped": f"{type(error).__name__}: {error}"}
+    tails = []
+    if native is not None:
+        candidates = [{"region": REGION_NAMES[key[0]], "transport": entries[key].transport,
+                       "selector": key[2], "function": key[1], "systems": systems[key],
+                       "status": row["nativeSetup"]["status"],
+                       "nativeStatus": row["nativeSetup"].get("nativeStatus")}
+                      for key, row in zip(chosen, rows)]
+        try:
+            tails = instruction_tail(libraries, sources, trace_selection(candidates), entries, index)
+        except Exception as error:
+            tails = [{"status": "blocked", "reason": f"{type(error).__name__}: {error}"}]
     exploratory = []
     if native is not None:
         try:
@@ -709,6 +1002,7 @@ def build(args):
                       "faultTuples": sum(fault_groups.values()),
                       "faultWithContext": sum(fault_groups.values()),
                       "faultAnalysisErrors": dict(fault_errors),
+                      "stage3c": {"cell": cell, "tails": tails, "link": link},
                       "windowDecode": decode_windows(window_records),
                       "exploratory": {
                           "label": "exploratory, hook behavior is a stand-in, not vehicle evidence",
@@ -809,6 +1103,69 @@ def markdown(payload):
               f"argument, which the baseline probe sets to 1 for every CAN hook — a hook can therefore never "
               f"produce -1. The value is the guest's own X0 return from `SystemEnterPart`, read at "
               f"`toyota_can_link_sweep.py:{call_line}` via `signed16(...)`."]
+    stage3c = probe.get("stage3c")
+    cell = (stage3c or {}).get("cell")
+    if stage3c:
+        lines += ["", "## Stage 3c — the cell behind the null slot, and the -1 decision", ""]
+        if cell:
+            lines += ["### The cell, from the supplied ELF", "",
+                      f"Address `{cell['address']}` = `{cell['library']}+{cell['offset']}`.", ""]
+            for section in cell["sections"]:
+                lines.append(f"- section: `{section['name']}` ({section['type']}), offset in section "
+                             f"`{section['offsetInSection']}`, size {section['size']}, "
+                             f"file bytes: `{section.get('fileBytes', 'none (SHT_NOBITS)')}`")
+            if not cell["sections"]:
+                lines.append("- section: no section covers the cell")
+            lines.append(f"- exact symbol at the cell: {cell['exactSymbols'] or 'none'}")
+            lines.append(f"- covering symbols: {cell['coveringSymbols'] or 'none'}")
+            nearest = cell.get("nearestSymbol")
+            if nearest:
+                lines.append(f"- nearest preceding symbol: `{nearest['name']}` ({nearest['type']}, "
+                             f"size {nearest['size']}) at `{nearest['stValue']}`, {nearest['distance']} "
+                             f"before the cell" + (f"; {nearest['note']}" if nearest.get("note") else ""))
+            else:
+                lines.append("- nearest preceding symbol: none")
+            lines.append(f"- relocations with `r_offset` at the cell: {cell['relocations'] or 'none'}")
+            lines.append(f"- who fills it: {'; '.join(cell['provider'])}")
+            faulted = (probe.get("faultGroups") or [{}])[0].get("context") or {}
+            if faulted.get("preceding"):
+                lines += ["", "Instructions before the `blr` (offsets inside the caller's object):", "",
+                          "```text"]
+                lines += [f"  {text}" for text in
+                          faulted["preceding"] + [f"{faulted.get('callerOffset')} {faulted.get('branch')}"]]
+                lines += ["```"]
+        link = stage3c.get("link") or {}
+        lines += ["", "### Exploratory slot link — **exploratory, not vehicle evidence**", ""]
+        if not link.get("linked"):
+            lines += [f"Step 3 skipped on literal evidence: "
+                      f"{link.get('skipped') or 'no link run recorded in this report'}"]
+        else:
+            calls = collections.Counter(call["api"] for row in link.get("rows", []) for call in row["calls"])
+            lines += [f"Linked the cell `{link['cell']}` to `{link['linked']}` in a separate sandbox; "
+                      f"{link['tuples']} stop tuples re-run.", "",
+                      f"- calls seen: {dict(calls) or 'none'}",
+                      f"- statuses: {dict(collections.Counter(str(row['status']) for row in link.get('rows', [])))}"]
+            for row in link.get("rows", []):
+                if len(row["calls"]) > 3:
+                    lines.append(f"- {row['region']}/{row['function']}/{row['selector']:#04x}: "
+                                 + "; ".join(f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
+                                             for call in row["calls"]))
+        tails = stage3c.get("tails") or []
+        lines += ["", "### The last instructions before `SystemEnterPart` returns", ""]
+        for tail in tails:
+            if "steps" not in tail:
+                lines += [f"- {tail.get('reason', 'unavailable')}", ""]
+                continue
+            lines += [f"**{tail['region']}/{tail['function']}/{tail['selector']:#04x}** — status "
+                      f"`{tail['status']}`, native return `{tail['nativeStatus']}`, "
+                      f"hook calls: {[call['api'] for call in tail['calls']] or 'none'}, "
+                      f"second pass reproduced the address sequence: `{tail.get('reproduced')}`",
+                      "", "```text",
+                      "idx offset                  instruction                    flow          values / source"]
+            for position, step in enumerate(tail["steps"]):
+                lines.append(f"{position:3d} {step['offset']:>22s}  {step['text']:<30s} {step['flow']:<13s} "
+                             f"{step['values']} {step['flags']}".rstrip())
+            lines += ["```", ""]
     exploratory = probe.get("exploratory") or {}
     rows = exploratory.get("rows") or []
     changed = [row for row in rows if row.get("status") == "traced" and
