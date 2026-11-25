@@ -23,6 +23,7 @@ import hashlib
 import json
 import struct
 import time
+import traceback
 from pathlib import Path
 
 from convert_vehicle_packs import REGIONS, load_sources, system_lists
@@ -348,7 +349,7 @@ def build(args):
             try:
                 native_result = probe_tuple(native, files, handle, context, global_state, trace,
                                             index, rid, function, entry)
-            except (ReplayError, AssertionError, MemoryError) as error:
+            except Exception as error:  # one tuple can never abort the sweep
                 native_result = {"status": "blocked", "reason": f"{type(error).__name__}: {error}"}
         item["oraclePath"] = oracle
         item["nativeSetup"] = native_result
@@ -483,11 +484,21 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=PROBE_LIMIT)
     args = parser.parse_args()
-    payload = build(args)
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / "can-link-sweep.json").write_bytes(canonical(payload) + b"\n")
-    (args.output / "can-link-sweep.md").write_text(markdown(payload))
-    print(markdown(payload))
+    try:
+        payload = build(args)
+        text = markdown(payload)
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "can-link-sweep.json").write_bytes(canonical(payload) + b"\n")
+        (args.output / "can-link-sweep.md").write_text(text)
+        print(text)
+    except Exception:
+        # The check-run publisher reads this file, so a failure is reported with its
+        # literal traceback instead of only living in a job log.
+        args.output.mkdir(parents=True, exist_ok=True)
+        detail = traceback.format_exc()
+        (args.output / "can-link-sweep.md").write_text(
+            "# CAN link sweep failed\n\n```text\n" + detail[-4000:] + "\n```\n")
+        raise
 
 
 if __name__ == "__main__":

@@ -190,8 +190,9 @@ jobs:
             .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json \
             --output .local/thinkdiag/report
           cat .local/thinkdiag/report/code1-link-evidence-summary.md
-      # Stage 3a evidence step: read-only census plus the native setup probe. It writes
-      # no pack, APK or validator output; the next step publishes its report.
+      # Stage 3a evidence step: read-only census plus the native setup probe over native
+      # transport codes 3 and 4. It writes no pack, APK or validator output, and the next
+      # step publishes whatever report it produced, including a failure traceback.
       - name: Sweep native transport codes 3 and 4 (CAN) read-only
         id: stage3a_can_sweep
         timeout-minutes: 20
