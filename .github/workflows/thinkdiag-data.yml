@@ -3,6 +3,9 @@ name: Inspect Toyota release data
 # Stage 3b head note: no step, input or permission changes here; the sweep step now
 # also records stop contexts, a labelled stand-in re-run and a per-class window decode
 # in its own report. Nothing is enabled and no validator or pack input changes.
+# Stage 3c head note: the same step now also reports the ELF identity of the null cell
+# and the last 60 instructions before the guest returns. Steps, inputs and permissions
+# are unchanged and nothing is enabled.
 
 on:
   workflow_dispatch:

@@ -525,6 +525,45 @@ supplies that name.
 232 stop tuples), (4) the `-1` return before any transport call (744), (5) nine unjoined
 SYSP cells, (6) NA Can3 selector 98 (5 systems).
 
+## Stage 3c — the null cell and the −1 branch
+
+Read-only continuation of Stage 3b; same pin, nothing enabled. Baseline: main `c6c6728`,
+release-data run 45546724523 success, 13 of 14 masked steps success plus the accepted
+`publish_stage0_report` failure.
+
+**The cell.** `0x1006ec88` is `libTOYOTA_COMM.so+0x6ec88`, inside `.bss` (SHT_NOBITS,
+offset `0x13c48` of a 158,280-byte section), and `CheckXOR` is an **exact** symbol there
+(STT_OBJECT, size 8, distance 0) — not a nearest-symbol guess. **No relocation has
+`r_offset` at the cell** and no supplied object defines a name a relocation would store
+into it: `NOT ESTABLISHED: no supplied provider`. It is a zero-initialised data cell,
+not a GOT slot, vtable entry or import.
+
+**The call before the null branch** (quoted from the fault snapshot,
+`toyota_can_link_sweep.py:384`): `strb w21,[sp,#7]` … `mov x9, sp` (`0x1a264`),
+`orr x0, x9, #2` (`0x1a268`), `mov w1, #0xe` (`0x1a26c`), `blr x8` (`0x1a274`). The guest
+hands a stack buffer (`sp|2`) and length 14 to whatever the cell holds, and it holds 0.
+
+**The −1 decision, traced for EU/121/0x12, EU/124/0x22 and NA/85/0x12** (three census
+classes, last 60 instructions each, second pass reproducing the address sequence):
+`CanSetParameterNormal` answers through the shim at `0x63000002d0`
+(`COMM+0x18f2c blr x8`), the recorder returns 1, `COMM+0x18f30 tst w0,#0xff` sets
+NZCV=0x60000000, `COMM+0x18f34 cset w20,ne` returns 1 to SYSP, then
+`SYSP+0x10fe8 and w8,w0,#0xffff` / `SYSP+0x10fec cbnz w8,#0x110b8` is **taken** and
+`SYSP+0x110b8 mov w0,#0xffff` returns 0xffff, i.e. −1 through `signed16`. The compared
+value is **our stand-in return of 1** — not a data-row field, not an unmapped read; the
+guest treats a non-zero `CanSetParameterNormal` result as failure.
+
+**Step 3 skipped:** the ELF names no supplied provider, so no slot was linked and no
+transport call was gained; the sweep reports that literal reason. Stage 3b's stand-in run
+shows the complementary direction — with 0 returned the guest walks further and dies on
+the same null cell.
+
+**What still blocks CAN links, by systems unlocked:** (1) `CheckXOR` has no supplied
+filler (232 tuples), (2) the guest rejects the non-zero stand-in return, so nothing after
+`CanSetParameterNormal` is reached (744), (3) no CAN-class source projection (245,356),
+(4) no identifier source (245,356), (5) nine unjoined SYSP cells, (6) NA Can3 selector 98
+(5 systems).
+
 ## Evidence audit / next work
 
 CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `review_direct21` (`toyota_runtime_compile.py:114-145`), then `toyota_ecmect_pack.data_for` injects the 30 reviewed `liveReads` (`toyota_ecmect_pack.py:160-173`). Direct21 review items are disabled candidates (`toyota_live.py:313-318`). DTC/ECU-info definitions come from the same pinned compiler artifact (`toyota_runtime_compile.py:142-145`, `toyota_ecmect_pack.py:160-173`); `test_ecmect_pack.py` verifies 30/1,414/1 against the selected pack, and `verify_source_read_review` checks a deterministic compiler-output pin (`toyota_runtime_compile.py:173-220`, `tools/thinkdiag/schema/mandatory-read-artifacts-v1.json`). This is source/compiler regression evidence, not a native replay of emitted category records. **No oracle for non-ECMECT PID, DTC, or ecuInfo output is established.** No human sign-off hash is established beyond source/artifact SHA pins. Mode B must remain candidate-parse, not enabling.

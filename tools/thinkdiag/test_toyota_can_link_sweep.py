@@ -235,6 +235,7 @@ class TailTest(unittest.TestCase):
             STACK, STACK_BYTES = 0x6000000000, 4096
             HEAP, HEAP_BYTES = 0x6100000000, 4096
             TLS, SHIMS, SHIM_BYTES = 0x6200000000, 0x6300000000, 4096
+            hooks = {0x6300000008: ("CanSetParameterNormal", None)}
 
             @staticmethod
             def read(address, size):
@@ -250,6 +251,10 @@ class TailTest(unittest.TestCase):
         self.assertEqual("next=0x1008", rows[0]["flow"])
         self.assertEqual("ret", rows[1]["text"])
         self.assertEqual("-", rows[1]["flow"])
+
+    def test_a_shim_step_names_the_hook_that_answered(self):
+        rows = annotate_steps(self.native(), [(0x6300000008, (1,) + (0,) * 10, 0)])
+        self.assertIn("(shim for CanSetParameterNormal)", rows[0]["values"])
 
     def test_the_tail_selection_takes_the_heaviest_tuple_of_each_class(self):
         rows = [{"region": "EU", "transport": 3, "selector": 0x12, "function": 121, "systems": 4065,

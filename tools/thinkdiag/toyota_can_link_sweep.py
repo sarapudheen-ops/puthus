@@ -725,6 +725,10 @@ def annotate_steps(native, steps, length=60):
                     if index is not None:
                         target = (registers[index] + operand.mem.disp) & 0xFFFFFFFFFFFFFFFF
                         values.append(f"[{target:#x} {_mapping(native, target)}]")
+        if native.SHIMS <= address < native.SHIMS + native.SHIM_BYTES:
+            hook = getattr(native, "hooks", {}).get(address)
+            if hook is not None:
+                values.append(f"(shim for {hook[0]})")
         rows.append({"offset": f"{library}+{hex(offset)}" if library else hex(address),
                      "text": text, "flow": flow, "values": " ".join(values),
                      "flags": f"nzcv={flags:#x}" if text.startswith(("cmp", "tst", "b.", "cb", "tb")) else ""})
@@ -941,7 +945,8 @@ def build(args):
                  if context.get("slotAddress")), None)
     cell = elf_cell_report(native, int(slot, 16)) if native is not None and slot else None
     link = {"label": "exploratory, not vehicle evidence",
-            "skipped": "no ELF analysis of the null slot was available"}
+            "skipped": ("no supplied provider fills the cell: " + "; ".join(cell["provider"])
+                        if cell else "no ELF analysis of the null slot was available")}
     if native is not None and cell and provider_symbol(cell):
         stopped_keys = [key for key, row in zip(chosen, rows)
                         if (row["nativeSetup"].get("fault") or {}).get("slotAddress") == cell["address"]]
