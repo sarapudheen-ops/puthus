@@ -2,7 +2,8 @@ import struct
 import unittest
 
 from toyota_can_link_sweep import (address_evidence, can_tuples, classify, decode_windows,
-                                   failure_group, fault_cause, fault_context, markdown, memory_matches, oracle_verdict,
+                                   annotate_steps, elf_cell_report, failure_group, fault_cause, fault_context,
+                                   markdown, provider_symbol, trace_selection, memory_matches, oracle_verdict,
                                    probe_selection, reconciliation, window_candidates)
 from toyota_entries import EntryIndex
 
@@ -145,6 +146,121 @@ class WindowTest(unittest.TestCase):
                          fault_cause({"branchRegisterValue": 0, "slotSymbol": None}))
         self.assertEqual("jump target outside emulated memory", fault_cause({"branchRegisterValue": 0x40}))
         self.assertEqual("context unavailable", fault_cause(None))
+
+
+class Section(dict):
+    def __init__(self, name, kind, address, size, body=b""):
+        super().__init__(sh_addr=address, sh_size=size, sh_type=kind)
+        self.name, self.body = name, body
+
+    def data(self):
+        return self.body
+
+
+class Elf:
+    def __init__(self, sections):
+        self.sections = sections
+
+    def iter_sections(self):
+        return iter(self.sections)
+
+
+class CellTest(unittest.TestCase):
+    """The cell report: section, exact versus nearest symbol, relocation, provider."""
+
+    def native(self, symbols, relocations, sections):
+        class Library:
+            base = 0x10000000
+            elf = Elf(sections)
+
+        holder = type("Sandbox", (), {})()
+        holder.MAX_LIBRARY_SPAN = 32 * 1024 * 1024
+        holder.libraries = {"libTOYOTA_COMM.so": Library()}
+        holder.libraries["libTOYOTA_COMM.so"].symbols = symbols
+        holder.libraries["libTOYOTA_COMM.so"].relocations = relocations
+        return holder
+
+    def test_a_zero_filled_cell_reports_no_relocation_and_no_provider(self):
+        symbols = {"CheckXOR": {"st_value": 0x6ec00, "st_size": 8, "st_info": {"type": "STT_OBJECT"}}}
+        native = self.native(symbols, [], [Section(".bss", "SHT_NOBITS", 0x6e000, 0x1000)])
+        report = elf_cell_report(native, 0x10000000 + 0x6ec88)
+        self.assertEqual("libTOYOTA_COMM.so", report["library"])
+        self.assertEqual("0x6ec88", report["offset"])
+        self.assertEqual([".bss"], [section["name"] for section in report["sections"]])
+        self.assertEqual([], report["exactSymbols"])
+        self.assertEqual("CheckXOR", report["nearestSymbol"]["name"])
+        self.assertEqual("0x88", report["nearestSymbol"]["distance"])
+        self.assertIn("nearest only", report["nearestSymbol"]["note"])
+        self.assertEqual([], report["relocations"])
+        self.assertEqual(["NOT ESTABLISHED: no supplied provider - no relocation covers the cell"],
+                         report["provider"])
+
+    def test_a_relocation_names_the_object_that_would_fill_the_cell(self):
+        class Entry(dict):
+            pass
+
+        class Reloc(dict):
+            entry = Entry(r_addend=0)
+
+        class Symbol:
+            name = "SetCanComPara"
+
+        native = self.native({}, [(Reloc(r_offset=0x6ec88, r_info_type=1025, r_addend=0), Symbol())],
+                             [Section(".got", "SHT_PROGBITS", 0x6e000, 0x1000, b"\x00" * 8)])
+        native.libraries["libTOYOTA_SYSP.so"] = type("Library", (), {
+            "base": 0x20000000, "elf": Elf([]), "relocations": [],
+            "symbols": {"SetCanComPara": {"st_size": 4, "st_info": {"type": "STT_FUNC"}}}})()
+        report = elf_cell_report(native, 0x10000000 + 0x6ec88)
+        self.assertEqual("SetCanComPara", report["relocations"][0]["symbol"])
+        self.assertEqual(["libTOYOTA_SYSP.so:SetCanComPara (STT_FUNC, size 4)"], report["provider"])
+
+    def test_a_function_provider_is_recognised_and_a_bare_cell_is_not(self):
+        self.assertEqual(("libTOYOTA_SYSP.so", "SetCanComPara"),
+                         provider_symbol({"provider": ["libTOYOTA_SYSP.so:SetCanComPara (STT_FUNC, size 4)"]}))
+        self.assertIsNone(provider_symbol({"provider": [
+            "NOT ESTABLISHED: no supplied provider - no relocation covers the cell"]}))
+        self.assertIsNone(provider_symbol(None))
+
+    def test_an_address_outside_every_object_is_reported_as_such(self):
+        report = elf_cell_report(self.native({}, [], []), 0x1234)
+        self.assertIsNone(report["library"])
+        self.assertEqual(["NOT ESTABLISHED: the address lies inside no supplied object"], report["provider"])
+
+
+class TailTest(unittest.TestCase):
+    def native(self):
+        class Sandbox:
+            MAX_LIBRARY_SPAN = 32 * 1024 * 1024
+            libraries = {}
+            STACK, STACK_BYTES = 0x6000000000, 4096
+            HEAP, HEAP_BYTES = 0x6100000000, 4096
+            TLS, SHIMS, SHIM_BYTES = 0x6200000000, 0x6300000000, 4096
+
+            @staticmethod
+            def read(address, size):
+                return struct.pack("<I", 0xD65F03C0)[:size]  # ret
+
+        return Sandbox()
+
+    def test_each_step_carries_offset_text_flow_and_register_values(self):
+        steps = [(0x1000, tuple(range(10)), 0), (0x1008, tuple(range(10)), 0)]
+        rows = annotate_steps(self.native(), steps)
+        self.assertEqual("0x1000", rows[0]["offset"])
+        self.assertEqual("ret", rows[0]["text"])
+        self.assertEqual("next=0x1008", rows[0]["flow"])
+        self.assertEqual("ret", rows[1]["text"])
+        self.assertEqual("-", rows[1]["flow"])
+
+    def test_the_tail_selection_takes_the_heaviest_tuple_of_each_class(self):
+        rows = [{"region": "EU", "transport": 3, "selector": 0x12, "function": 121, "systems": 4065,
+                 "status": "traced", "nativeStatus": -1},
+                {"region": "EU", "transport": 3, "selector": 0x12, "function": 105, "systems": 3372,
+                 "status": "traced", "nativeStatus": -1},
+                {"region": "EU", "transport": 4, "selector": 0x22, "function": 124, "systems": 3608,
+                 "status": "traced", "nativeStatus": -1},
+                {"region": "NA", "transport": 3, "selector": 0x12, "function": 9, "systems": 1,
+                 "status": "blocked", "nativeStatus": None}]
+        self.assertEqual([(1, 121, 0x12), (1, 124, 0x22)], trace_selection(rows, count=2))
 
 
 class FaultTapTest(unittest.TestCase):
