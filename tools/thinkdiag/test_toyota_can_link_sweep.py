@@ -3,7 +3,7 @@ import unittest
 
 from toyota_can_link_sweep import (address_evidence, can_tuples, classify, decode_windows,
                                    annotate_steps, elf_cell_report, failure_group, fault_cause, fault_context,
-                                   markdown, provider_symbol, trace_selection, memory_matches, oracle_verdict,
+                                   markdown, provider_symbol, store_hits, trace_selection, memory_matches, oracle_verdict,
                                    probe_selection, reconciliation, window_candidates)
 from toyota_entries import EntryIndex
 
@@ -266,6 +266,51 @@ class TailTest(unittest.TestCase):
                 {"region": "NA", "transport": 3, "selector": 0x12, "function": 9, "systems": 1,
                  "status": "blocked", "nativeStatus": None}]
         self.assertEqual([(1, 121, 0x12), (1, 124, 0x22)], trace_selection(rows, count=2))
+
+
+def aarch64(words, base):
+    from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+    disassembler = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    disassembler.detail = True
+    return list(disassembler.disasm(b"".join(struct.pack("<I", word) for word in words), base))
+
+
+class StaticWriterTest(unittest.TestCase):
+    """Hand-encoded instructions: the scanner reports only provable stores."""
+
+    CELL = 0x6ec88
+
+    def test_a_direct_store_through_adrp_add_is_reported_with_its_constant(self):
+        words = [0xB0000368, 0x91322108, 0x52800020, 0xF9000100]  # adrp/add/movz/str
+        hits, scanned, capped = store_hits(aarch64(words, 0x1000), self.CELL, set(), {0x1000: "f"})
+        self.assertEqual(4, scanned)
+        self.assertFalse(capped)
+        self.assertEqual(1, len(hits))
+        self.assertEqual("store to the cell", hits[0]["kind"])
+        self.assertEqual("0x100c", hits[0]["offset"])
+        self.assertEqual("f", hits[0]["function"])
+        self.assertEqual("constant 0x1", hits[0]["storedValue"])
+
+    def test_a_store_beside_the_cell_is_reported_as_the_window_not_the_cell(self):
+        words = [0xB0000368, 0x91322108, 0x52800020, 0xF9000500]  # str x0, [x8, #8]
+        hits, _, _ = store_hits(aarch64(words, 0x1000), self.CELL, set(), {})
+        self.assertEqual("store at cell+0x8 (within ±0x40)", hits[0]["kind"])
+
+    def test_a_store_through_an_address_taken_slot_is_reported(self):
+        words = [0xD0000369, 0x91004129, 0xF9400128, 0x52800020, 0xF9000100]
+        # adrp x9,#0x6f000 ; add x9,x9,#0x10 ; ldr x8,[x9] ; movz w0,#1 ; str x0,[x8]
+        hits, _, _ = store_hits(aarch64(words, 0x1000), self.CELL, {0x6f010}, {})
+        self.assertEqual("store to the cell", hits[0]["kind"])
+        self.assertEqual("constant 0x1", hits[0]["storedValue"])
+
+    def test_a_direct_store_in_another_object_is_not_reported(self):
+        words = [0xB0000368, 0x91322108, 0x52800020, 0xF9000100]
+        hits, _, _ = store_hits(aarch64(words, 0x1000), self.CELL, set(), {}, same_object=False)
+        self.assertEqual([], hits)
+
+    def test_an_unprovable_store_is_not_reported(self):
+        hits, _, _ = store_hits(aarch64([0xF9000100], 0x1000), self.CELL, set(), {})
+        self.assertEqual([], hits)
 
 
 class FaultTapTest(unittest.TestCase):

@@ -6,6 +6,9 @@ name: Inspect Toyota release data
 # Stage 3c head note: the same step now also reports the ELF identity of the null cell
 # and the last 60 instructions before the guest returns. Steps, inputs and permissions
 # are unchanged and nothing is enabled.
+# Stage 3d head note: the same step now also scans every shipped object for a writer of
+# that cell and re-runs all 976 tuples with one hook return changed, so its timeout is
+# raised to 60 minutes. Steps, inputs, permissions and masking are unchanged.
 
 on:
   workflow_dispatch:
@@ -202,7 +205,7 @@ jobs:
       # output; the next step publishes the report, including a failure traceback.
       - name: Sweep native transport codes 3 and 4 (CAN) read-only
         id: stage3a_can_sweep
-        timeout-minutes: 20
+        timeout-minutes: 60
         run: |
           set -euo pipefail
           mkdir -p .local/thinkdiag/report/can-link-sweep .local/thinkdiag/published-census
