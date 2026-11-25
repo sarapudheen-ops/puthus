@@ -9,12 +9,12 @@ import re
 import tempfile
 import zipfile
 
+import brand_inventory as inventory  # Sets up the thinkdiag module path.
 from analyze_toyota import TOYOTA_SHA256
 from decode_toyota import elf_bytes
 from toyota_entries import EntryIndex
 from toyota_structure import ECU_FILE, section_directory, typed_table, function_index, system_lists, menu_nodes
 from yzjm import decode_yzjm
-import brand_inventory as inventory
 
 
 def reader(name, data):
