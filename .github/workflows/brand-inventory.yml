@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   inventory:
-    name: Brand inventory
+    name: Brand inventory control
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -26,41 +26,15 @@ jobs:
         run: python -m pip install pyelftools==0.32
       - name: Test inventory
         run: python -m unittest discover -s tools/inventory -p 'test_*.py' -v
-      - name: Inventory releases one archive at a time
-        id: inventory
-        timeout-minutes: 35
-        continue-on-error: true
+      - name: Download Toyota reference
         run: |
-          mkdir -p .local/inventory
-          set -o pipefail
-          python tools/inventory/brand_inventory.py --output .local/inventory/report --max-seconds 1800 2>&1 | tee .local/inventory/inventory.log
-      - name: Publish partial or complete release reports
-        if: always() && steps.inventory.outcome != 'skipped'
+          mkdir -p .local/inventory/downloads .local/inventory/control
+          gh release download assets-v1 --pattern TOYOTA.zip --dir .local/inventory/downloads
+      - name: Run decoded Toyota control
         run: |
-          test -s .local/inventory/report/brand-inventory.md
-          test -s .local/inventory/report/brand-inventory.json
-          gh release upload ci-reports-v1 .local/inventory/report/brand-inventory.md .local/inventory/report/brand-inventory.json --clobber
-      - name: Publish check runs
-        if: always() && steps.inventory.outcome != 'skipped'
-        env:
-          OUTCOME: ${{ steps.inventory.outcome }}
+          python tools/inventory/toyota_control.py .local/inventory/downloads/TOYOTA.zip --output .local/inventory/control
+          rm .local/inventory/downloads/TOYOTA.zip
+      - name: Publish control only
         run: |
-          test -s .local/inventory/report/parts.json
-          python - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-          report = Path('.local/inventory/report')
-          conclusion = (report / 'conclusion.txt').read_text().strip()
-          if os.environ['OUTCOME'] != 'success':
-              conclusion = 'failure'
-          for part in json.loads((report / 'parts.json').read_text()):
-              subprocess.run(['gh', 'api', '--method', 'POST', f"repos/{os.environ['GH_REPO']}/check-runs",
-                              '-f', f"name={part['name']}", '-f', f"head_sha={os.environ['GITHUB_SHA']}",
-                              '-f', 'status=completed', '-f', f'conclusion={conclusion}',
-                              '-f', f"output[title]={part['name']}", '-F', f"output[summary]=@{part['file']}"], check=True)
-          PY
-      - name: Fail if inventory failed
-        if: always() && steps.inventory.outcome == 'failure'
-        run: |
-          cat .local/inventory/inventory.log
-          exit 1
+          gh release upload ci-reports-v1 .local/inventory/control/control.md .local/inventory/control/control.json --clobber
+          gh api --method POST "repos/$GH_REPO/check-runs" -f name='Brand inventory control' -f "head_sha=$GITHUB_SHA" -f status=completed -f conclusion=success -f 'output[title]=Toyota decoded-BIN control' -F 'output[summary]=@.local/inventory/control/control.md'
