@@ -29,6 +29,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import time
@@ -288,7 +289,7 @@ def reader_for(name: str):
     for pattern, label, reader in READERS:
         if pattern.fullmatch(normalised) or pattern.fullmatch(base):
             return label, reader
-    return None, None
+    return "generic Toyota typed_table", strict_typed_table
 
 
 def describe_bin(name: str, data: bytes) -> dict:
@@ -311,7 +312,7 @@ def describe_bin(name: str, data: bytes) -> dict:
     except ValueError as error:
         record["readerError"] = str(error)
         record["parsed"] = False
-    except (IndexError, KeyError, OverflowError, TypeError) as error:
+    except (IndexError, KeyError, OverflowError, TypeError, struct.error) as error:
         record["readerError"] = f"{type(error).__name__}: {error}"
         record["parsed"] = False
     return record
@@ -538,17 +539,9 @@ def summarise(brand: str, report: dict, reference: dict | None, *, baseline_expo
                   f"{len(elfs)} parsed ELF librar{'y' if len(elfs) == 1 else 'ies'}"
                   + (f"; {len(shared_libraries)} library filename(s) also match Toyota's"
                      if shared_libraries else ""))
-    elif False:  # Absence of sampled symbols cannot prove a different family.
-        verdict = "different"
-        reason = "no evidence"
     elif matched:
         verdict = "NOT ESTABLISHED"
         reason = f"{len(matched)} shared names, but the three-name, shared filename and architecture threshold is not met"
-    elif False and elfs and any(row.get("exportCount") for row in elfs):
-        verdict = "different"
-        reason = (f"{len(elfs)} ELF librar{'y' if len(elfs) == 1 else 'ies'} parsed with "
-                  f"{sum(row['exportCount'] for row in elfs)} exported function name(s); none of the "
-                  f"{len(names)} reference names is among them")
     elif not report["sos"]:
         verdict, reason = "NOT ESTABLISHED", "no .so member was found, so there is no exported-name evidence"
     elif not elfs:
@@ -633,9 +626,6 @@ def brand_markdown(entry: dict, hooked_count: int) -> str:
             out.write(f"| `{escape(shorten(row['path']))}` | {row['bytes']} | {escape(row.get('magic', ''))} | "
                       f"{row.get('entropyFirst4KiB', '')} ({row.get('entropyLabel', 'not measured')}) | "
                       f"{escape(row.get('reader', ''))} | {escape(result)} |\n")
-        if False:
-            out.write(f"| _(and {len(report['bins']) - 8} further inspected .bin row(s), all in the JSON)_ "
-                      f"| | | | | |\n")
     if report["sos"]:
         out.write("\n| .so | bytes | ELF arch | exports | DT_NEEDED | Toyota reference names exported |\n"
                   "| --- | ---: | --- | ---: | --- | --- |\n")
@@ -649,9 +639,6 @@ def brand_markdown(entry: dict, hooked_count: int) -> str:
                 names = f"error: {escape(row['error'])}"
             out.write(f"| `{escape(shorten(row['path']))}` | {row['bytes']} | {escape(arch)} | "
                       f"{row.get('exportCount', 0)} | {escape(needed)} | {escape(names)} |\n")
-        if False:
-            out.write(f"| _(and {len(report['sos']) - 12} further inspected .so row(s), all in the JSON)_ "
-                      f"| | | | | |\n")
         missing = sorted(set(report["sos"][0].get("missedOracleNames", [])) - set(summary["oracleMatches"]))
         out.write(f"\nReference names not exported by any inspected library of this brand: {len(missing)} of "
                   f"{hooked_count}")
@@ -672,7 +659,7 @@ def markdown(state: dict) -> str:
     budget = state["budget"]
     out.write(f"- Release assets listed: {state['assets']['total']} across {state['assets']['releases']} release(s).\n")
     out.write(f"- Brand archives: {len(state['brandOrder'])}; processed: {len(state['brands'])}; "
-              f"not reached: {len(state['pending'])}.\n")
+              f"not reached: {len(state['pending'])} (processed count includes Toyota).\n")
     out.write(f"- Elapsed: {budget['elapsedSeconds']}s of a {budget['maxSeconds']}s tool budget; "
               f"member bytes read: {budget['bytesRead']}.\n")
     out.write(f"- `.bin` members inspected: {budget['binsInspected']}; ELF members inspected: "
