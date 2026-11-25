@@ -450,7 +450,8 @@ oracle has no CAN-class projection to compare against.
 **Native setup probe.** `GetInfoFromEnterList` then `SystemEnterPart` run in the
 bounded AArch64 sandbox with the adapter-facing COMM/SYSP hooks bound to argument
 recorders. Every one of the 976 tuples was probed: the native entry returned −1 on 744
-of them after 1–3 recorded hook calls, and 232 stopped on a call through a null cell
+of them after 1–3 recorded hook calls (`SelectPIN`, `SetCommunicationMaximumWaitTime`,
+`CanSetParameterNormal`), and 232 stopped on a call through a null cell
 (`Replay stopped at 0x0: Invalid memory fetch (UC_ERR_FETCH_UNMAPPED)`). Nine reviewed
 SYSP CAN cells have no COMM function to join to and stay unlinked, literally
 "Missing explicitly selected guest linkage endpoint". The exact calls, their
@@ -467,10 +468,14 @@ swap (`toyota_group_dtc_enable.py:441-455`, `toyota_ecmect_pack.py:29`,
 bytes are "not a CAN ID". The app's generic ECU rows do require an 11/29-bit pair
 (`docs/vehicle-catalog.md:71`), and no Toyota source field is shown to supply one.
 
+**What the recorded CAN call carries.** `CanSetParameterNormal` receives a word that
+addresses emulated memory; the sweep reads a bounded 64-byte window there and reports
+the observed bytes and any source-field word found in them. Whether such a word is a
+request or response identifier is not established.
+
 **ISO-TP framing.** The oracle trace shows none: no `SetCan15765`, `CanSetEnterFrame`
-or `InitCanBusMode` call was recorded. ISO-TP exists only in the app's generic OBD
-layer (`app/src/main/java/com/bod3/app/obd/protocol/Frames.kt:37`,
-`obd/protocol/ObdProtocol.kt:43`), never in the Toyota source/oracle path.
+or `InitCanBusMode` call was recorded. ISO-TP lives only in the app's generic OBD layer
+(`obd/protocol/Frames.kt:37`, `obd/protocol/ObdProtocol.kt:43`), not this path.
 
 **NOT ESTABLISHED.** The CAN setup call sequence and its ordering; any CAN identifier,
 ISO-TP framing or timing for codes 3/4; a CAN-class source projection that could

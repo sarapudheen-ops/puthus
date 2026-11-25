@@ -145,7 +145,7 @@ def oracle_verdict(entry):
     return {"status": "projected_transport_class"}
 
 
-POINTER_WINDOW = 32
+POINTER_WINDOW = 64
 
 
 def _mapped_window(native, value):
@@ -154,7 +154,11 @@ def _mapped_window(native, value):
     A read is attempted inside the sandbox's own mapped ranges and bounded; the
     result is recorded as observed bytes, never interpreted as an identifier.
     """
-    if native is None or not (native.HEAP <= value < native.HEAP + native.HEAP_BYTES):
+    if native is None:
+        return None
+    ranges = ((native.HEAP, native.HEAP + native.HEAP_BYTES),
+              (native.STACK, native.STACK + native.STACK_BYTES))
+    if not any(low <= value < high for low, high in ranges):
         return None
     try:
         return native.read(value, POINTER_WINDOW).hex()
