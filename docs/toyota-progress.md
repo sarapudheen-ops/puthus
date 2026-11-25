@@ -482,6 +482,49 @@ ISO-TP framing or timing for codes 3/4; a CAN-class source projection that could
 produce a comparable call expectation; any physical or vehicle validation. Nothing is
 enabled by this stage.
 
+## Stage 3b — why CAN setup stops and what the parameter window holds
+
+Read-only continuation of Stage 3a: same tool, same pin, nothing enabled. The only
+new code is stop-context capture, a labelled stand-in re-run and a per-class window
+decode in `tools/thinkdiag/toyota_can_link_sweep.py`, with 16 hermetic tests.
+
+**Baseline (main `4178023`, release-data run 45523753152): success**, 13 of 14 masked
+steps success and the known `publish_stage0_report` failure (24 KB comment guard).
+
+**The 232 null fetches.** A fetch-fault tap snapshots the machine when Unicorn reports
+`UC_ERR_FETCH_UNMAPPED`, then the caller is decoded from those bytes. All 232 stop at
+one context: caller `libTOYOTA_COMM.so`+`0x1a274`, `blr x8`, `x8 == 0`, loaded from the
+cell `libTOYOTA_COMM.so:CheckXOR` at `0x1006ec88`. That is an **unlinked slot** — a
+guest cell the probe never wrote — not an unhooked import (an unbound import raises
+`External call has no experiment binding: <name>`) and not a data-dependent branch
+(the register is 0 on every tuple through one fixed slot).
+
+**The 744 `-1` values are the guest's own.** `_recorder` returns its `result` argument
+(`toyota_can_link_sweep.py:179`), which the probe fixes at 1 for every CAN hook, so a
+hook cannot produce `-1`; the value read at `toyota_can_link_sweep.py:534` is
+`SystemEnterPart`'s X0.
+
+**Exploratory stand-in re-run** (label: "exploratory, hook behavior is a stand-in, not
+vehicle evidence"; enables nothing): the 32 re-run tuples get the same three calls
+`SelectPIN(16, 33, 0, 6, 14)`, `SetCommunicationMaximumWaitTime(26000)`,
+`CanSetParameterNormal(16, 412321049560, 0, 6)` and no further transport call; returning
+success instead of 1 changes no call sequence, so the stop is not caused by our return
+values.
+
+**The 64-byte window** (per census class, a relation is reported only when it holds for
+every tuple): bytes 0–7 zero (n/n), byte 8 `0x03` (n/n), bytes 14–63 zero (n/n) in every
+class. Byte 9 is `0x01` in JP/Can1 (110/110) and NOT ESTABLISHED elsewhere; bytes 10–11
+are `0x35 0xae` in all three Can2 classes (155/155, 152/152, 141/141) and NOT ESTABLISHED
+in Can1; bytes 12–13 NOT ESTABLISHED in every class. `runtime107c4` appears verbatim in
+the window for 18 of 976 tuples only, so no class-wide field relation holds: **NOT
+ESTABLISHED**, and no window field is named a CAN ID — no native label or data row
+supplies that name.
+
+**Still blocks CAN links, by systems unlocked:** (1) no CAN-class source projection
+(245,356), (2) no identifier source (245,356), (3) `CheckXOR` cell left unlinked (the
+232 stop tuples), (4) the `-1` return before any transport call (744), (5) nine unjoined
+SYSP cells, (6) NA Can3 selector 98 (5 systems).
+
 ## Evidence audit / next work
 
 CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `review_direct21` (`toyota_runtime_compile.py:114-145`), then `toyota_ecmect_pack.data_for` injects the 30 reviewed `liveReads` (`toyota_ecmect_pack.py:160-173`). Direct21 review items are disabled candidates (`toyota_live.py:313-318`). DTC/ECU-info definitions come from the same pinned compiler artifact (`toyota_runtime_compile.py:142-145`, `toyota_ecmect_pack.py:160-173`); `test_ecmect_pack.py` verifies 30/1,414/1 against the selected pack, and `verify_source_read_review` checks a deterministic compiler-output pin (`toyota_runtime_compile.py:173-220`, `tools/thinkdiag/schema/mandatory-read-artifacts-v1.json`). This is source/compiler regression evidence, not a native replay of emitted category records. **No oracle for non-ECMECT PID, DTC, or ecuInfo output is established.** No human sign-off hash is established beyond source/artifact SHA pins. Mode B must remain candidate-parse, not enabling.

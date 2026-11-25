@@ -484,8 +484,15 @@ def decode_windows(records):
                 rows.append({"bytes": f"{offset}", "kind": "unestablished", "detail": None,
                              "tuples": len(group)})
                 offset += 1
+        varying = {}
+        for name in prepared[0][1]:
+            if not all(name in candidates for _, candidates in prepared):
+                continue
+            distinct = {candidates[name] for _, candidates in prepared}
+            if len(distinct) > 1 and "(" not in name:
+                varying[name] = len(distinct)
         decoded.append({"region": key[0], "transport": key[1], "selector": key[2],
-                        "tuples": len(group), "fields": rows})
+                        "tuples": len(group), "fields": rows, "varying": varying})
     return decoded
 
 
@@ -504,7 +511,8 @@ def exploratory_run(libraries, sources, chosen, entries, index, limit=32):
         rows.append({"region": REGION_NAMES[rid], "function": function, "selector": selector,
                      "status": result["status"], "nativeStatus": result.get("nativeStatus"),
                      "calls": setup_calls(result.get("calls", [])),
-                     "reason": result.get("reason")})
+                     "reason": result.get("reason"),
+                     "faultCause": fault_cause(result.get("fault"))})
     return rows
 
 
@@ -814,7 +822,9 @@ def markdown(payload):
               f"- calls seen: {dict(calls_after) or 'none'}",
               f"- native entry return values seen: "
               f"{dict(collections.Counter(str(row.get('nativeStatus')) for row in rows))}",
-              f"- tuples whose call sequence differs from the baseline three: {len(changed)}"]
+              f"- tuples whose call sequence differs from the baseline three: {len(changed)}",
+              f"- stop reasons in the re-run: "
+              f"{dict(collections.Counter(row.get('reason') or row.get('faultCause') or row['status'] for row in rows))}"]
     for row in changed[:3]:
         lines.append(f"- {row['region']}/{row['function']}/{row['selector']:#04x}: "
                      + "; ".join(f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
@@ -826,6 +836,9 @@ def markdown(payload):
                       f"selector {decoded['selector']:#04x} ({decoded['tuples']} tuples)", "",
                   "| window bytes | verdict |", "|---|---|"]
         lines += [f"| {field['bytes']} | {_window_text(field)} |" for field in decoded["fields"]]
+        varying = decoded.get("varying") or {}
+        lines += ["", f"Row fields that differ between the {decoded['tuples']} tuples of this class: "
+                      f"{varying if varying else 'none'}."]
     if payload["probe"].get("transportHookCallHistogram"):
         lines += ["", "### Recorded transport-hook calls (all probed tuples)", ""]
         lines += [f"- `{api}` x{count}" for api, count in payload["probe"]["transportHookCallHistogram"].items()]
