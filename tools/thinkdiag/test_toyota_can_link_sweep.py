@@ -1,8 +1,9 @@
 import struct
 import unittest
 
-from toyota_can_link_sweep import (address_evidence, can_tuples, classify, markdown,
-                                   memory_matches, oracle_verdict, probe_selection, reconciliation)
+from toyota_can_link_sweep import (address_evidence, can_tuples, classify, decode_windows,
+                                   failure_group, fault_cause, markdown, memory_matches, oracle_verdict,
+                                   probe_selection, reconciliation, window_candidates)
 from toyota_entries import EntryIndex
 
 
@@ -101,6 +102,49 @@ class MemoryTest(unittest.TestCase):
         self.assertEqual([], memory_matches(entry, [{"api": "X", "arguments": [1]}]))
         self.assertFalse(any("sourceField" in str(match) for match in memory_matches(entry, [])
                              if isinstance(match, str)))
+
+
+def window_record(function, selector, c4, transport=3, region="EU"):
+    return {"region": region, "transport": transport, "selector": selector, "function": function,
+            "baud": 500000, "flags": 0x21, "fields": {"runtime107b0": "1234", "runtime107c4": c4},
+            "window": "00" * 8 + c4 + "00" * 54}
+
+
+class WindowTest(unittest.TestCase):
+    def test_a_relation_is_reported_only_when_every_tuple_in_the_class_agrees(self):
+        decoded = decode_windows([window_record(121, 0x12, "18d3"), window_record(124, 0x12, "35ae")])
+        self.assertEqual(1, len(decoded))
+        class_rows = {row["bytes"]: row for row in decoded[0]["fields"]}
+        self.assertEqual(2, class_rows["0-7"]["tuples"])
+        self.assertEqual(("constant", "00"), (class_rows["0-7"]["kind"], class_rows["0-7"]["detail"]))
+        self.assertEqual(("equals", "row field runtime107c4"),
+                         (class_rows["8-9"]["kind"], class_rows["8-9"]["detail"]))
+        # Two tuples disagreeing on one byte and matching no field is NOT ESTABLISHED.
+        broken = decode_windows([window_record(121, 0x12, "18d3"), window_record(124, 0x12, "18ff")])
+        kinds = {row["bytes"]: row["kind"] for row in broken[0]["fields"]}
+        self.assertIn("unestablished", kinds.values())
+
+    def test_candidates_are_stored_field_bytes_and_plain_row_identity_words(self):
+        candidates = window_candidates(window_record(121, 0x12, "18d3"))
+        self.assertEqual(b"\x18\xd3", candidates["row field runtime107c4"])
+        self.assertEqual(b"\x79", candidates["row field function (u8)"])
+        self.assertEqual(b"\x79\x00", candidates["row field function (u16le)"])
+        self.assertIn("row field baud (u32le)", candidates)
+
+    def test_failure_grouping_key_names_caller_branch_and_slot(self):
+        key = failure_group({"callerLibrary": "libTOYOTA_SYSP.so", "callerOffset": "0x109c8",
+                             "branch": "blr x8", "slotSymbol": "libTOYOTA_SYSP.so:RunInterface",
+                             "slotAddress": "0x1001234"})
+        self.assertEqual("libTOYOTA_SYSP.so | 0x109c8 | blr x8 | libTOYOTA_SYSP.so:RunInterface | 0x1001234", key)
+        self.assertEqual("context unavailable", failure_group(None))
+
+    def test_cause_separates_named_and_unnamed_slots_and_never_claims_an_import(self):
+        self.assertEqual("unlinked slot: named cell holding 0",
+                         fault_cause({"branchRegisterValue": 0, "slotSymbol": "libTOYOTA_SYSP.so:X"}))
+        self.assertEqual("unlinked slot: unnamed address holding 0",
+                         fault_cause({"branchRegisterValue": 0, "slotSymbol": None}))
+        self.assertEqual("jump target outside emulated memory", fault_cause({"branchRegisterValue": 0x40}))
+        self.assertEqual("context unavailable", fault_cause(None))
 
 
 class SelectionTest(unittest.TestCase):

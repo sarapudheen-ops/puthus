@@ -26,8 +26,12 @@ import time
 import traceback
 from pathlib import Path
 
+from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+from capstone.arm64 import ARM64_OP_MEM
+
 from convert_vehicle_packs import REGIONS, load_sources, system_lists
-from native_replay import NativeSandbox, ReplayError
+from native_replay import XREGS, NativeSandbox, ReplayError
+from unicorn.arm64_const import UC_ARM64_REG_PC
 from pack_census import census
 from toyota_entries import EntryIndex
 from toyota_entry_runtime import signed16
@@ -48,6 +52,11 @@ CAN_CELLS = ("InitCanBusMode", "InitExtendCanbusMode", "InitCanCommSet_MPT", "Se
              "SetCanComPara", "SetCanComParaFilterId", "MenuEnterCommunicationSet",
              "GetBaseCanBusRecData", "MyCanSendOneFrameReceiveDatas", "GetKwpRecData",
              "GetKwpRecDataWithFrame")
+
+# CAN configuration hooks whose stand-in return value the exploratory variant changes.
+CAN_CONFIG_HOOKS = ("CanSetParameter", "CanSetParameterNormal", "CanSetEnterFrame", "SetCan15765",
+                    "SetCanBitRate", "SetCanFilterId", "SetCanComPara", "SetCanComParaFilterId",
+                    "InitCanBusMode", "InitExtendCanbusMode", "InitCanCommSet_MPT")
 
 # The adapter-facing COMM/SYSP hooks the native setup is observed through. Bound
 # callbacks are declared fakes: they record arguments and return a fixed value.
@@ -166,7 +175,7 @@ def _mapped_window(native, value):
         return None
 
 
-def _recorder(trace, name, count, native=None):
+def _recorder(trace, name, count, native=None, result=1):
     def callback(*args):
         call = {"api": name, "arguments": [int(value) for value in args[:count]]}
         windows = {}
@@ -177,7 +186,7 @@ def _recorder(trace, name, count, native=None):
         if windows:
             call["memoryWindow"] = windows
         trace.append(call)
-        return 1
+        return result
     return callback
 
 
@@ -202,7 +211,7 @@ def bind_hook(native, name, callback, libraries):
     return bound
 
 
-def build_probe(libraries, sources):
+def build_probe(libraries, sources, can_success=1):
     """One sandbox for the whole probe; the freed/declared fakes mirror the oracle."""
     file, comm, sysp = "libTOYOTA_FILE.so", "libTOYOTA_COMM.so", "libTOYOTA_SYSP.so"
     reference = json.loads(REFERENCE.read_text())
@@ -237,7 +246,8 @@ def build_probe(libraries, sources):
     bound = {}
     for hook, count in (*HOOKS, ("EndCombination", 0), ("SetLinkKeep", 4)):
         libraries = [name for name in (comm, sysp) if hook in native.libraries[name].symbols]
-        owners = bind_hook(native, hook, _recorder(trace, hook, count, native), libraries)
+        result = can_success if hook in CAN_CONFIG_HOOKS else 1
+        owners = bind_hook(native, hook, _recorder(trace, hook, count, native, result), libraries)
         if owners:
             bound[hook] = owners
     for region_id, region in enumerate(("EU", "NA", "JP"), 1):
@@ -245,6 +255,213 @@ def build_probe(libraries, sources):
             raw = sources[region + "/" + filename]
             native.write(global_state + 0xc0 + offset, struct.pack("<Q", native.allocate(len(raw), raw)))
     return native, files, handle, context, global_state, trace, bound, linked, unlinked
+
+
+def _slot_index(native):
+    """Address -> symbol name for every defined symbol in the loaded libraries."""
+    cached = getattr(native, "_slot_index", None)
+    if cached is not None:
+        return cached
+    index = {}
+    for name, library in native.libraries.items():
+        for symbol_name, symbol in library.symbols.items():
+            index.setdefault(library.base + symbol["st_value"], f"{name}:{symbol_name}")
+    native._slot_index = index
+    return index
+
+
+def _register_value(native, name):
+    if not name or name[0] not in "xw":
+        return None
+    try:
+        index = int(name[1:])
+    except ValueError:
+        return None
+    if not 0 <= index <= 30:
+        return None
+    value = native.uc.reg_read(XREGS[index])
+    return value & (0xFFFFFFFF if name[0] == "w" else 0xFFFFFFFFFFFFFFFF)
+
+
+def _library_of(native, address):
+    for name, library in native.libraries.items():
+        if library.base <= address < library.base + native.MAX_LIBRARY_SPAN:
+            return name, address - library.base
+    return None, None
+
+
+def fault_context(native):
+    """Never raises: a stop-context failure must not hide the stop itself."""
+    try:
+        return _fault_context(native)
+    except Exception:
+        return None
+
+
+def _fault_context(native):
+    """Caller and jump slot of a fault, read from the stopped sandbox (never inferred).
+
+    The call target was 0, so the return address in X30 names the caller; the branch
+    instruction and the load that produced the register are disassembled from the
+    caller's own bytes. A resolved symbol means the slot is a named cell/import.
+    """
+    try:
+        pc = native.uc.reg_read(UC_ARM64_REG_PC)
+        lr = native.uc.reg_read(XREGS[30])
+    except Exception:
+        return None
+    library, offset = _library_of(native, lr)
+    context = {"pc": pc, "caller": lr,
+               "callerLibrary": library, "callerOffset": None if offset is None else hex(offset)}
+    try:
+        windows = list(Cs(CS_ARCH_ARM64, CS_MODE_ARM).disasm(native.read(lr - 64, 68), lr - 64))
+    except Exception:
+        windows = []
+    branch = None
+    for item in windows:
+        if item.address < lr and item.mnemonic in ("blr", "br", "blraa", "blrab"):
+            branch = item
+    if branch is None:
+        context["branch"] = None
+        return context
+    register = branch.op_str.split(",")[0].strip() if branch.op_str else ""
+    value = _register_value(native, register)
+    context.update({"branch": f"{branch.mnemonic} {branch.op_str}", "branchAddress": hex(branch.address),
+                    "branchRegister": register, "branchRegisterValue": value,
+                    "branchOffsetInLibrary": None if offset is None else hex(branch.address -
+                                                                           native.libraries[library].base)})
+    # The load that filled the branch register identifies the cell it came from.
+    for item in reversed([entry for entry in windows if entry.address < branch.address]):
+        if item.mnemonic.startswith("ldr") and register in item.op_str.split("[")[0]:
+            operands = list(item.operands)
+            memory = next((op for op in operands if op.type == ARM64_OP_MEM), None)
+            if memory is None:
+                break
+            base = None
+            if memory.mem.base:
+                base_name = item.reg_name(memory.mem.base)
+                base = _register_value(native, base_name)
+            if base is None:
+                context["slotLoad"] = f"{item.mnemonic} {item.op_str}"
+                break
+            slot = (base + memory.mem.disp) & 0xFFFFFFFFFFFFFFFF
+            context.update({"slotLoad": f"{item.mnemonic} {item.op_str}",
+                            "slotAddress": hex(slot),
+                            "slotSymbol": _slot_index(native).get(slot)})
+            break
+    return context
+
+
+def fault_cause(context):
+    """Classify one stop without assuming what the register held."""
+    if not context:
+        return "context unavailable"
+    value = context.get("branchRegisterValue")
+    if value == 0:
+        return ("unlinked slot: named cell holding 0" if context.get("slotSymbol")
+                else "unlinked slot: unnamed address holding 0")
+    if value is None:
+        return "branch register unresolved"
+    return "jump target outside emulated memory"
+
+
+def failure_group(context):
+    """A stable grouping key for the 232 fetch-at-0x0 stops."""
+    if not context:
+        return "context unavailable"
+    return " | ".join(str(context.get(key)) for key in
+                      ("callerLibrary", "callerOffset", "branch", "slotSymbol", "slotAddress"))
+
+
+def window_candidates(record):
+    """Byte forms of every data-row field, plus the row identity words.
+
+    Only stored byte order and plain little/big-endian integer forms are tried; no
+    transform is invented. A candidate is a label plus the bytes it would contribute.
+    """
+    candidates = {}
+    for name, value in record["fields"].items():
+        raw = bytes.fromhex(value)
+        if raw:
+            candidates[f"row field {name}"] = raw
+    for name in ("function", "selector", "transport", "baud", "flags"):
+        value = record[name]
+        candidates[f"row field {name} (u8)"] = bytes([value & 0xFF])
+        if value <= 0xFFFF:
+            candidates[f"row field {name} (u16le)"] = struct.pack("<H", value)
+            candidates[f"row field {name} (u16be)"] = struct.pack(">H", value)
+        if value <= 0xFFFFFFFF:
+            candidates[f"row field {name} (u32le)"] = struct.pack("<I", value)
+    return candidates
+
+
+def decode_windows(records):
+    """Per census class: does each window byte range equal a row field, stay constant, or neither.
+
+    A relation is reported only when it holds for every tuple of the class, and a
+    candidate is used only when every tuple of the class carries that field.
+    """
+    classes = collections.defaultdict(list)
+    for record in records:
+        if record.get("window"):
+            classes[(record["region"], record["transport"], record["selector"])].append(record)
+    decoded = []
+    for key in sorted(classes, key=lambda item: -len(classes[item])):
+        group = classes[key]
+        prepared = [(record, window_candidates(record)) for record in group]
+        size = min(len(bytes.fromhex(record["window"])) for record in group)
+        rows, offset = [], 0
+        while offset < size:
+            values = {record["window"][offset * 2:offset * 2 + 2] for record in group}
+            if len(values) == 1:
+                value = sorted(values)[0]
+                end = offset
+                while end + 1 < size and {record["window"][(end + 1) * 2:(end + 1) * 2 + 2]
+                                          for record in group} == {value}:
+                    end += 1
+                rows.append({"bytes": f"{offset}-{end}", "kind": "constant", "detail": value,
+                             "tuples": len(group)})
+                offset = end + 1
+                continue
+            chosen = None
+            for name, contribution in prepared[0][1].items():
+                length = len(contribution)
+                if offset + length > size:
+                    continue
+                if all(name in candidates and
+                       record["window"][offset * 2:(offset + length) * 2] == candidates[name].hex()
+                       for record, candidates in prepared):
+                    chosen = (name, length)
+                    break
+            if chosen:
+                rows.append({"bytes": f"{offset}-{offset + chosen[1] - 1}", "kind": "equals",
+                             "detail": chosen[0], "tuples": len(group)})
+                offset += chosen[1]
+            else:
+                rows.append({"bytes": f"{offset}", "kind": "unestablished", "detail": None,
+                             "tuples": len(group)})
+                offset += 1
+        decoded.append({"region": key[0], "transport": key[1], "selector": key[2],
+                        "tuples": len(group), "fields": rows})
+    return decoded
+
+
+def exploratory_run(libraries, sources, chosen, entries, index, limit=32):
+    """Re-run the native setup with the CAN hook returning success (explicit stand-in)."""
+    native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(
+        libraries, sources, can_success=0)
+    rows = []
+    for key in chosen:
+        if len(rows) >= limit:
+            break
+        rid, function, selector = key
+        entry = entries[key]
+        result = probe_tuple(native, files, handle, context, global_state, trace, index, rid, function, entry)
+        rows.append({"region": REGION_NAMES[rid], "function": function, "selector": selector,
+                     "status": result["status"], "nativeStatus": result.get("nativeStatus"),
+                     "calls": setup_calls(result.get("calls", [])),
+                     "reason": result.get("reason")})
+    return rows
 
 
 def probe_tuple(native, files, handle, context, global_state, trace, index, rid, function, entry):
@@ -262,7 +479,8 @@ def probe_tuple(native, files, handle, context, global_state, trace, index, rid,
     try:
         status = signed16(native.call("libTOYOTA_SYSP.so", "SystemEnterPart", function, context))
     except ReplayError as error:
-        return {"status": "blocked", "reason": str(error), "calls": list(trace)}
+        context = fault_context(native) if "fetch" in str(error).lower() else None
+        return {"status": "blocked", "reason": str(error), "calls": list(trace), "fault": context}
     return {"status": "traced", "nativeStatus": status, "calls": list(trace)}
 
 
@@ -340,6 +558,7 @@ def build(args):
     status_hist, call_hist = collections.Counter(), collections.Counter()
     api_hist = collections.Counter(); examples = []
     memory_hist = collections.Counter()
+    fault_groups = collections.Counter(); fault_contexts = {}; window_records = []
     for key in chosen:
         rid, function, selector = key
         entry = entries[key]
@@ -372,6 +591,18 @@ def build(args):
             api_hist[call["api"]] += 1
         for match in item["memoryMatches"]:
             memory_hist[f"{match['api']}[{match['argumentIndex']}]={match['sourceField']}"] += 1
+        if native_result.get("fault"):
+            item["fault"] = native_result["fault"]
+            key = failure_group(native_result["fault"])
+            fault_contexts.setdefault(key, native_result["fault"])
+            fault_groups[key] += 1
+        window = next((value for call in item["transportHookCalls"]
+                       if call["api"] == "CanSetParameterNormal"
+                       for value in (call.get("memoryWindow") or {}).values()), None)
+        if window:
+            window_records.append({"region": item["region"], "transport": entry.transport,
+                                   "selector": selector, "function": function, "baud": entry.baud,
+                                   "flags": entry.flags, "fields": entry.fields, "window": window})
         if item["transportHookCalls"] and len(examples) < 5:
             examples.append({"region": item["region"], "function": item["function"],
                              "selector": item["selector"], "transport": item["transport"],
@@ -381,6 +612,12 @@ def build(args):
         if time.monotonic() - started > PROBE_SECONDS:
             stopped["probe time budget exhausted"] += 1
             break
+    exploratory = []
+    if native is not None:
+        try:
+            exploratory = exploratory_run(libraries, sources, chosen, entries, index, 32)
+        except Exception as error:
+            exploratory = [{"status": "blocked", "reason": f"{type(error).__name__}: {error}"}]
     iso = collections.Counter()
     for row in rows:
         for call in row["transportHookCalls"]:
@@ -405,11 +642,33 @@ def build(args):
                       "nativeStatus": dict(status_hist), "callCounts": dict(call_hist),
                       "transportHookCallHistogram": dict(api_hist.most_common()),
                       "callExamples": examples, "memoryMatches": memory_hist,
+                      "faultGroups": [{"key": key, "tuples": count, "context": fault_contexts[key],
+                                       "cause": fault_cause(fault_contexts[key])}
+                                      for key, count in fault_groups.most_common()],
+                      "faultTuples": sum(fault_groups.values()),
+                      "windowDecode": decode_windows(window_records),
+                      "exploratory": {
+                          "label": "exploratory, hook behavior is a stand-in, not vehicle evidence",
+                          "returnValue": 0, "tuples": len(exploratory), "rows": exploratory},
                       "fakeBoundaries": ["adapter-facing COMM/SYSP hooks record arguments and return 1",
                                          "no CAN frame, timing or identifier is synthesized or inferred",
                                          "unbound calls stop the probe with the literal symbol name"]},
             "tuplesProbed": rows,
             "wallSeconds": round(time.monotonic() - started, 3)}
+
+
+def _source_line(token):
+    """The literal line number of a marker in this file, quoted in the report."""
+    source = Path(__file__).read_text().splitlines()
+    return next((index + 1 for index, line in enumerate(source) if token in line), None)
+
+
+def _window_text(row):
+    if row["kind"] == "constant":
+        return f"constant 0x{row['detail']} ({row['tuples']}/{row['tuples']})"
+    if row["kind"] == "equals":
+        return f"equals {row['detail']} ({row['tuples']}/{row['tuples']})"
+    return "NOT ESTABLISHED"
 
 
 def markdown(payload):
@@ -453,6 +712,59 @@ def markdown(payload):
         reason = native.get("reason") or f"status={native.get('nativeStatus')}, calls={len(native.get('calls', []))}"
         reason = reason.replace("|", "/")[:110]
         lines.append(f"| {row['region']} | {row['function']} | {row['selector']:#04x} | {row['systems']} | {row['verdict']} | {reason} |")
+    probe = payload["probe"]
+    fault_groups = probe.get("faultGroups") or []
+    lines += ["", "## Stage 3b — failure modes and window decode", ""]
+    lines += ["### Fetch-at-0x0 stops (groups)", "",
+              f"Grouped tuples: {probe.get('faultTuples')} in {len(fault_groups)} distinct contexts; "
+              f"counts sum to {sum(group['tuples'] for group in fault_groups)}.", ""]
+    if fault_groups:
+        lines += ["| caller library | caller offset | branch | register value | slot symbol | slot address | cause | tuples |",
+                  "|---|---:|---|---:|---|---|---:|---:|"]
+        for group in fault_groups:
+            context = group["context"] or {}
+            lines.append("| " + " | ".join(str(value) for value in (
+                context.get("callerLibrary"), context.get("callerOffset"), context.get("branch"),
+                context.get("branchRegisterValue"), context.get("slotSymbol"), context.get("slotAddress"),
+                group["cause"], group["tuples"])) + " |")
+        unlinked = sum(group["tuples"] for group in fault_groups
+                       if group["cause"].startswith("unlinked slot"))
+        lines += ["", f"An unhooked import cannot appear in this table: the sandbox raises "
+                      f"`External call has no experiment binding: <name>` instead, which is reported as its own "
+                      f"stop reason. {unlinked} of {probe.get('faultTuples')} stop tuples jump through a register "
+                      f"holding 0 via a fixed slot (unlinked slot); no group needs a data-dependent branch or a "
+                      f"jump target outside emulated memory to explain it." if unlinked == probe.get("faultTuples")
+                 else f"Stops split as: {[(group['cause'], group['tuples']) for group in fault_groups]}."]
+    hook_line = _source_line("result = can_success if hook in CAN_CONFIG_HOOKS")
+    call_line = _source_line('native.call("libTOYOTA_SYSP.so", "SystemEnterPart"')
+    lines += ["", "### Where the -1 comes from", "",
+              f"Hooks are bound at `toyota_can_link_sweep.py:{hook_line}` and `_recorder` returns its `result` "
+              f"argument, which the baseline probe sets to 1 for every CAN hook — a hook can therefore never "
+              f"produce -1. The value is the guest's own X0 return from `SystemEnterPart`, read at "
+              f"`toyota_can_link_sweep.py:{call_line}` via `signed16(...)`."]
+    exploratory = probe.get("exploratory") or {}
+    rows = exploratory.get("rows") or []
+    changed = [row for row in rows if row.get("status") == "traced" and
+               [(call["api"], tuple(call["arguments"])) for call in row["calls"]] !=
+               [("SelectPIN", (16, 33, 0, 6, 14)), ("SetCommunicationMaximumWaitTime", (26000,)),
+                ("CanSetParameterNormal", (16, 412321049560, 0, 6))]]
+    calls_after = collections.Counter(call["api"] for row in rows for call in row.get("calls", []))
+    lines += ["", "### Exploratory variant", "",
+              f"**{exploratory.get('label', 'exploratory')}**. CAN configuration hooks return "
+              f"{exploratory.get('returnValue')} instead of 1; {exploratory.get('tuples')} tuples re-run.", "",
+              f"- calls seen: {dict(calls_after) or 'none'}",
+              f"- tuples whose call sequence differs from the baseline three: {len(changed)}"]
+    for row in changed[:3]:
+        lines.append(f"- {row['region']}/{row['function']}/{row['selector']:#04x}: "
+                     + "; ".join(f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
+                                 for call in row["calls"]))
+    if rows and not changed:
+        lines.append("- no further transport call appeared; the stand-in return alone does not advance the setup")
+    for decoded in (probe.get("windowDecode") or []):
+        lines += ["", f"### Window decode — {decoded['region']} transport {decoded['transport']} "
+                      f"selector {decoded['selector']:#04x} ({decoded['tuples']} tuples)", "",
+                  "| window bytes | verdict |", "|---|---|"]
+        lines += [f"| {field['bytes']} | {_window_text(field)} |" for field in decoded["fields"]]
     if payload["probe"].get("transportHookCallHistogram"):
         lines += ["", "### Recorded transport-hook calls (all probed tuples)", ""]
         lines += [f"- `{api}` x{count}" for api, count in payload["probe"]["transportHookCallHistogram"].items()]
