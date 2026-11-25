@@ -362,6 +362,8 @@ def build(args):
             calls = len(native_result.get("calls", []))
             call_hist["0" if calls == 0 else ("1-3" if calls <= 3 else "4+")] += 1
         item["transportHookCalls"] = setup_calls(native_result.get("calls", []))
+        item["addressEvidence"] = address_evidence(entry, item["transportHookCalls"])
+        item["memoryMatches"] = memory_matches(entry, item["transportHookCalls"])
         for call in item["transportHookCalls"]:
             api_hist[call["api"]] += 1
         for match in item["memoryMatches"]:
@@ -371,8 +373,6 @@ def build(args):
                              "selector": item["selector"], "transport": item["transport"],
                              "rawHex": item["rawHex"], "sourceFields": entry.fields,
                              "calls": item["transportHookCalls"]})
-        item["addressEvidence"] = address_evidence(entry, item["transportHookCalls"])
-        item["memoryMatches"] = memory_matches(entry, item["transportHookCalls"])
         rows.append(item)
         if time.monotonic() - started > PROBE_SECONDS:
             stopped["probe time budget exhausted"] += 1

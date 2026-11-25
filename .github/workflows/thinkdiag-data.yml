@@ -213,10 +213,14 @@ jobs:
         id: publish_stage3a_report
         continue-on-error: true
         if: always() && hashFiles('.local/thinkdiag/report/can-link-sweep/can-link-sweep.md') != ''
+        env:
+          SWEEP: ${{ steps.stage3a_can_sweep.outcome }}
         run: |
+          CONC=success
+          if [ "$SWEEP" != success ]; then CONC=failure; fi
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota CAN link sweep' -f head_sha="$GITHUB_SHA" \
-            -f status=completed -f conclusion=success \
+            -f status=completed -f conclusion="$CONC" \
             -f 'output[title]=Read-only codes 3/4 census and native setup probe; nothing enabled' \
             -F 'output[summary]=@.local/thinkdiag/report/can-link-sweep/can-link-sweep.md'
       - name: Run Stage 1b parameterized DTC probe (group-based, read-only)
