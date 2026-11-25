@@ -1158,7 +1158,9 @@ def markdown(payload):
                 continue
             lines += [f"**{tail['region']}/{tail['function']}/{tail['selector']:#04x}** — status "
                       f"`{tail['status']}`, native return `{tail['nativeStatus']}`, "
-                      f"hook calls: {[call['api'] for call in tail['calls']] or 'none'}", "", "```text",
+                      f"hook calls: {[call['api'] for call in tail['calls']] or 'none'}, "
+                      f"second pass reproduced the address sequence: `{tail.get('reproduced')}`",
+                      "", "```text",
                       "idx offset                  instruction                    flow          values / source"]
             for position, step in enumerate(tail["steps"]):
                 lines.append(f"{position:3d} {step['offset']:>22s}  {step['text']:<30s} {step['flow']:<13s} "
