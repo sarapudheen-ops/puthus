@@ -190,6 +190,39 @@ jobs:
             .local/thinkdiag/report/code1-lifecycle-sweep/code1-lifecycle-sweep.json \
             --output .local/thinkdiag/report
           cat .local/thinkdiag/report/code1-link-evidence-summary.md
+      # Stage 3a evidence step: read-only census plus the native setup probe over native
+      # transport codes 3 and 4 (nothing enabled). It writes no pack, APK or validator
+      # output; the next step publishes the report, including a failure traceback.
+      - name: Sweep native transport codes 3 and 4 (CAN) read-only
+        id: stage3a_can_sweep
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          mkdir -p .local/thinkdiag/report/can-link-sweep .local/thinkdiag/published-census
+          gh release download ci-reports-v1 --pattern pack-census.json \
+            --dir .local/thinkdiag/published-census --clobber || true
+          ARGS=(--packs .local/thinkdiag/vehicle-packs)
+          if [ -f .local/thinkdiag/published-census/pack-census.json ]; then
+            ARGS+=(--published-census .local/thinkdiag/published-census/pack-census.json)
+          fi
+          python3 tools/thinkdiag/toyota_can_link_sweep.py .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            "${ARGS[@]}" --output .local/thinkdiag/report/can-link-sweep
+      - name: Publish the native codes 3/4 evidence report
+        id: publish_stage3a_report
+        continue-on-error: true
+        if: always() && hashFiles('.local/thinkdiag/report/can-link-sweep/can-link-sweep.md') != ''
+        env:
+          SWEEP: ${{ steps.stage3a_can_sweep.outcome }}
+        run: |
+          CONC=success
+          if [ "$SWEEP" != success ]; then CONC=failure; fi
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Toyota CAN link sweep' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion="$CONC" \
+            -f 'output[title]=Read-only codes 3/4 census and native setup probe; nothing enabled' \
+            -F 'output[summary]=@.local/thinkdiag/report/can-link-sweep/can-link-sweep.md'
       - name: Run Stage 1b parameterized DTC probe (group-based, read-only)
         id: stage1b_probe
         timeout-minutes: 15
@@ -559,6 +592,7 @@ jobs:
           O_publish_dtc_shards: ${{ steps.publish_dtc_shards.outcome }}
           O_publish_inspection_check: ${{ steps.publish_inspection_check.outcome }}
           O_publish_stage0_report: ${{ steps.publish_stage0_report.outcome }}
+          O_publish_stage3a_report: ${{ steps.publish_stage3a_report.outcome }}
         run: |
           mkdir -p .local/thinkdiag/report
           PROMO_LOG=.local/thinkdiag/report/promotion-step.log
@@ -567,13 +601,13 @@ jobs:
             "$O_publish_link_promotion" "$O_publish_stage1b_report" "$O_publish_stage1c_report" \
             "$O_publish_sweep_reports" "$O_publish_convert_log" "$O_publish_sweep_evidence" \
             "$O_publish_static_reports" "$O_publish_dtc_shards" "$O_publish_inspection_check" \
-            "$O_publish_stage0_report"; do
+            "$O_publish_stage3a_report" "$O_publish_stage0_report"; do
             if [ "$out" = failure ]; then FAILS=$((FAILS + 1)); fi
           done
           CONC=success
           if [ "$FAILS" -gt 0 ]; then CONC=failure; fi
           {
-            echo "## Masked step outcomes: $FAILS raw failure(s) among 13 continue-on-error steps"
+            echo "## Masked step outcomes: $FAILS raw failure(s) among 14 continue-on-error steps"
             echo
             echo 'Raw steps.<id>.outcome values are not masked; step conclusions and the job conclusion are.'
             echo
@@ -591,6 +625,7 @@ jobs:
             echo "| publish_static_reports | $O_publish_static_reports |"
             echo "| publish_dtc_shards | $O_publish_dtc_shards |"
             echo "| publish_inspection_check | $O_publish_inspection_check |"
+            echo "| publish_stage3a_report | $O_publish_stage3a_report |"
             echo "| publish_stage0_report | $O_publish_stage0_report |"
             echo
             echo '## Promotion step log tail (last 80 lines)'
@@ -602,5 +637,5 @@ jobs:
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota masked-step outcomes' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion="$CONC" \
-            -f "output[title]=$FAILS raw failure(s) among 13 continue-on-error steps" \
+            -f "output[title]=$FAILS raw failure(s) among 14 continue-on-error steps" \
             -F 'output[summary]=@.local/thinkdiag/report/masked-outcomes.md'
