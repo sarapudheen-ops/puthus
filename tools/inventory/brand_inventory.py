@@ -533,15 +533,9 @@ def summarise(brand: str, report: dict, reference: dict | None, *, baseline_expo
                   f"Toyota oracle hooks, so {len(names)} form the comparison set")
     elif report.get("error"):
         verdict, reason = "NOT ESTABLISHED", f"archive could not be read: {report['error']}"
-    elif len(matched) >= 3 and shared_libraries and any(row.get("architecture") in (reference or {}).get("architectures", []) for row in elfs):
-        verdict = "same family as Toyota"
-        reason = (f"{len(matched)} of the {len(names)} reference names are exported by "
-                  f"{len(elfs)} parsed ELF librar{'y' if len(elfs) == 1 else 'ies'}"
-                  + (f"; {len(shared_libraries)} library filename(s) also match Toyota's"
-                     if shared_libraries else ""))
     elif matched:
         verdict = "NOT ESTABLISHED"
-        reason = f"{len(matched)} shared names, but the three-name, shared filename and architecture threshold is not met"
+        reason = "symbol overlap alone does not establish decoded BIN compatibility; use inventory2.py"
     elif not report["sos"]:
         verdict, reason = "NOT ESTABLISHED", "no .so member was found, so there is no exported-name evidence"
     elif not elfs:
@@ -664,7 +658,7 @@ def markdown(state: dict) -> str:
               f"member bytes read: {budget['bytesRead']}.\n")
     out.write(f"- `.bin` members inspected: {budget['binsInspected']}; ELF members inspected: "
               f"{budget['librariesInspected']}.\n")
-    out.write("- Verdict threshold: at least three Toyota reference symbols, a shared library filename, and a matching ELF architecture; insufficient evidence is NOT ESTABLISHED. This is a static similarity test, not proof of pipeline compatibility.\n")
+    out.write("- Symbol overlap alone cannot establish compatibility; use the decoded control and readers in inventory2.py.\n")
     out.write(f"- Reference: the {len(hooked)} source-derived candidate names, restricted to "
               f"the {len(state['reference']['names'])} that `{BASELINE}` itself exports. `{BASELINE}` is processed "
               f"through this same code path first.\n\n")

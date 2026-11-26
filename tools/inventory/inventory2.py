@@ -194,7 +194,10 @@ def main():
         raise ValueError('Toyota reference or brand assets missing')
     path = old.download(baseline, args.work)
     try:
-        result = control.control(path)
+        try:
+            result = control.control(path)
+        except Exception as exc:
+            result = {'parsed': 0, 'sample': 0, 'passed': False, 'sampling': {'outer': 'not run', 'nested': 'not run'}, 'errors': {f'{type(exc).__name__}: {exc}': 1}, 'results': []}
         state = {'headSha': os.environ['GITHUB_SHA'], 'control': result, 'assets': assets,
                  'brands': [], 'pending': [a['name'] for a in brands]}
         if not result['passed']:
