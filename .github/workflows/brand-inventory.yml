@@ -112,6 +112,9 @@ jobs:
           python tools/inventory/census_brands.py --source .local/inventory5/source/brand-inventory.json \
             --control .local/inventory5-control/control-result.json --work .local/inventory5/downloads \
             --output .local/inventory5/report 2>&1 | tee .local/inventory5/brands.log
+      - name: Verify Inventory-5 document against this SHA
+        if: steps.brands.outcome == 'success'
+        run: python tools/inventory/verify_census_document.py .local/inventory5/report
       - name: Publish partial brand census
         if: always() && steps.brands.outcome != 'skipped'
         env:
