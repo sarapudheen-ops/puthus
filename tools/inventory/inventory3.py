@@ -115,7 +115,7 @@ def section(state):
              'treated as recognized magic. Unmeasured samples include encrypted or oversized members.', '',
              'The same per-archive sampling rule as Inventory-2 is used; the exploratory denominator is '
              'sampled YZJM files with a converter reader keyed to the file name. An empty denominator is '
-             'not a 0% failure. The Toyota table is kept only in memory, never published.', '',
+             'not a 0% failure. Decoded YZJM counts mean the decoder returned bytes, not that the key or payload is valid: YZJM has no integrity check. The Toyota table is kept only in memory, never published.', '',
              '| brand | sampled | YZJM | other magic (top first-8-byte hex: count) | no recognized header | unmeasured | libDEVICEID size / SHA-256 | vs Toyota | same VA bytes | contains Toyota table | decoded YZJM | exploratory parsed/applicable | outcome |',
              '| --- | ---: | ---: | --- | ---: | ---: | --- | --- | --- | --- | ---: | --- | --- |']
     for entry in state['brands']:
