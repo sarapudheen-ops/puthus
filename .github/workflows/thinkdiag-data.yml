@@ -11,6 +11,12 @@ name: Inspect Toyota release data
 # raised to 60 minutes. Steps, inputs, permissions and masking are unchanged.
 # Stage 3d docs note: the only change on this head is the written report in
 # docs/toyota-progress.md; this comment keeps actionlint on the same head as the run.
+# Stage 3e head note: the sweep step now also disassembles every shipped object for
+# call sites of OpenAbstractCommDll, records the twelve instructions before each and
+# the origin of x0, and (only when x0 is a supplied function address) runs one
+# exploratory variant. Steps, inputs, permissions and masking are unchanged.
+# Stage 3e docs note: the report in docs/toyota-progress.md is the only other change on
+# this head; this comment keeps actionlint on the same head as the run.
 
 on:
   workflow_dispatch:

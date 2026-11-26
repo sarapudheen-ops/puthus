@@ -6,8 +6,9 @@ from toyota_can_link_sweep import (address_evidence, annotate_steps, can_tuples,
                                    decode_windows, elf_cell_report, failure_group, fault_cause,
                                    fault_context, markdown, memory_matches, oracle_verdict,
                                    probe_selection, provider_symbol, reconciliation,
-                                   static_cell_search, store_hits, trace_selection,
-                                   window_candidates)
+                                   caller_hits, static_caller_search, static_cell_search,
+                                   stub_call_hits,
+                                   store_hits, trace_selection, window_candidates)
 from toyota_entries import EntryIndex
 
 
@@ -329,6 +330,146 @@ class StaticSearchTest(unittest.TestCase):
         self.assertEqual([], report["hits"])
         self.assertIn("libTOYOTA_COMM.so", report["errors"])
         self.assertEqual("libTOYOTA_COMM.so+0x6ec88", report["cell"])
+
+
+class CallerSiteTest(unittest.TestCase):
+    """Hand-encoded call sites: only a call that provably reaches the target is reported."""
+
+    def test_a_direct_bl_reports_the_caller_and_an_argument_x0(self):
+        hits, scanned, capped = caller_hits(aarch64([0x94000040], 0x1000), 0x1100, {}, {0x1000: "f"})
+        self.assertEqual((1, False), (scanned, capped))
+        self.assertEqual("direct call", hits[0]["kind"])
+        self.assertEqual("f", hits[0]["function"])
+        self.assertEqual("0x1000", hits[0]["offset"])
+        self.assertEqual("argument of the caller", hits[0]["x0"]["kind"])
+        self.assertEqual([], hits[0]["before"])
+
+    def test_a_constant_x0_is_reported_with_its_value(self):
+        hits, _, _ = caller_hits(aarch64([0x52800020, 0x94000040], 0x1000), 0x1104, {}, {0x1000: "f"})
+        self.assertEqual("constant", hits[0]["x0"]["kind"])
+        self.assertEqual("0x1", hits[0]["x0"]["detail"])
+
+    def test_an_x0_holding_a_function_address_is_reported_as_a_supplied_function(self):
+        words = [0xB0000000, 0x91010000, 0x94000040]  # adrp x0,#0x2000 ; add x0,x0,#0x40 ; bl
+        hits, _, _ = caller_hits(aarch64(words, 0x1000), 0x1108, {}, {0x2040: "CheckXOR", 0x1000: "f"})
+        self.assertEqual("address of a supplied function", hits[0]["x0"]["kind"])
+        self.assertEqual("CheckXOR at 0x2040", hits[0]["x0"]["detail"])
+
+    def test_an_indirect_call_through_the_targets_slot_is_reported(self):
+        words = [0xD0000369, 0x91004129, 0xF9400130, 0xD63F0200]  # adrp/add/ldr x16/blr x16
+        hits, _, _ = caller_hits(aarch64(words, 0x1000), None, {0x6F010: "OpenAbstractCommDll"}, {})
+        self.assertEqual("indirect call via a relocation slot", hits[0]["kind"])
+        self.assertEqual("0x100c", hits[0]["offset"])
+
+    def test_a_slot_naming_another_symbol_is_not_reported(self):
+        words = [0xD0000369, 0x91004129, 0xF9400130, 0xD63F0200]
+        hits, _, _ = caller_hits(aarch64(words, 0x1000), None, {0x6F010: "OpenDiagCommDll"}, {})
+        self.assertEqual([], hits)
+
+    def test_a_call_to_another_address_is_not_reported(self):
+        hits, _, _ = caller_hits(aarch64([0x94000041], 0x1000), 0x1100, {}, {})
+        self.assertEqual([], hits)
+
+    def test_the_twelve_instructions_before_the_call_are_kept(self):
+        words = [0x52800020] * 13 + [0x94000040]
+        hits, _, _ = caller_hits(aarch64(words, 0x1000), 0x1134, {}, {0x1000: "f"})
+        self.assertEqual(12, len(hits[0]["before"]))
+        self.assertTrue(hits[0]["before"][-1].startswith("0x1030 "))
+
+    def test_a_stack_buffer_address_is_reported_as_one(self):
+        # add x0, sp, #0x300 ; bl #0x1108
+        hits, _, _ = caller_hits(aarch64([0x910C03E0, 0x94000040], 0x1000), 0x1104, {}, {0x1000: "f"})
+        self.assertEqual("address of a stack buffer", hits[0]["x0"]["kind"])
+        self.assertEqual("sp+0x300 as sp stood at 0x1000", hits[0]["x0"]["detail"])
+
+    def test_an_x0_that_is_an_earlier_calls_return_names_that_call(self):
+        # bl #0x1200 ; bl #0x1108
+        hits, _, _ = caller_hits(aarch64([0x9400007F, 0x94000040], 0x1000), 0x1104, {},
+                                 {0x1000: "f", 0x11FC: "GetStdCfgValue"})
+        self.assertEqual("unknown", hits[0]["x0"]["kind"])
+        self.assertIn("bl #0x11fc", hits[0]["x0"]["detail"])
+        self.assertIn("GetStdCfgValue", hits[0]["x0"]["detail"])
+
+    def test_a_malformed_object_is_recorded_in_the_caller_search(self):
+        import tempfile, zipfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "toyota.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("x/libTOYOTA_COMM.so", b"\x7fELF" + b"\x00" * 120)
+            report = static_caller_search(path)
+        self.assertEqual([], report["hits"])
+        self.assertIn("libTOYOTA_COMM.so", report["errors"])
+        self.assertEqual({}, report["definitions"])
+
+
+class StubCallerTest(unittest.TestCase):
+    """A call to the object's own PLT stub is the site that carries x0."""
+
+    def payload(self):
+        return struct.pack("<II", 0x52800020, 0x94000040)  # mov w0,#1 ; bl #0x1104
+
+    def test_a_called_stub_reports_the_caller_and_the_constant_x0(self):
+        hits = stub_call_hits(self.payload(), 0x1000, {0x1000: "caller"}, {0x1104})
+        self.assertEqual(1, len(hits))
+        self.assertEqual("0x1004", hits[0]["offset"])
+        self.assertEqual("0x1104", hits[0]["stubStart"])
+        self.assertEqual("caller", hits[0]["function"])
+        self.assertEqual("constant", hits[0]["x0"]["kind"])
+        self.assertEqual("0x1", hits[0]["x0"]["detail"])
+
+    def test_a_call_without_a_function_start_reports_an_unknown_x0(self):
+        hits = stub_call_hits(self.payload(), 0x1000, {}, {0x1104})
+        self.assertEqual("unknown", hits[0]["x0"]["kind"])
+        self.assertIsNone(hits[0]["callerStart"])
+
+    def test_a_call_to_another_address_is_not_reported(self):
+        self.assertEqual([], stub_call_hits(self.payload(), 0x1000, {0x1000: "caller"}, {0x2200}))
+
+
+def stage3e_payload(callers, variant):
+    """The smallest payload that reaches the Stage 3e renderer."""
+    writers = {"libraries": ["a.so"], "cell": "a.so+0x1", "window": "±0x40", "instructionsScanned": 1,
+               "cap": 1, "scanCapped": False, "holders": {}, "hits": [], "errors": {}, "jni": {},
+               "setterLike": {}, "regex": "x"}
+    sweep = {"label": "l", "hookResults": {}, "tuples": 0, "statuses": {}, "nativeStatus": {},
+             "stops": {}, "stopTotal": 0, "afterSignatures": {}}
+    return {"tuples": {"count": 0, "systems": 0, "byCode": {}, "topBySystems": []},
+            "census": {"totals": {}, "tree": {}, "reconciliation": {"agrees": None, "reason": "x"}},
+            "probe": {"selection": {"policy": "p", "probed": 0, "totalTuples": 0}, "verdicts": {},
+                      "stopReasons": {}, "isoTpConfigurationCalls": {}, "faultGroups": [],
+                      "stage3d": {"writers": writers, "sweep": sweep, "writerCall": {"skipped": "none"}},
+                      "stage3c": {"cell": None, "link": {"linked": None, "skipped": "no test"},
+                                  "tails": [], "stage3e": {"callers": callers, "call": variant}}},
+            "tuplesProbed": []}
+
+
+class CallerReportTest(unittest.TestCase):
+    def test_a_search_without_a_site_says_not_established(self):
+        callers = {"target": "OpenAbstractCommDll", "libraries": ["a.so"], "definitions": {},
+                   "slotObjects": {}, "strings": [], "addressTakenCount": 0, "xorFunctions": [],
+                   "hitCount": 0, "x0Kinds": {}, "hits": [], "instructionsScanned": 12,
+                   "scanCapped": False, "cap": 10, "line": 1010, "errors": {}}
+        text = markdown(stage3e_payload(callers, {"skipped": "no supplied object calls this function"}))
+        self.assertIn("## Stage 3e", text)
+        self.assertIn("**NOT ESTABLISHED: no supplied caller**", text)
+        self.assertIn("Step 2 skipped on literal evidence", text)
+
+    def test_sites_and_their_x0_origin_are_tabulated(self):
+        callers = {"target": "OpenAbstractCommDll", "libraries": ["a.so"], "definitions": {"a.so": "0x1dbd8"},
+                   "slotObjects": {"a.so": ["0x59ee8"]},
+                   "strings": [{"library": "a.so", "section": ".rodata", "offset": "0x40"}],
+                   "addressTakenCount": 3,
+                   "xorFunctions": [{"name": "CheckXOR", "offset": "0x1e800", "size": 8}],
+                   "hitCount": 1, "x0Kinds": {"constant": 1},
+                   "hits": [{"library": "a.so", "offset": "0x1dc10", "function": "f",
+                             "instruction": "bl #0x1e800", "kind": "direct call",
+                             "before": ["0x1dc0c  mov w0, #1"],
+                             "x0": {"kind": "constant", "detail": "0x1"}}],
+                   "instructionsScanned": 12, "scanCapped": False, "cap": 10, "line": 1010, "errors": {}}
+        text = markdown(stage3e_payload(callers, {"skipped": "x0 is not a supplied function address"}))
+        for expected in ("| a.so | 0x1dc10 | f |", "constant: 0x1", "CheckXOR", "0x59ee8"):
+            self.assertIn(expected, text)
+        self.assertNotIn("NOT ESTABLISHED: no supplied caller", text)
 
 
 class FaultTapTest(unittest.TestCase):

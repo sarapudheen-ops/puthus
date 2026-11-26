@@ -218,7 +218,7 @@ def bind_hook(native, name, callback, libraries):
     return bound
 
 
-def build_probe(libraries, sources, can_success=1, hook_results=None):
+def build_probe(libraries, sources, can_success=1, hook_results=None, open_stub=True):
     """One sandbox for the whole probe; the freed/declared fakes mirror the oracle."""
     file, comm, sysp = "libTOYOTA_FILE.so", "libTOYOTA_COMM.so", "libTOYOTA_SYSP.so"
     reference = json.loads(REFERENCE.read_text())
@@ -237,6 +237,8 @@ def build_probe(libraries, sources, can_success=1, hook_results=None):
             comm: ("OpenAbstractCommDll", "OpenDiagFuncDll", "OpenShowInterfaceDLL"),
             sysp: ("OpenDiagCommDll", "OpenAbstractCommDll", "OpenShowInterfaceDLL")}.items():
         for function in functions:
+            if not open_stub and function == CALLER_TARGET:
+                continue  # Stage 3e variant: this one writer runs its real code once.
             native.bind(function, lambda *_: 0, library=name)
     for function in ("InitSetEnterFrame", "InitCommSet", "GetFuncCommFrameInfo",
                      "MultiPackFunc", "MultSetLinkKeepFunc", "CmdSendWithoutRec"):
@@ -1133,6 +1135,307 @@ def static_cell_search(path, cell_library="libTOYOTA_COMM.so", cell_offset=0x6ec
             "window": f"±{CELL_WINDOW:#x}", "regex": SETTER_LIKE.pattern}
 
 
+CALLER_WINDOW = 12
+CALLER_TARGET = "OpenAbstractCommDll"
+
+
+def _section_at(sections, address):
+    for start, size, name in sections:
+        if start <= address < start + size:
+            return name
+    return None
+
+
+def _x0_origin(state, starts, sections):
+    """What x0 holds at a call, in the report's own words; nothing is inferred."""
+    origin = state.get("0") or {"source": "argument"}
+    source = origin.get("source")
+    if source == "argument":
+        return {"kind": "argument of the caller",
+                "detail": "x0 is not written in this function before the call"}
+    if source == "constant":
+        return {"kind": "constant", "detail": f"{origin['value']:#x}"}
+    if source == "address":
+        address = origin["value"]
+        name = starts.get(address)
+        if name:
+            return {"kind": "address of a supplied function", "symbol": name,
+                    "detail": f"{name} at {address:#x}"}
+        return {"kind": "address inside the caller's object",
+                "detail": f"{address:#x} in {_section_at(sections, address) or 'no executable section'}"}
+    if source == "load":
+        address, symbol = origin["value"]
+        if symbol:
+            return {"kind": "load from a relocation slot",
+                    "detail": f"slot {address:#x} names {symbol}"}
+        return {"kind": "load from data", "detail": f"{address:#x}"}
+    if source == "stack":
+        return {"kind": "address of a stack buffer",
+                "detail": f"sp{origin['value']:+#x} as sp stood at {origin['at']}"}
+    if source == "clobbered":
+        called = origin.get("call")
+        if not called:
+            return {"kind": "unknown", "detail": "x0 holds an earlier call's return value"}
+        symbol = starts.get(called)
+        return {"kind": "unknown",
+                "detail": f"the return value of `{origin['text']}` made at {origin['site']}"
+                          + (f", which is `{symbol}`" if symbol else "")}
+    return {"kind": "unknown", "detail": "x0 is written in a way this scanner cannot follow"}
+
+
+def caller_hits(instructions, target=None, slots=None, starts=None, window=CALLER_WINDOW,
+                section_name="", cap=None, sections=(), symbol=CALLER_TARGET):
+    """Call sites of one named function, with the twelve instructions before each.
+
+    `slots` is the object's relocation map (slot address -> symbol name), so an
+    indirect call is reported only when the loaded slot names the target; `target` is
+    the function's own address when this object defines it. Anything else stays
+    unreported rather than guessed.
+    """
+    slots, starts = slots or {}, starts or {}
+    hits, state, scanned = [], {}, 0
+    recent = collections.deque(maxlen=window)
+    for instruction in instructions:
+        scanned += 1
+        if cap is not None and scanned > cap:
+            return hits, scanned, True
+        if instruction.address in starts:
+            state = {"sp": {"source": "sp", "value": 0}}
+            recent.clear()
+        operands = list(instruction.operands)
+        mnemonic = instruction.mnemonic
+        kind = None
+        if (mnemonic in ("bl", "b") and len(operands) == 1
+                and operands[0].type == ARM64_OP_IMM and target is not None
+                and operands[0].imm == target):
+            kind = "direct call" if mnemonic == "bl" else "direct jump"
+        elif (mnemonic in ("blr", "br") and len(operands) == 1
+              and operands[0].type == ARM64_OP_REG):
+            origin = state.get(_state_key(instruction, operands[0].reg), {})
+            loaded = origin.get("value") if origin.get("source") == "load" else None
+            if loaded and loaded[1] == symbol:
+                kind = ("indirect call via a relocation slot" if mnemonic == "blr"
+                        else "indirect jump via a relocation slot")
+            elif (origin.get("source") == "address" and target is not None
+                  and origin["value"] == target):
+                kind = "call of a computed address" if mnemonic == "blr" else "jump to a computed address"
+        if kind:
+            hits.append({"section": section_name, "offset": hex(instruction.address),
+                         "function": _nearest_function(starts, instruction.address),
+                         "instruction": f"{mnemonic} {instruction.op_str}".strip(), "kind": kind,
+                         "target": symbol, "before": list(recent),
+                         "x0": _x0_origin(state, starts, sections)})
+        key0 = _state_key(instruction, operands[0].reg) if operands and operands[0].type == ARM64_OP_REG else None
+        if mnemonic in ("adrp", "adr") and len(operands) == 2 and key0:
+            state[key0] = {"source": "address", "value": operands[1].imm}
+        elif mnemonic in ("add", "sub") and len(operands) == 3 and operands[2].type == ARM64_OP_IMM and key0:
+            origin = state.get(_state_key(instruction, operands[1].reg), {})
+            if origin.get("source") in ("sp", "stack"):
+                delta = operands[2].imm if mnemonic == "add" else -operands[2].imm
+                state[key0] = {"source": "stack", "value": origin.get("value", 0) + delta,
+                               "at": origin.get("at") or f"{instruction.address:#x}"}
+            elif origin.get("source") == "address":
+                delta = operands[2].imm if mnemonic == "add" else -operands[2].imm
+                state[key0] = {"source": "address", "value": origin["value"] + delta}
+            else:
+                state.pop(key0, None)
+        elif mnemonic in ("mov", "movz", "movn") and len(operands) == 2 and key0:
+            if operands[1].type == ARM64_OP_IMM:
+                state[key0] = {"source": "constant", "value": operands[1].imm}
+            elif (operands[1].type == ARM64_OP_REG
+                  and _state_key(instruction, operands[1].reg) in state):
+                origin = state[_state_key(instruction, operands[1].reg)]
+                state[key0] = dict(origin, at=f"{instruction.address:#x}") if origin.get("source") == "sp" else dict(origin)
+            else:
+                state.pop(key0, None)
+        elif mnemonic.startswith("ldr") or mnemonic.startswith("ldur"):
+            memory = next((operand for operand in operands if operand.type == ARM64_OP_MEM), None)
+            destination = operands[0] if operands and operands[0].type == ARM64_OP_REG else None
+            origin = state.get(_state_key(instruction, memory.mem.base), {}) if memory is not None else {}
+            if memory is not None and destination is not None and origin.get("source") == "address":
+                address = origin["value"] + memory.mem.disp
+                state[_state_key(instruction, destination.reg)] = {
+                    "source": "load", "value": (address, slots.get(address))}
+            elif destination is not None:
+                state.pop(_state_key(instruction, destination.reg), None)
+        elif mnemonic in ("bl", "blr"):
+            called = {"source": "clobbered", "call": None, "site": f"{instruction.address:#x}",
+                      "text": f"{mnemonic} {instruction.op_str}".strip()}
+            if mnemonic == "bl" and operands and operands[0].type == ARM64_OP_IMM:
+                called["call"] = operands[0].imm
+            elif mnemonic == "blr":
+                called["call"] = None
+            for index in range(8):
+                state[str(index)] = dict(called)
+        elif mnemonic in ("b", "br", "ret"):
+            state = {}
+        recent.append(f"{instruction.address:#x}  {mnemonic} {instruction.op_str}".strip())
+    return hits, scanned, False
+
+
+def _branch_target(word, address):
+    """The address a 32-bit `b`/`bl` encodes, or None for any other instruction."""
+    opcode = word >> 26
+    if opcode not in (0b100101, 0b000101):
+        return None
+    offset = word & 0x03FFFFFF
+    if offset >= 0x02000000:
+        offset -= 0x04000000
+    return address + offset * 4
+
+
+def stub_call_hits(payload, base, starts, stubs, slots=None, window=CALLER_WINDOW, section_name=""):
+    """Direct calls to one object's own PLT stubs, with the instructions before each.
+
+    The stub addresses are already known, so the scan reads the encoding words first and
+    only disassembles the caller's own body. A call with no function-start symbol above
+    it reports its x0 as unknown rather than assuming the window is the whole function.
+    """
+    if not stubs:
+        return []
+    starts, slots = starts or {}, slots or {}
+    sections = [(base, len(payload), section_name)]
+    disassembler = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    disassembler.detail = True
+    hits = []
+    for offset in range(0, len(payload) - 3, 4):
+        address = base + offset
+        target = _branch_target(struct.unpack_from("<I", payload, offset)[0], address)
+        if target is None or target not in stubs:
+            continue
+        start = max([value for value in starts if value <= address], default=None)
+        window_start = start if start is not None else max(base, address - window * 4)
+        found, _, _ = caller_hits(
+            disassembler.disasm(payload[window_start - base:address - base + 4], window_start),
+            target, slots, {window_start: starts.get(window_start, "caller")} if start is not None else {},
+            window, section_name, None, sections, CALLER_TARGET)
+        for hit in found:
+            if hit["offset"] != hex(address):
+                continue
+            if start is None:
+                hit["x0"] = {"kind": "unknown",
+                             "detail": "no function-start symbol covers this call"}
+            hits.append(dict(hit, stubStart=hex(target),
+                             callerStart=hex(start) if start is not None else None))
+    return hits
+
+
+def caller_scan(data, target_name=CALLER_TARGET, cap=None, window=CALLER_WINDOW):
+    """Call sites of one function inside one object, using that object's own tables."""
+    elf, symbols, relocations = _elf_tables(data)
+    slots = {reloc["r_offset"]: symbol.name for reloc, symbol in relocations
+             if symbol is not None and symbol.name}
+    starts = _function_starts(symbols)
+    sections = [(section["sh_addr"], section["sh_size"], section.name)
+                for section in _executable_sections(elf)]
+    symbol = symbols.get(target_name)
+    target = (symbol["st_value"] if symbol is not None
+              and symbol["st_info"]["type"] == "STT_FUNC"
+              and symbol["st_shndx"] != "SHN_UNDEF" else None)
+    strings = []
+    for section in elf.iter_sections():
+        try:
+            if section["sh_type"] in ("SHT_NOBITS", "SHT_STRTAB") or not section["sh_size"]:
+                continue
+            payload = section.data()
+        except Exception:
+            continue
+        position = payload.find(target_name.encode())
+        while position >= 0:
+            strings.append({"section": section.name,
+                            "offset": hex(section["sh_addr"] + position),
+                            "executable": bool(section["sh_flags"] & 0x4)})
+            position = payload.find(target_name.encode(), position + 1)
+    disassembler = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    disassembler.detail = True
+    hits, scanned, capped = [], 0, False
+    for section in _executable_sections(elf):
+        found, count, capped = caller_hits(disassembler.disasm(section.data(), section["sh_addr"]),
+                                           target, slots, starts, window, section.name,
+                                           (cap - scanned) if cap is not None else None,
+                                           sections, target_name)
+        hits += found
+        scanned += count
+        if capped:
+            break
+    stubs = set()
+    for hit in hits:
+        if not hit["kind"].startswith("indirect"):
+            continue
+        tail = [text.split() for text in hit["before"][-3:]]
+        if len(tail) == 3 and [part[1] for part in tail] == ["adrp", "ldr", "add"]:
+            stubs.add(int(hit["offset"], 16) - 12)
+    stub_calls = []
+    for section in _executable_sections(elf):
+        stub_calls += stub_call_hits(section.data(), section["sh_addr"], starts, stubs, slots,
+                                     window, section.name)
+    return {"target": target_name, "definesTarget": target is not None,
+            "stubs": [hex(stub) for stub in sorted(stubs)],
+            "stubCalls": stub_calls,
+            "targetOffset": hex(target) if target is not None else None,
+            "slots": [hex(slot) for slot, name in slots.items() if name == target_name],
+            "strings": strings, "hits": hits, "scanned": scanned, "capped": capped,
+            "addressTakenFunctions": [{"name": name, "offset": hex(value), "size": size}
+                                      for name, value, size in sorted(
+                                          {(item.name, item["st_value"], item["st_size"])
+                                           for reloc, item in relocations
+                                           if item is not None and item.name
+                                           and item["st_info"]["type"] == "STT_FUNC"
+                                           and item["st_shndx"] != "SHN_UNDEF"})],
+            "xorFunctions": [{"name": name, "offset": hex(value), "size": size}
+                             for name, value, size in sorted(
+                                 {(name, item["st_value"], item["st_size"])
+                                  for name, item in symbols.items()
+                                  if "xor" in name.lower()
+                                  and item["st_info"]["type"] == "STT_FUNC"})]}
+
+
+def static_caller_search(path, target=CALLER_TARGET, cap=SCAN_CAP):
+    """Every call site of one supplied function in every shipped object, plus its x0."""
+    libraries = shipped_libraries(path)
+    errors, per_object, hits, stub_calls, scanned, capped = {}, {}, [], [], 0, False
+    for name, data in libraries.items():
+        try:
+            result = caller_scan(data, target, cap - scanned)
+        except Exception as error:
+            errors[name] = ("not an ELF object, skipped" if "Magic number" in str(error)
+                            else f"{type(error).__name__}: {error}")
+            continue
+        scanned += result["scanned"]
+        capped = capped or result["capped"]
+        per_object[name] = {"definesTarget": result["definesTarget"],
+                            "targetOffset": result["targetOffset"], "slots": result["slots"],
+                            "stubs": result["stubs"], "strings": result["strings"],
+                            "addressTakenFunctions": result["addressTakenFunctions"],
+                            "xorFunctions": result["xorFunctions"]}
+        hits += [dict(hit, library=name) for hit in result["hits"]]
+        stub_calls += [dict(hit, library=name) for hit in result["stubCalls"]]
+        if capped:
+            break
+    kinds = collections.Counter(hit["x0"]["kind"] for hit in stub_calls)
+    definitions = {name: item["targetOffset"] for name, item in per_object.items() if item["definesTarget"]}
+    slots = {name: item["slots"] for name, item in per_object.items() if item["slots"]}
+    checks = sorted({(library, item["name"], item["offset"], item["size"])
+                     for library, entry in per_object.items() for item in entry["xorFunctions"]})
+    supplied = [{"library": hit["library"], "offset": hit["offset"], "function": hit["function"],
+                 "x0": hit["x0"]} for hit in stub_calls + hits
+                if hit["x0"]["kind"] == "address of a supplied function"]
+    return {"target": target, "libraries": sorted(libraries), "definitions": definitions,
+            "slotObjects": slots, "hits": hits, "hitCount": len(hits),
+            "stubCalls": stub_calls, "stubCallCount": len(stub_calls),
+            "x0Kinds": dict(kinds), "suppliedFunctionX0": supplied,
+            "xorFunctions": [{"library": library, "name": name, "offset": offset, "size": size}
+                             for library, name, offset, size in checks],
+            "objects": per_object, "errors": errors,
+            "strings": [dict(item, library=name) for name, item in per_object.items()
+                        for item in item["strings"]],
+            "addressTakenCount": sum(len(item["addressTakenFunctions"])
+                                     for item in per_object.values()),
+            "instructionsScanned": scanned, "scanCapped": capped, "cap": cap,
+            "window": f"the {CALLER_WINDOW} instructions before each site",
+            "line": _source_line("def caller_hits(")}
+
+
 def full_sweep(libraries, sources, chosen, entries, index, hook_results, label):
     """Re-run every tuple with one hook's return changed; group what happened instead.
 
@@ -1190,6 +1493,71 @@ def call_writer(libraries, sources, hit, keys, entries, index, limit=32):
     return {"label": "exploratory, not vehicle evidence",
             "called": f"{hit['library']}:{hit['function']} with eight zero words",
             "callSucceeded": called, "callError": error, "tuples": len(rows), "rows": rows}
+
+
+def call_open_pointer(libraries, sources, library, symbol, keys, entries, index):
+    """Exploratory: run the real writer with the discovered x0, then re-sweep every tuple.
+
+    The writer's stand-in is removed for exactly one call, the cell it fills is read
+    before and after, and the stand-in is restored before the tuples run, so the only
+    difference from the baseline sweep is the cell's content. Nothing is enabled and no
+    frame, timing or identifier is derived from what happens next.
+    """
+    native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(
+        libraries, sources, open_stub=False)
+    FaultTap(native)
+    try:
+        address = native.symbol(library, symbol)
+    except ReplayError as error:
+        return {"label": "exploratory, not vehicle evidence",
+                "callError": f"the addressed symbol is outside the probe sandbox: {error}"}
+    cell, before = None, None
+    try:
+        cell = native.symbol(library, "CheckXOR")
+        before = native.u64(cell)
+    except Exception:
+        cell = None
+    called, error, returned = False, None, None
+    try:
+        returned = native.call(library, CALLER_TARGET, address)
+        called = True
+    except ReplayError as failure:
+        error = str(failure)
+    after = native.u64(cell) if cell is not None else None
+    for name in ("libTOYOTA_COMM.so", "libTOYOTA_SYSP.so"):
+        if name in native.libraries and CALLER_TARGET in native.libraries[name].symbols:
+            try:
+                native.bind(CALLER_TARGET, lambda *_: 0, library=name)
+            except ReplayError:
+                pass
+    rows = []
+    for key in keys:
+        rid, function, selector = key
+        result = probe_tuple(native, files, handle, context, global_state, trace,
+                             index, rid, function, entries[key])
+        calls = [{"api": call["api"], "arguments": call["arguments"]}
+                 for call in setup_calls(result.get("calls", []))]
+        positions = [position for position, call in enumerate(calls)
+                     if call["api"] == "CanSetParameterNormal"]
+        rows.append({"region": REGION_NAMES[rid], "function": function, "selector": selector,
+                     "status": result["status"], "nativeStatus": result.get("nativeStatus"),
+                     "stop": result.get("reason") or f"returned {result.get('nativeStatus')}",
+                     "afterCanSetParameterNormal": calls[positions[-1] + 1:] if positions else []})
+    stops = collections.Counter(row["stop"] for row in rows)
+    signatures = collections.Counter(
+        "; ".join(f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
+                  for call in row["afterCanSetParameterNormal"]) for row in rows)
+    return {"label": "exploratory, not vehicle evidence",
+            "called": f"{library}:{CALLER_TARGET} with x0 = {address:#x} ({symbol})",
+            "callSucceeded": called, "callError": error, "returnValue": returned,
+            "cell": hex(cell) if cell is not None else None,
+            "cellBefore": hex(before) if before is not None else None,
+            "cellAfter": hex(after) if after is not None else None,
+            "tuples": len(rows), "rows": rows, "stops": dict(stops.most_common()),
+            "stopTotal": sum(stops.values()),
+            "statuses": dict(collections.Counter(row["status"] for row in rows)),
+            "nativeStatus": dict(collections.Counter(str(row["nativeStatus"]) for row in rows)),
+            "afterSignatures": dict(signatures.most_common())}
 
 
 def classify(entry, oracle, native):
@@ -1336,6 +1704,29 @@ def build(args):
                                        f"known load into the cell: the value written is a register argument, "
                                        f"so calling one first would invent its argument" if found else
                                        "no supplied function stores into the cell at all")}
+    callers, caller_call = None, None
+    if native is not None:
+        try:
+            callers = static_caller_search(Path(args.archive))
+        except Exception as error:
+            callers = {"error": f"{type(error).__name__}: {error}", "hits": []}
+        supplied = (callers or {}).get("suppliedFunctionX0") or []
+        if supplied:
+            first = supplied[0]
+            try:
+                caller_call = call_open_pointer(libraries, sources, first["library"],
+                                                first["x0"]["symbol"], chosen, entries, index)
+            except Exception as error:
+                caller_call = {"label": "exploratory, not vehicle evidence",
+                               "callError": f"{type(error).__name__}: {error}"}
+        else:
+            found = (callers or {}).get("hitCount", 0)
+            caller_call = {
+                "label": "exploratory, not vehicle evidence",
+                "skipped": (f"{found} call site(s) found, but no x0 is the address of a supplied "
+                            f"function (kinds: {(callers or {}).get('x0Kinds')}), so no variant was run"
+                            if found else "no supplied object calls this function at all, so there is "
+                                          "no x0 to pass and no variant was run")}
     exploratory = []
     if native is not None:
         try:
@@ -1375,6 +1766,7 @@ def build(args):
                       "stage3c": {"cell": cell, "tails": tails, "link": link},
                       "stage3d": {"writers": writers, "sweep": stage3d_sweep,
                                   "writerCall": writer_call},
+                      "stage3e": {"callers": callers, "call": caller_call},
                       "windowDecode": decode_windows(window_records),
                       "exploratory": {
                           "label": "exploratory, hook behavior is a stand-in, not vehicle evidence",
@@ -1580,6 +1972,83 @@ def markdown(payload):
             lines += [f"Called `{call.get('called')}`; returned without error: `{call.get('callSucceeded')}`; "
                       f"{call.get('tuples')} stop tuples re-run.",
                       f"- calls seen: {dict(collections.Counter(call_item['api'] for row in call.get('rows', []) for call_item in row['calls']))}"]
+        stage3e = (stage3c or {}).get("stage3e") or probe.get("stage3e") or {}
+        callers = stage3e.get("callers") or {}
+        variant = stage3e.get("call") or {}
+        lines += ["", "## Stage 3e — who calls the writer, and what its x0 carries", ""]
+        if callers.get("error"):
+            lines += [f"Caller search unavailable: {callers['error']}"]
+        else:
+            lines += [f"Objects scanned: {len(callers['libraries'])}; `{callers['target']}` is defined in "
+                      f"{len(callers['definitions'])} of them (`{callers['definitions']}`); "
+                      f"{callers['instructionsScanned']} instructions disassembled "
+                      f"(cap {callers['cap']}, capped: {callers['scanCapped']}); scanning from "
+                      f"`toyota_can_link_sweep.py:{callers['line']}`."]
+            lines += ["", f"- relocation slots naming it: {callers['slotObjects'] or 'none'}",
+                      "- copied name strings outside string tables: "
+                      + str(["{0}:{1}@{2}".format(item["library"], item["section"], item["offset"])
+                             for item in callers["strings"]] or "none"),
+                      f"- address-taken function symbols across all objects: {callers['addressTakenCount']}",
+                      f"- xor-named function symbols: {callers['xorFunctions'] or 'none'}",
+                      f"- stub sites found: {callers['hitCount']}; calls to those stubs: "
+                      f"{callers.get('stubCallCount', 0)}; x0 kinds at the stub callers: "
+                      f"{callers['x0Kinds'] or 'none'}"]
+            if callers["hits"]:
+                lines += ["", "| object | offset | caller | instruction | kind | x0 |",
+                          "|---|---:|---|---|---|---|"]
+                for hit in callers["hits"][:40]:
+                    lines.append(f"| {hit['library']} | {hit['offset']} | {hit['function']} | "
+                                 f"`{hit['instruction']}` | {hit['kind']} | "
+                                 f"{hit['x0']['kind']}: {hit['x0']['detail']} |")
+                for hit in callers["hits"][:6]:
+                    lines += ["", f"`{hit['library']}@{hit['offset']}` — the {len(hit['before'])} "
+                                  f"instructions before the {hit['kind']}:", "", "```text"]
+                    lines += [f"  {text}" for text in hit["before"] + [f"{hit['offset']}  {hit['instruction']}"]]
+                    lines += ["```"]
+            stub_calls = callers.get("stubCalls") or []
+            if stub_calls:
+                lines += ["", "### Who calls each PLT stub, and what x0 it passes", "",
+                          "| object | caller start | call offset | caller | instruction | x0 |",
+                          "|---|---:|---:|---|---|---|"]
+                for hit in stub_calls[:60]:
+                    lines.append(f"| {hit['library']} | {hit.get('callerStart')} | {hit['offset']} | "
+                                 f"{hit['function']} | `{hit['instruction']}` | "
+                                 f"{hit['x0']['kind']}: {hit['x0']['detail']} |")
+                for hit in stub_calls[:6]:
+                    lines += ["", f"`{hit['library']}@{hit['offset']}` in "
+                                  f"`{hit['function'] or hit.get('callerStart')}` — the "
+                                  f"{len(hit['before'])} instructions before the call:", "", "```text"]
+                    lines += [f"  {text}" for text in hit["before"] + [f"{hit['offset']}  {hit['instruction']}"]]
+                    lines += ["```"]
+            elif callers["hits"] and all(hit["kind"].startswith("indirect")
+                                          for hit in callers["hits"]):
+                lines += ["", f"**NOT ESTABLISHED: no supplied caller** — the {len(callers['hits'])} "
+                              f"sites are the objects' own PLT stubs, and no `bl`/`b` in any "
+                              f"object targets one of them."]
+            elif not callers["hits"]:
+                lines += ["", f"**NOT ESTABLISHED: no supplied caller** — no instruction in "
+                              f"{', '.join(callers['libraries'])} reaches `{callers['target']}`."]
+            if callers.get("errors"):
+                lines += ["", f"Search incomplete for {sorted(callers['errors'])}: {callers['errors']}"]
+        lines += ["", "### Exploratory variant — **exploratory, not vehicle evidence**", ""]
+        if variant.get("skipped"):
+            lines += [f"Step 2 skipped on literal evidence: {variant['skipped']}."]
+        elif variant.get("callError") and not variant.get("called"):
+            lines += [f"Step 2 could not run: {variant['callError']}"]
+        else:
+            lines += [f"Called `{variant.get('called')}`; returned without error: "
+                      f"`{variant.get('callSucceeded')}` (return {variant.get('returnValue')}); "
+                      f"the cell went from `{variant.get('cellBefore')}` to `{variant.get('cellAfter')}` "
+                      f"at `{variant.get('cell')}`; then all {variant.get('tuples')} tuples were re-run "
+                      f"with the writer's stand-in back in place.", ""]
+            lines += [f"- statuses: {variant.get('statuses')}",
+                      f"- native returns: {variant.get('nativeStatus')}",
+                      f"- stop causes ({variant.get('stopTotal')} of {variant.get('tuples')} tuples):", "",
+                      "| stop cause | tuples |", "|---|---:|"]
+            lines += [f"| {cause} | {count} |" for cause, count in (variant.get("stops") or {}).items()]
+            lines += ["", "| transport calls after `CanSetParameterNormal` | tuples |", "|---|---:|"]
+            lines += [f"| {signature or 'none'} | {count} |"
+                      for signature, count in list((variant.get("afterSignatures") or {}).items())[:10]]
         tails = stage3c.get("tails") or []
         lines += ["", "### The last instructions before `SystemEnterPart` returns", ""]
         for tail in tails:
