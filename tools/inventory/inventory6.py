@@ -207,6 +207,8 @@ def main():
     parser.add_argument('--work', type=Path, required=True)
     args = parser.parse_args()
     source = json.loads(args.source.read_text())
+    if source.get('headSha') != os.environ['GITHUB_SHA']:
+        raise ValueError('Inventory source SHA does not match the current workflow SHA')
     groups = build(source)
     entries = source['brands']
     assets = old.release_assets(os.environ['GH_REPO'])
