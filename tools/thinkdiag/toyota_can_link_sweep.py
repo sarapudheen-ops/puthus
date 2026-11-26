@@ -1330,9 +1330,12 @@ def build(args):
                 writer_call = {"label": "exploratory, not vehicle evidence",
                                "callError": f"{type(error).__name__}: {error}"}
         else:
+            found = len((writers or {}).get("hits") or [])
             writer_call = {"label": "exploratory, not vehicle evidence",
-                           "skipped": ("no supplied function stores a constant or a known load into "
-                                       "the cell, so there is nothing to call first")}
+                           "skipped": (f"{found} supplied writer(s) found, but none stores a constant or a "
+                                       f"known load into the cell: the value written is a register argument, "
+                                       f"so calling one first would invent its argument" if found else
+                                       "no supplied function stores into the cell at all")}
     exploratory = []
     if native is not None:
         try:

@@ -9,6 +9,8 @@ name: Inspect Toyota release data
 # Stage 3d head note: the same step now also scans every shipped object for a writer of
 # that cell and re-runs all 976 tuples with one hook return changed, so its timeout is
 # raised to 60 minutes. Steps, inputs, permissions and masking are unchanged.
+# Stage 3d docs note: the only change on this head is the written report in
+# docs/toyota-progress.md; this comment keeps actionlint on the same head as the run.
 
 on:
   workflow_dispatch:
