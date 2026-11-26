@@ -564,6 +564,36 @@ filler (232 tuples), (2) the guest rejects the non-zero stand-in return, so noth
 (4) no identifier source (245,356), (5) nine unjoined SYSP cells, (6) NA Can3 selector 98
 (5 systems).
 
+## Stage 3d — who fills the null cell, and the CAN path on a zero return
+
+Read-only; nothing enabled. Baseline: main `aa4a816`, release-data run 45638513378
+success, 13 of 14 masked steps success plus the accepted `publish_stage0_report`.
+
+**The writer exists: `OpenAbstractCommDll`.** Static search of all 24 shipped objects
+(670,323 instructions, not capped; `toyota_can_link_sweep.py:976`, `:1083`): 20 objects
+carry exactly one relocation slot holding the cell's address, and in each the same
+instruction — `str x0, [x8]` inside `OpenAbstractCommDll` — stores into the cell
+(`libTOYOTA_COMM.so+0x1dbd8`; per-object offsets in the check-run). `Funcfg.so` is not ELF
+and is skipped; no object defines `JNI_OnLoad` or imports `RegisterNatives`.
+
+**The stored value is a register argument**, not a constant or a known load, so step 3's
+condition is not met and no writer was called (the check-run says so literally). More
+important: `build_probe` binds `OpenAbstractCommDll` to a stub returning 0
+(`toyota_can_link_sweep.py:237`), so the only writer never runs and the cell keeps its
+`.bss` zero — the null slot is a harness stand-in boundary, not a missing provider.
+
+**Zero-return re-sweep** (all 976 tuples, `CanSetParameterNormal` = 0, other hooks
+unchanged; "exploratory, hook behavior is a stand-in, not vehicle evidence"): 976/976 stop
+at `Replay stopped at 0x0: Invalid memory fetch (UC_ERR_FETCH_UNMAPPED)`, **no transport
+call follows `CanSetParameterNormal` in any tuple**, no tuple returns a value. The zero
+return is spent by `COMM+0x18f30 tst w0,#0xff` feeding `SYSP+0x10fec cbnz w8,#0x110b8`; no
+other CAN hook return is tested in that window, so those stay NOT ESTABLISHED.
+
+**Still blocks CAN links, by systems unlocked:** (1) the cell's writer is stubbed, so every
+tuple dies there once the return is zero (976; 232 by default), (2) the −1 path spends a
+non-zero return before any frame call (744), (3) no CAN-class source projection (245,356),
+(4) no identifier source (245,356), (5) NA Can3 selector 98 (5 systems).
+
 ## Evidence audit / next work
 
 CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `review_direct21` (`toyota_runtime_compile.py:114-145`), then `toyota_ecmect_pack.data_for` injects the 30 reviewed `liveReads` (`toyota_ecmect_pack.py:160-173`). Direct21 review items are disabled candidates (`toyota_live.py:313-318`). DTC/ECU-info definitions come from the same pinned compiler artifact (`toyota_runtime_compile.py:142-145`, `toyota_ecmect_pack.py:160-173`); `test_ecmect_pack.py` verifies 30/1,414/1 against the selected pack, and `verify_source_read_review` checks a deterministic compiler-output pin (`toyota_runtime_compile.py:173-220`, `tools/thinkdiag/schema/mandatory-read-artifacts-v1.json`). This is source/compiler regression evidence, not a native replay of emitted category records. **No oracle for non-ECMECT PID, DTC, or ecuInfo output is established.** No human sign-off hash is established beyond source/artifact SHA pins. Mode B must remain candidate-parse, not enabling.

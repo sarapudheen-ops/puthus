@@ -21,19 +21,24 @@ import argparse
 import re
 import collections
 import hashlib
+import io
 import json
 import struct
 import time
 import traceback
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
-from capstone.arm64 import ARM64_OP_MEM, ARM64_OP_REG
+from capstone.arm64 import ARM64_OP_IMM, ARM64_OP_MEM, ARM64_OP_REG
 
+from analyze_toyota import checked_infos
 from convert_vehicle_packs import REGIONS, load_sources, system_lists
 from native_replay import XREGS, NativeSandbox, ReplayError
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_FETCH_UNMAPPED
 from unicorn.arm64_const import UC_ARM64_REG_NZCV, UC_ARM64_REG_PC, UC_ARM64_REG_SP
+from elftools.elf.elffile import ELFFile
+from elftools.elf.relocation import RelocationSection
 from pack_census import census
 from toyota_entries import EntryIndex
 from toyota_entry_runtime import signed16
@@ -213,7 +218,7 @@ def bind_hook(native, name, callback, libraries):
     return bound
 
 
-def build_probe(libraries, sources, can_success=1):
+def build_probe(libraries, sources, can_success=1, hook_results=None):
     """One sandbox for the whole probe; the freed/declared fakes mirror the oracle."""
     file, comm, sysp = "libTOYOTA_FILE.so", "libTOYOTA_COMM.so", "libTOYOTA_SYSP.so"
     reference = json.loads(REFERENCE.read_text())
@@ -248,7 +253,7 @@ def build_probe(libraries, sources, can_success=1):
     bound = {}
     for hook, count in (*HOOKS, ("EndCombination", 0), ("SetLinkKeep", 4)):
         libraries = [name for name in (comm, sysp) if hook in native.libraries[name].symbols]
-        result = can_success if hook in CAN_CONFIG_HOOKS else 1
+        result = (hook_results or {}).get(hook, can_success if hook in CAN_CONFIG_HOOKS else 1)
         owners = bind_hook(native, hook, _recorder(trace, hook, count, native, result), libraries)
         if owners:
             bound[hook] = owners
@@ -852,6 +857,341 @@ def link_exploratory(libraries, sources, cell, keys, entries, index, limit=32):
             "cell": cell["address"], "tuples": len(rows), "rows": rows}
 
 
+SHIPPED_LIMIT = 64 * 1024 * 1024
+SCAN_CAP = 4_000_000
+SETTER_LIKE = re.compile(r"(?i)(register|set|init|callback)")
+CELL_WINDOW = 0x40
+
+
+def shipped_libraries(path):
+    """Every shared object the archive ships, read for static search only."""
+    libraries = {}
+    with zipfile.ZipFile(path) as archive:
+        for info in checked_infos(archive):
+            name = PurePosixPath(info.filename).name
+            if name.endswith(".so") and info.file_size <= SHIPPED_LIMIT:
+                libraries[name] = archive.read(info)
+    return libraries
+
+
+def _symbol_entry(symbol):
+    """(name, defined) for one symbol, or None when its string table is unreadable."""
+    try:
+        name = symbol.name
+        defined = symbol["st_shndx"] != "SHN_UNDEF"
+    except Exception:
+        return None
+    return (name, defined) if name else None
+
+
+def _elf_tables(data):
+    """(defined symbols by name, relocations) of one shared object."""
+    elf = ELFFile(io.BytesIO(data))
+    tables = [elf.get_section_by_name(".dynsym")]
+    if elf.get_section_by_name(".symtab") is not None:
+        tables.append(elf.get_section_by_name(".symtab"))
+    symbols, unreadable = {}, 0
+    for table in tables:
+        if table is None:
+            continue
+        try:
+            entries = list(table.iter_symbols())
+        except Exception:
+            unreadable += 1
+            continue
+        for symbol in entries:
+            entry = _symbol_entry(symbol)
+            if entry is None:
+                unreadable += 1
+                continue
+            if entry[1]:
+                symbols.setdefault(entry[0], symbol)
+    relocations = []
+    sections = list(elf.iter_sections())
+    for section in sections:
+        if not isinstance(section, RelocationSection):
+            continue
+        try:
+            table = elf.get_section(section["sh_link"])
+        except Exception:
+            continue
+        if table is None:
+            continue
+        for reloc in section.iter_relocations():
+            symbol = table.get_symbol(reloc["r_info_sym"]) if reloc["r_info_sym"] else None
+            relocations.append((reloc, symbol))
+    elf.unreadable_symbols = unreadable
+    return elf, symbols, relocations
+
+
+def _undefined_names(elf):
+    names = set()
+    for table_name in (".dynsym", ".symtab"):
+        table = elf.get_section_by_name(table_name)
+        if table is None:
+            continue
+        try:
+            entries = list(table.iter_symbols())
+        except Exception:
+            continue
+        for symbol in entries:
+            entry = _symbol_entry(symbol)
+            if entry is not None and not entry[1]:
+                names.add(entry[0])
+    return names
+
+
+def _executable_sections(elf):
+    for section in elf.iter_sections():
+        try:
+            usable = (section["sh_type"] == "SHT_PROGBITS" and section["sh_flags"] & 0x4
+                      and section["sh_size"] and section["sh_addr"])
+        except Exception:
+            continue
+        if usable:
+            yield section
+
+
+def _function_starts(symbols):
+    starts = {}
+    for name, symbol in symbols.items():
+        if symbol["st_info"]["type"] == "STT_FUNC":
+            starts.setdefault(symbol["st_value"], name)
+    return starts
+
+
+def _nearest_function(starts, offset):
+    names = [start for start in starts if start <= offset]
+    return starts[max(names)] if names else None
+
+
+def _state_key(instruction, register):
+    """wN and xN are one register; everything else is keyed by its own name."""
+    name = instruction.reg_name(register)
+    if name[:1] in ("w", "x") and name[1:].isdigit():
+        return name[1:]
+    return name
+
+
+def store_hits(instructions, cell_target, holders, starts, window=CELL_WINDOW,
+               section_name="", cap=None, same_object=True):
+    """Stores to the cell, or to the window around it, provable from local constants.
+
+    Two address spaces are kept apart: an `adrp`/`add` chain names an address inside the
+    object being scanned (only the cell's own object can reach the cell that way), while
+    a load from a relocation slot makes the cell's address reachable from any object.
+    Anything else is left unreported rather than guessed, and the state resets at every
+    function start.
+    """
+    hits = []
+    state = {}
+    scanned = 0
+    for instruction in instructions:
+        scanned += 1
+        if cap is not None and scanned > cap:
+            return hits, scanned, True
+        if instruction.address in starts:
+            state = {}
+        operands = list(instruction.operands)
+        mnemonic = instruction.mnemonic
+        if mnemonic == "adrp" and len(operands) == 2:
+            state[_state_key(instruction, operands[0].reg)] = {"addr": ("abs", operands[1].imm),
+                                                               "value": None}
+        elif mnemonic in ("add", "sub") and len(operands) == 3 and operands[2].type == ARM64_OP_IMM:
+            source = state.get(_state_key(instruction, operands[1].reg), {})
+            address = source.get("addr")
+            if address is not None:
+                delta = operands[2].imm if mnemonic == "add" else -operands[2].imm
+                state[_state_key(instruction, operands[0].reg)] = {
+                    "addr": (address[0], address[1] + delta), "value": None}
+            else:
+                state.pop(_state_key(instruction, operands[0].reg), None)
+        elif mnemonic in ("mov", "movz", "movn") and len(operands) == 2:
+            if operands[1].type == ARM64_OP_IMM:
+                state[_state_key(instruction, operands[0].reg)] = {
+                    "addr": None, "value": f"constant {operands[1].imm:#x}"}
+            elif (operands[1].type == ARM64_OP_REG
+                  and _state_key(instruction, operands[1].reg) in state):
+                state[_state_key(instruction, operands[0].reg)] = dict(
+                    state[_state_key(instruction, operands[1].reg)])
+            else:
+                state.pop(_state_key(instruction, operands[0].reg), None)
+        elif mnemonic.startswith("ldr") or mnemonic.startswith("ldur"):
+            memory = next((operand for operand in operands if operand.type == ARM64_OP_MEM), None)
+            destination = next((operand for operand in operands if operand.type == ARM64_OP_REG), None)
+            source = state.get(_state_key(instruction, memory.mem.base), {}) if memory is not None else {}
+            address = source.get("addr")
+            if memory is not None and destination is not None and address is not None:
+                reachable = ((address[0], address[1] + memory.mem.disp) if address[0] == "abs" else None)
+                state[_state_key(instruction, destination.reg)] = {
+                    "addr": ("cell", 0) if reachable and reachable[1] in holders else None,
+                    "value": f"load from {reachable[1]:#x}" if reachable else None}
+            elif destination is not None:
+                state.pop(_state_key(instruction, destination.reg), None)
+        elif mnemonic.startswith("str") or mnemonic.startswith("stur"):
+            memory = next((operand for operand in operands if operand.type == ARM64_OP_MEM), None)
+            if memory is None:
+                continue
+            source = state.get(_state_key(instruction, memory.mem.base), {})
+            address = source.get("addr")
+            if address is None:
+                continue
+            kind = None
+            if address[0] == "abs" and same_object:
+                displaced = address[1] + memory.mem.disp - cell_target
+                kind = ("store to the cell" if displaced == 0
+                        else f"store at cell+{displaced:#x} (within ±{window:#x})")
+                if not 0 <= displaced < window:
+                    kind = None
+            elif address[0] == "cell":
+                displaced = address[1] + memory.mem.disp
+                kind = ("store to the cell" if displaced == 0
+                        else f"store at cell+{displaced:#x} (within ±{window:#x})")
+                if kind and not 0 <= displaced < window:
+                    kind = None
+            if kind is None:
+                continue
+            stored = next((operand for operand in operands if operand.type == ARM64_OP_REG), None)
+            hits.append({"section": section_name, "offset": hex(instruction.address),
+                         "function": _nearest_function(starts, instruction.address),
+                         "instruction": f"{instruction.mnemonic} {instruction.op_str}".strip(),
+                         "kind": kind,
+                         "storedValue": (state.get(_state_key(instruction, stored.reg), {}).get("value")
+                                         if stored else None)
+                         or "not determined by a constant or a known load"})
+    return hits, scanned, False
+
+
+def scan_stores(data, target, holders, window=CELL_WINDOW, cap=SCAN_CAP, same_object=True):
+    """Every executable section of one object, scanned for provable stores."""
+    elf, symbols, relocations = _elf_tables(data)
+    starts = _function_starts(symbols)
+    disassembler = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+    disassembler.detail = True
+    hits, scanned = [], 0
+    for section in _executable_sections(elf):
+        found, count, capped = store_hits(disassembler.disasm(section.data(), section["sh_addr"]),
+                                          target, holders, starts, window, section.name, cap - scanned,
+                                          same_object)
+        hits += found
+        scanned += count
+        if capped:
+            return {"hits": hits, "scanned": scanned, "capped": True}
+    return {"hits": hits, "scanned": scanned, "capped": False}
+
+
+def static_cell_search(path, cell_library="libTOYOTA_COMM.so", cell_offset=0x6ec88):
+    """Who writes the cell: direct stores, address-taken slots, and setter-like exports."""
+    libraries = shipped_libraries(path)
+    if cell_library not in libraries:
+        return {"libraries": sorted(libraries), "error": f"{cell_library} is not shipped"}
+    target = cell_offset
+    # Slot vaddrs that hold the cell's address, per object; plus per-object errors.
+    errors, jni, exports, holders = {}, {}, {}, {}
+    for name, data in libraries.items():
+        try:
+            elf, symbols, relocations = _elf_tables(data)
+            slots = set()
+            for reloc, symbol in relocations:
+                if symbol is not None and symbol.name == "CheckXOR":
+                    slots.add(reloc["r_offset"])
+                elif (name == cell_library and "r_addend" in getattr(reloc, "entry", {})
+                      and reloc["r_addend"] == cell_offset):
+                    slots.add(reloc["r_offset"])
+            holders[name] = slots
+            undefined = _undefined_names(elf)
+            jni[name] = {"definesJNI_OnLoad": "JNI_OnLoad" in symbols,
+                         "importsRegisterNatives": "RegisterNatives" in undefined}
+            names = sorted(symbol_name for symbol_name, symbol in symbols.items()
+                           if symbol["st_info"]["type"] == "STT_FUNC" and SETTER_LIKE.search(symbol_name))
+            exports[name] = {"count": len(names), "sample": names[:20],
+                             "xorLike": [name for name in names if "xor" in name.lower()]}
+        except Exception as error:
+            message = f"{type(error).__name__}: {error}"
+            errors[name] = ("not an ELF object, skipped" if "Magic number" in str(error) else message)
+    hits, scanned, capped = [], 0, False
+    for name, data in libraries.items():
+        holders_of_this_library = holders.get(name, set())
+        if name != cell_library and not holders_of_this_library:
+            continue
+        try:
+            result = scan_stores(data, target, holders_of_this_library,
+                                 same_object=name == cell_library)
+        except Exception as error:
+            errors[name] = f"{type(error).__name__}: {error}"
+            continue
+        scanned += result["scanned"]
+        capped = capped or result["capped"]
+        for hit in result["hits"]:
+            hits.append(dict(hit, library=name))
+    return {"libraries": sorted(libraries), "cell": f"{cell_library}+{cell_offset:#x}",
+            "holders": {name: sorted(slots) and [hex(slot) for slot in sorted(slots)]
+                        for name, slots in holders.items() if slots},
+            "hits": hits, "instructionsScanned": scanned, "scanCapped": capped,
+            "errors": errors,
+            "cap": SCAN_CAP, "jni": jni, "setterLike": exports,
+            "window": f"±{CELL_WINDOW:#x}", "regex": SETTER_LIKE.pattern}
+
+
+def full_sweep(libraries, sources, chosen, entries, index, hook_results, label):
+    """Re-run every tuple with one hook's return changed; group what happened instead.
+
+    Exploratory by construction: the return value is a stand-in, so nothing here is
+    vehicle evidence. Every tuple's own row is kept in the JSON payload.
+    """
+    native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(
+        libraries, sources, hook_results=hook_results)
+    FaultTap(native)
+    rows = []
+    for key in chosen:
+        rid, function, selector = key
+        result = probe_tuple(native, files, handle, context, global_state, trace,
+                            index, rid, function, entries[key])
+        calls = [{"api": call["api"], "arguments": call["arguments"]}
+                 for call in setup_calls(result.get("calls", []))]
+        positions = [position for position, call in enumerate(calls)
+                     if call["api"] == "CanSetParameterNormal"]
+        after = calls[positions[-1] + 1:] if positions else []
+        stop = result.get("reason") or f"returned {result.get('nativeStatus')}"
+        rows.append({"region": REGION_NAMES[rid], "function": function, "selector": selector,
+                     "status": result["status"], "nativeStatus": result.get("nativeStatus"),
+                     "stop": stop, "afterCanSetParameterNormal": after})
+    stops = collections.Counter(row["stop"] for row in rows)
+    after_signatures = collections.Counter(
+        "; ".join(f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
+                  for call in row["afterCanSetParameterNormal"])
+        for row in rows)
+    return {"label": label, "tuples": len(rows), "hookResults": dict(hook_results),
+            "statuses": dict(collections.Counter(row["status"] for row in rows)),
+            "nativeStatus": dict(collections.Counter(str(row["nativeStatus"]) for row in rows)),
+            "stops": dict(stops.most_common()), "stopTotal": sum(stops.values()),
+            "afterSignatures": dict(after_signatures.most_common()),
+            "rows": rows}
+
+
+def call_writer(libraries, sources, hit, keys, entries, index, limit=32):
+    """Exploratory: call the supplied function that writes the cell, then re-run stops."""
+    native, files, handle, context, global_state, trace, bound, linked, unlinked = build_probe(libraries, sources)
+    FaultTap(native)
+    called, error = False, None
+    try:
+        native.call(hit["library"], hit["function"], *([0] * 8))
+        called = True
+    except ReplayError as failure:
+        error = str(failure)
+    rows = []
+    for key in keys[:limit]:
+        rid, function, selector = key
+        result = probe_tuple(native, files, handle, context, global_state, trace,
+                            index, rid, function, entries[key])
+        rows.append({"region": REGION_NAMES[rid], "function": function, "selector": selector,
+                     "status": result["status"], "nativeStatus": result.get("nativeStatus"),
+                     "calls": setup_calls(result.get("calls", [])), "reason": result.get("reason")})
+    return {"label": "exploratory, not vehicle evidence",
+            "called": f"{hit['library']}:{hit['function']} with eight zero words",
+            "callSucceeded": called, "callError": error, "tuples": len(rows), "rows": rows}
+
+
 def classify(entry, oracle, native):
     """matched / mismatched need a source expectation; the transport-1/5 class is the only one."""
     if oracle["status"] == "projected_transport_class":
@@ -966,6 +1306,36 @@ def build(args):
             tails = instruction_tail(libraries, sources, trace_selection(candidates), entries, index)
         except Exception as error:
             tails = [{"status": "blocked", "reason": f"{type(error).__name__}: {error}"}]
+    writers, stage3d_sweep, writer_call = None, None, None
+    if native is not None:
+        try:
+            writers = static_cell_search(Path(args.archive))
+        except Exception as error:
+            writers = {"error": f"{type(error).__name__}: {error}", "hits": []}
+        try:
+            stage3d_sweep = full_sweep(libraries, sources, chosen, entries, index,
+                                       {"CanSetParameterNormal": 0},
+                                       "exploratory, hook behavior is a stand-in, not vehicle evidence")
+        except Exception as error:
+            stage3d_sweep = {"label": "exploratory, hook behavior is a stand-in, not vehicle evidence",
+                             "error": f"{type(error).__name__}: {error}", "rows": []}
+        writable = [hit for hit in (writers or {}).get("hits", [])
+                    if (hit.get("storedValue") or "").startswith("constant") and hit.get("function")]
+        if writable:
+            try:
+                stopped_keys = [key for key, row in zip(chosen, rows)
+                                if row["nativeSetup"].get("fault") or row["nativeSetup"].get("status") == "traced"]
+                writer_call = call_writer(libraries, sources, writable[0], stopped_keys, entries, index)
+            except Exception as error:
+                writer_call = {"label": "exploratory, not vehicle evidence",
+                               "callError": f"{type(error).__name__}: {error}"}
+        else:
+            found = len((writers or {}).get("hits") or [])
+            writer_call = {"label": "exploratory, not vehicle evidence",
+                           "skipped": (f"{found} supplied writer(s) found, but none stores a constant or a "
+                                       f"known load into the cell: the value written is a register argument, "
+                                       f"so calling one first would invent its argument" if found else
+                                       "no supplied function stores into the cell at all")}
     exploratory = []
     if native is not None:
         try:
@@ -1003,6 +1373,8 @@ def build(args):
                       "faultWithContext": sum(fault_groups.values()),
                       "faultAnalysisErrors": dict(fault_errors),
                       "stage3c": {"cell": cell, "tails": tails, "link": link},
+                      "stage3d": {"writers": writers, "sweep": stage3d_sweep,
+                                  "writerCall": writer_call},
                       "windowDecode": decode_windows(window_records),
                       "exploratory": {
                           "label": "exploratory, hook behavior is a stand-in, not vehicle evidence",
@@ -1104,6 +1476,7 @@ def markdown(payload):
               f"produce -1. The value is the guest's own X0 return from `SystemEnterPart`, read at "
               f"`toyota_can_link_sweep.py:{call_line}` via `signed16(...)`."]
     stage3c = probe.get("stage3c")
+    stage3d = (stage3c or {}).get("stage3d") or probe.get("stage3d") or {}
     cell = (stage3c or {}).get("cell")
     if stage3c:
         lines += ["", "## Stage 3c — the cell behind the null slot, and the -1 decision", ""]
@@ -1150,6 +1523,63 @@ def markdown(payload):
                     lines.append(f"- {row['region']}/{row['function']}/{row['selector']:#04x}: "
                                  + "; ".join(f"{call['api']}({', '.join(str(value) for value in call['arguments'])})"
                                              for call in row["calls"]))
+        writers = stage3d.get("writers") or {}
+        lines += ["", "## Stage 3d — who fills the cell, and what the CAN path does on a zero return", ""]
+        lines += ["### Static search for a writer (all shipped objects)", ""]
+        if writers.get("error"):
+            lines += [f"Static search unavailable: {writers['error']}"]
+        else:
+            lines += [f"Objects scanned: {', '.join(writers['libraries'])}; cell `{writers['cell']}`; "
+                      f"window {writers['window']}; {writers['instructionsScanned']} instructions scanned "
+                      f"(cap {writers['cap']}, capped: {writers['scanCapped']}).", "",
+                      f"Address-taken slots holding the cell address: {writers['holders'] or 'none'}.", ""]
+            if writers["hits"]:
+                lines += ["| object | offset | function | instruction | kind | stored value |",
+                          "|---|---:|---|---|---|---|"]
+                for hit in writers["hits"][:40]:
+                    lines.append(f"| {hit['library']} | {hit['offset']} | {hit['function']} | "
+                                 f"`{hit['instruction']}` | {hit['kind']} | {hit['storedValue']} |")
+            else:
+                if writers.get("errors"):
+                    lines += [f"Search incomplete for {sorted(writers['errors'])}: {writers['errors']}"]
+                else:
+                    lines += ["**NOT ESTABLISHED: no static writer** — no instruction in any shipped "
+                              "object provably stores to the cell or its window, and no relocation makes "
+                              "another object reference it."]
+        if writers.get("jni"):
+            lines += ["", "| object | defines JNI_OnLoad | imports RegisterNatives | setter-like exports | of those, xor-named |",
+                      "|---|---|---|---:|---|"]
+            for name, flags in writers["jni"].items():
+                exports = writers["setterLike"][name]
+                lines.append(f"| {name} | {flags['definesJNI_OnLoad']} | {flags['importsRegisterNatives']} | "
+                             f"{exports['count']} | {exports['xorLike'] or 'none'} |")
+            lines += ["", f"Setter-like check: exported functions matching `{writers['regex']}`; "
+                      "samples per object are in the JSON payload."]
+        sweep = stage3d.get("sweep") or {}
+        lines += ["", "### Full re-sweep with `CanSetParameterNormal` returning 0", "",
+                  f"**{sweep.get('label')}**. Hook returns used: `{sweep.get('hookResults')}`; "
+                  f"tuples re-run: {sweep.get('tuples')}.", ""]
+        if sweep.get("error"):
+            lines += [f"Re-sweep unavailable: {sweep['error']}"]
+        else:
+            lines += [f"- statuses: {sweep['statuses']}",
+                      f"- native returns: {sweep['nativeStatus']}",
+                      f"- stop causes ({sweep['stopTotal']} of {sweep['tuples']} tuples):", "",
+                      "| stop cause | tuples |", "|---|---:|"]
+            lines += [f"| {cause} | {count} |" for cause, count in sweep["stops"].items()]
+            lines += ["", "| transport calls after `CanSetParameterNormal` | tuples |", "|---|---:|"]
+            lines += [f"| {signature or 'none'} | {count} |"
+                      for signature, count in list(sweep["afterSignatures"].items())[:10]]
+        call = stage3d.get("writerCall") or {}
+        lines += ["", "### Exploratory call of the writer — **exploratory, not vehicle evidence**", ""]
+        if call.get("skipped"):
+            lines += [f"Step 3 skipped on literal evidence: {call['skipped']}"]
+        elif call.get("callError") and not call.get("called"):
+            lines += [f"Step 3 could not run: {call['callError']}"]
+        else:
+            lines += [f"Called `{call.get('called')}`; returned without error: `{call.get('callSucceeded')}`; "
+                      f"{call.get('tuples')} stop tuples re-run.",
+                      f"- calls seen: {dict(collections.Counter(call_item['api'] for row in call.get('rows', []) for call_item in row['calls']))}"]
         tails = stage3c.get("tails") or []
         lines += ["", "### The last instructions before `SystemEnterPart` returns", ""]
         for tail in tails:
