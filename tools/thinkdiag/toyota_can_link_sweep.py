@@ -874,19 +874,38 @@ def shipped_libraries(path):
     return libraries
 
 
+def _symbol_entry(symbol):
+    """(name, defined) for one symbol, or None when its string table is unreadable."""
+    try:
+        name = symbol.name
+        defined = symbol["st_shndx"] != "SHN_UNDEF"
+    except Exception:
+        return None
+    return (name, defined) if name else None
+
+
 def _elf_tables(data):
     """(defined symbols by name, relocations) of one shared object."""
     elf = ELFFile(io.BytesIO(data))
     tables = [elf.get_section_by_name(".dynsym")]
     if elf.get_section_by_name(".symtab") is not None:
         tables.append(elf.get_section_by_name(".symtab"))
-    symbols = {}
+    symbols, unreadable = {}, 0
     for table in tables:
         if table is None:
             continue
-        for symbol in table.iter_symbols():
-            if symbol.name and symbol["st_shndx"] != "SHN_UNDEF":
-                symbols.setdefault(symbol["name"], symbol)
+        try:
+            entries = list(table.iter_symbols())
+        except Exception:
+            unreadable += 1
+            continue
+        for symbol in entries:
+            entry = _symbol_entry(symbol)
+            if entry is None:
+                unreadable += 1
+                continue
+            if entry[1]:
+                symbols.setdefault(entry[0], symbol)
     relocations = []
     sections = list(elf.iter_sections())
     for section in sections:
@@ -901,6 +920,7 @@ def _elf_tables(data):
         for reloc in section.iter_relocations():
             symbol = table.get_symbol(reloc["r_info_sym"]) if reloc["r_info_sym"] else None
             relocations.append((reloc, symbol))
+    elf.unreadable_symbols = unreadable
     return elf, symbols, relocations
 
 
@@ -910,16 +930,25 @@ def _undefined_names(elf):
         table = elf.get_section_by_name(table_name)
         if table is None:
             continue
-        for symbol in table.iter_symbols():
-            if symbol.name and symbol["st_shndx"] == "SHN_UNDEF":
-                names.add(symbol.name)
+        try:
+            entries = list(table.iter_symbols())
+        except Exception:
+            continue
+        for symbol in entries:
+            entry = _symbol_entry(symbol)
+            if entry is not None and not entry[1]:
+                names.add(entry[0])
     return names
 
 
 def _executable_sections(elf):
     for section in elf.iter_sections():
-        if (section["sh_type"] == "SHT_PROGBITS" and section["sh_flags"] & 0x4
-                and section["sh_size"] and section["sh_addr"]):
+        try:
+            usable = (section["sh_type"] == "SHT_PROGBITS" and section["sh_flags"] & 0x4
+                      and section["sh_size"] and section["sh_addr"])
+        except Exception:
+            continue
+        if usable:
             yield section
 
 
@@ -1078,7 +1107,8 @@ def static_cell_search(path, cell_library="libTOYOTA_COMM.so", cell_offset=0x6ec
             exports[name] = {"count": len(names), "sample": names[:20],
                              "xorLike": [name for name in names if "xor" in name.lower()]}
         except Exception as error:
-            errors[name] = f"{type(error).__name__}: {error}"
+            message = f"{type(error).__name__}: {error}"
+            errors[name] = ("not an ELF object, skipped" if "Magic number" in str(error) else message)
     hits, scanned, capped = [], 0, False
     for name, data in libraries.items():
         holders_of_this_library = holders.get(name, set())
@@ -1506,12 +1536,13 @@ def markdown(payload):
                 for hit in writers["hits"][:40]:
                     lines.append(f"| {hit['library']} | {hit['offset']} | {hit['function']} | "
                                  f"`{hit['instruction']}` | {hit['kind']} | {hit['storedValue']} |")
-            elif writers.get("errors"):
-                lines += [f"Search incomplete for {sorted(writers['errors'])}: {writers['errors']}"]
-            if not writers["hits"]:
-                lines += ["**NOT ESTABLISHED: no static writer** — no instruction in any shipped object "
-                          "provably stores to the cell or its window, and no relocation makes another "
-                          "object reference it."]
+            else:
+                if writers.get("errors"):
+                    lines += [f"Search incomplete for {sorted(writers['errors'])}: {writers['errors']}"]
+                else:
+                    lines += ["**NOT ESTABLISHED: no static writer** — no instruction in any shipped "
+                              "object provably stores to the cell or its window, and no relocation makes "
+                              "another object reference it."]
         if writers.get("jni"):
             lines += ["", "| object | defines JNI_OnLoad | imports RegisterNatives | setter-like exports | of those, xor-named |",
                       "|---|---|---|---:|---|"]
