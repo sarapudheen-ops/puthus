@@ -34,6 +34,9 @@ jobs:
           mkdir -p .local/inventory
           set -o pipefail
           python tools/inventory/inventory4.py --output .local/inventory/report --max-seconds 1800 2>&1 | tee .local/inventory/inventory.log
+      - name: Verify committed inventory against this SHA
+        if: steps.inventory.outcome == 'success'
+        run: python tools/inventory/verify_document.py .local/inventory/report
       - name: Publish partial or complete release reports
         if: always() && steps.inventory.outcome != 'skipped'
         run: |
