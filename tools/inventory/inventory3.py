@@ -63,15 +63,28 @@ def experiment(table, own_table, own_error):
             canonical = PurePosixPath(canonical).name
         if not data.startswith(MAGIC):
             result['experiment'] = {'parsed': None, 'reason': 'not applicable: not YZJM'}
-        elif not control.eligible(canonical):
-            result['experiment'] = {'parsed': None, 'reason': 'not applicable: no converter container reader for this name'}
         else:
             try:
                 payload = decode_yzjm(data, table).payload
-                reader = control.reader(canonical, payload)
-                result['experiment'] = {'parsed': True, 'reader': reader}
             except (ValueError, IndexError, KeyError, TypeError, OverflowError) as exc:
-                result['experiment'] = {'parsed': False, 'error': f'{type(exc).__name__}: {exc}'}
+                error = f'{type(exc).__name__}: {exc}'
+                result['experiment'] = {'parsed': False if control.eligible(canonical) else None,
+                                        'decodeError': error}
+                if control.eligible(canonical):
+                    result['experiment']['error'] = error
+                else:
+                    result['experiment']['reason'] = 'not applicable: no converter container reader for this name'
+            else:
+                if not control.eligible(canonical):
+                    result['experiment'] = {'parsed': None, 'decoded': True,
+                                            'reason': 'not applicable: no converter container reader for this name'}
+                else:
+                    try:
+                        reader = control.reader(canonical, payload)
+                        result['experiment'] = {'parsed': True, 'decoded': True, 'reader': reader}
+                    except (ValueError, IndexError, KeyError, TypeError, OverflowError) as exc:
+                        result['experiment'] = {'parsed': False, 'decoded': True,
+                                                'error': f'{type(exc).__name__}: {exc}'}
         return result
     return run
 
@@ -82,12 +95,15 @@ def metrics(entry):
     other = Counter(row['first8'] for row in rows if row.get('headerClass') == 'other recognized magic')
     trials = [row['experiment'] for row in rows if row.get('experiment', {}).get('parsed') is not None]
     failures = Counter(row['error'] for row in trials if not row['parsed'])
+    decode_errors = Counter(row['experiment']['decodeError'] for row in rows if row.get('experiment', {}).get('decodeError'))
+    decoded = sum(bool(row.get('experiment', {}).get('decoded')) for row in rows)
     not_applicable = Counter(row['experiment']['reason'] for row in rows
                              if row.get('experiment', {}).get('parsed') is None and 'experiment' in row)
     return {'sample': len(rows), 'yzjm': classes['YZJM'], 'other': classes['other recognized magic'],
             'unrecognized': classes['no recognized header'], 'unmeasured': classes['unmeasured'],
             'otherFirst8Top5': other.most_common(5),
             'parsed': sum(bool(row['parsed']) for row in trials), 'applicable': len(trials),
+            'decoded': decoded, 'decodeErrors': dict(sorted(decode_errors.items())),
             'errors': dict(sorted(failures.items())), 'notApplicable': dict(sorted(not_applicable.items()))}
 
 
@@ -100,8 +116,8 @@ def section(state):
              'The same per-archive sampling rule as Inventory-2 is used; the exploratory denominator is '
              'sampled YZJM files with a converter reader keyed to the file name. An empty denominator is '
              'not a 0% failure. The Toyota table is kept only in memory, never published.', '',
-             '| brand | sampled | YZJM | other magic (top first-8-byte hex: count) | no recognized header | unmeasured | libDEVICEID size / SHA-256 | vs Toyota | same VA bytes | contains Toyota table | exploratory parsed/applicable | outcome |',
-             '| --- | ---: | ---: | --- | ---: | ---: | --- | --- | --- | --- | --- | --- |']
+             '| brand | sampled | YZJM | other magic (top first-8-byte hex: count) | no recognized header | unmeasured | libDEVICEID size / SHA-256 | vs Toyota | same VA bytes | contains Toyota table | decoded YZJM | exploratory parsed/applicable | outcome |',
+             '| --- | ---: | ---: | --- | ---: | ---: | --- | --- | --- | --- | ---: | --- | --- |']
     for entry in state['brands']:
         m, d = metrics(entry), entry['device']
         other = ', '.join(f'{h}: {n}' for h, n in m['otherFirst8Top5']) or 'none'
@@ -112,7 +128,7 @@ def section(state):
                    if m['applicable'] and m['parsed'] * 10 >= m['applicable'] * 9 else 'no verdict change')
         lines.append(f"| {entry['brand']} | {m['sample']} | {m['yzjm']} | {other} (total {m['other']}) | "
                      f"{m['unrecognized']} | {m['unmeasured']} | {identity} | {d['status']} | {va} | {anywhere} | "
-                     f"{m['parsed']}/{m['applicable']} | {outcome} |")
+                     f"{m['decoded']} | {m['parsed']}/{m['applicable']} | {outcome} |")
     lines += ['', '### Exploratory ranking', '',
               '| rank | brand | parsed/applicable | rate |', '| ---: | --- | --- | ---: |']
     ordered = sorted(state['brands'][1:], key=lambda e: (-(metrics(e)['parsed'] / metrics(e)['applicable']
@@ -125,6 +141,8 @@ def section(state):
     for entry in state['brands']:
         m = metrics(entry)
         lines.append(f"- **{entry['brand']}**: " + ('; '.join(f'{old.escape(k)}: {v}' for k, v in m['errors'].items()) or 'no failed applicable samples'))
+        if m['decodeErrors']:
+            lines.append('  - Decoder errors (including non-applicable names): ' + '; '.join(f'{old.escape(k)}: {v}' for k, v in m['decodeErrors'].items()))
         if entry['device'].get('vaError'):
             lines.append(f"  - VA read: {old.escape(entry['device']['vaError'])}")
     return '\n'.join(lines) + '\n\n'
@@ -150,6 +168,7 @@ def publish(state, output):
     inventory2.write_report(state, output)
     path = output / 'brand-inventory.md'
     text = path.read_text()
+    text = text.replace('A match does not prove compatibility: the verdict requires the passing control and at least one decoded BIN parsed with a converter reader.', 'Inventory-3 verdict changes require at least 90% of applicable sampled YZJM BINs to parse with the Toyota table; this experiment does not verify the container layout.')
     if state['control']['passed'] and state['brands']:
         marker = '## Summary\n'
         text = text.replace(marker, section(state) + marker, 1)
