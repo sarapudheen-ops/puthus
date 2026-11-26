@@ -597,9 +597,8 @@ non-zero return before any frame call (744), (3) no CAN-class source projection 
 ## Stage 3e — who calls the writer, and what its x0 carries
 
 Read-only; nothing enabled. Baseline: main `df69fe6` has no run of its own (the three commits
-above `0e098f0` touch only brand-inventory files), so the newest main release-data run is
-45737946032 on `0e098f0` — success, 13 of 14 masked steps plus the accepted
-`publish_stage0_report` failure.
+above `0e098f0` touch only brand-inventory files), so the newest main run is 45737946032 on
+`0e098f0` — success, 13 of 14 masked steps plus the accepted `publish_stage0_report` failure.
 
 **Every caller reaches it through its own PLT stub, and none passes an address.** All 24
 objects were disassembled (822,193 instructions, not capped; `static_caller_search` at
@@ -613,11 +612,12 @@ x0 at those callers: **75 forward the caller's own x0 untouched**; **64 are the 
 of the call immediately before** (`bl #0x11d20` in `libDIAG.so:CheckSystemInfoForAll`,
 `bl #0x6b00` in `libDEVICEID.so:GetSysFunCfg`). No site passes a constant, a load from data
 or the address of a supplied function, so step 2's condition is not met — **no variant ran
-and no transport call was gained**. The xor-named exports checked (`CheckXOR` 168 B,
-`Can2CheckXOR` 168 B, `CanCmdCheckXor` 96 B, `CmdCheckXor` 68 B) are the cell's own symbol,
-not any x0 in the supplied objects. **So the cell is filled from one frame above anything the
-harness reaches**: the caller's caller produces it, the cell keeps its `.bss` zero, and every
-CAN tuple still stops there.
+and no transport call was gained**. The four xor-named exports — all in
+`libCOMM_ABSTRACT_LAYER.so`: `CheckXOR` `+0x1b89c` (168 B), `Can2CheckXOR` `+0x1ffc0`
+(168 B), `CanCmdCheckXor` `+0x39fb8` (96 B), `CmdCheckXor` `+0x25a20` (68 B) — are never an
+x0 at any site. **So the cell is filled from one frame above anything the harness reaches**:
+the caller's caller produces it, the cell keeps its `.bss` zero, and every CAN tuple still
+stops there.
 
 ## Evidence audit / next work
 
