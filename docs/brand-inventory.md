@@ -902,3 +902,16 @@ Toyota control: 287,030 systems; `pack_census.py:55-57,80-86,120`; pipeline stem
 | VOLVO | MENU | ECU_DATA, FUNCDATA, SYSLIST, SYSTEMENTER | not run: missing ECU_DATA, FUNCDATA, SYSLIST, SYSTEMENTER |
 | VW | MENU | ECU_DATA, FUNCDATA, SYSLIST, SYSTEMENTER | not run: missing ECU_DATA, FUNCDATA, SYSLIST, SYSTEMENTER |
 <!-- INVENTORY5 END -->
+
+## Inventory-6: observed stem clusters
+Jaccard single-linkage connected components over BIN stem sets; Toyota is included. Two empty sets do not link. Similarity is not proof of a format family. Full tables, representative profiles and per-brand sets are published in `ci-reports-v1` and the Inventory-6 checks.
+<!-- INVENTORY6 START -->
+## Documentation summary
+
+- Jaccard 0.8: 69 clusters; 66 singleton clusters (65 non-Toyota brands); Toyota cluster has 1 member(s).
+- Jaccard 0.5: 56 clusters; 48 singleton clusters (47 non-Toyota brands); Toyota cluster has 1 member(s).
+- Jaccard 0.2: 20 clusters; 12 singleton clusters (11 non-Toyota brands); Toyota cluster has 1 member(s).
+- Incomplete nested ZIP census: NISSAN. Clusters are based only on observed stems.
+
+- Representative profiles complete: 56/56.
+<!-- INVENTORY6 END -->

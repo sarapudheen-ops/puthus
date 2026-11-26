@@ -158,6 +158,9 @@ jobs:
           set -o pipefail
           python tools/inventory/inventory6.py --source .local/inventory6/source/brand-inventory.json \
             --work .local/inventory6/downloads --output .local/inventory6/report 2>&1 | tee .local/inventory6/clusters.log
+      - name: Verify Inventory-6 document against this SHA
+        if: steps.clusters.outcome == 'success'
+        run: python tools/inventory/verify_cluster_document.py .local/inventory6/report
       - name: Publish cluster reports
         if: always() && steps.clusters.outcome != 'skipped'
         env:

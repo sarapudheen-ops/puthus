@@ -189,9 +189,10 @@ jobs:
           PY
           mkdir -p .local/toyota-census/release-readback
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern 'pack-census.*' --pattern toyota-pack-report.md --dir .local/toyota-census/release-readback
-          for asset in pack-census.md pack-census.json toyota-pack-report.md; do
+          for asset in pack-census.md pack-census.json; do
             cmp ".local/toyota-census/$asset" ".local/toyota-census/release-readback/$asset"
           done
+          cmp .local/toyota-pack-report.md .local/toyota-census/release-readback/toyota-pack-report.md
           echo '## Release asset read-back: first 40 lines of pack-census.md'
           head -40 .local/toyota-census/release-readback/pack-census.md
 
