@@ -66,3 +66,28 @@ jobs:
         run: |
           cat .local/inventory/inventory.log
           exit 1
+
+  census-control:
+    name: Inventory-5 Toyota census control
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Restore previously generated Toyota packs
+        uses: actions/cache/restore@v5
+        with:
+          path: .local/toyota-vehicle-packs
+          key: toyota-vehicle-packs-v1-${{ runner.os }}-${{ hashFiles('tools/thinkdiag/*.py', 'tools/thinkdiag/requirements.txt', 'tools/thinkdiag/verification/*.json', 'tools/thinkdiag/schema/*') }}
+      - name: Run unchanged Toyota pack census
+        run: python tools/inventory/census_control.py --packs .local/toyota-vehicle-packs --output .local/inventory5-control
+      - name: Publish Toyota census control
+        run: |
+          conclusion=$(python -c "import json; print('success' if json.load(open('.local/inventory5-control/control-result.json'))['passed'] else 'neutral')")
+          gh api --method POST "repos/$GH_REPO/check-runs" -f name='Inventory-5 Toyota census control' -f "head_sha=$GITHUB_SHA" -f status=completed -f "conclusion=$conclusion" -f 'output[title]=Inventory-5 Toyota census control' -F 'output[summary]=@.local/inventory5-control/control.md'
+          cat .local/inventory5-control/control.md >> "$GITHUB_STEP_SUMMARY"
