@@ -7,6 +7,7 @@ from toyota_can_link_sweep import (address_evidence, annotate_steps, can_tuples,
                                    fault_context, markdown, memory_matches, oracle_verdict,
                                    probe_selection, provider_symbol, reconciliation,
                                    caller_hits, static_caller_search, static_cell_search,
+                                   stub_call_hits,
                                    store_hits, trace_selection, window_candidates)
 from toyota_entries import EntryIndex
 
@@ -385,6 +386,30 @@ class CallerSiteTest(unittest.TestCase):
         self.assertEqual([], report["hits"])
         self.assertIn("libTOYOTA_COMM.so", report["errors"])
         self.assertEqual({}, report["definitions"])
+
+
+class StubCallerTest(unittest.TestCase):
+    """A call to the object's own PLT stub is the site that carries x0."""
+
+    def payload(self):
+        return struct.pack("<II", 0x52800020, 0x94000040)  # mov w0,#1 ; bl #0x1104
+
+    def test_a_called_stub_reports_the_caller_and_the_constant_x0(self):
+        hits = stub_call_hits(self.payload(), 0x1000, {0x1000: "caller"}, {0x1104})
+        self.assertEqual(1, len(hits))
+        self.assertEqual("0x1004", hits[0]["offset"])
+        self.assertEqual("0x1104", hits[0]["stubStart"])
+        self.assertEqual("caller", hits[0]["function"])
+        self.assertEqual("constant", hits[0]["x0"]["kind"])
+        self.assertEqual("0x1", hits[0]["x0"]["detail"])
+
+    def test_a_call_without_a_function_start_reports_an_unknown_x0(self):
+        hits = stub_call_hits(self.payload(), 0x1000, {}, {0x1104})
+        self.assertEqual("unknown", hits[0]["x0"]["kind"])
+        self.assertIsNone(hits[0]["callerStart"])
+
+    def test_a_call_to_another_address_is_not_reported(self):
+        self.assertEqual([], stub_call_hits(self.payload(), 0x1000, {0x1000: "caller"}, {0x2200}))
 
 
 def stage3e_payload(callers, variant):
