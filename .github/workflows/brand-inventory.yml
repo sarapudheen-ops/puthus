@@ -1,0 +1,68 @@
+name: Brand inventory
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['arena/**']
+
+permissions:
+  contents: write
+  checks: write
+
+jobs:
+  inventory:
+    name: Brand inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install ELF reader
+        run: python -m pip install pyelftools==0.32
+      - name: Test inventory
+        run: python -m unittest discover -s tools/inventory -p 'test_*.py' -v
+      - name: Run gated decoded inventory
+        id: inventory
+        timeout-minutes: 35
+        continue-on-error: true
+        run: |
+          mkdir -p .local/inventory
+          set -o pipefail
+          python tools/inventory/inventory2.py --output .local/inventory/report --max-seconds 1800 2>&1 | tee .local/inventory/inventory.log
+      - name: Verify committed summary against this SHA
+        if: steps.inventory.outcome == 'success'
+        run: python tools/inventory/verify_document.py .local/inventory/report
+      - name: Publish partial or complete release reports
+        if: always() && steps.inventory.outcome != 'skipped'
+        run: |
+          test -s .local/inventory/report/brand-inventory.md
+          test -s .local/inventory/report/brand-inventory.json
+          gh release upload ci-reports-v1 .local/inventory/report/brand-inventory.md .local/inventory/report/brand-inventory.json --clobber
+      - name: Publish check runs
+        if: always() && steps.inventory.outcome != 'skipped'
+        env:
+          OUTCOME: ${{ steps.inventory.outcome }}
+        run: |
+          test -s .local/inventory/report/parts.json
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          report = Path('.local/inventory/report')
+          state = json.loads((report / 'brand-inventory.json').read_text())
+          conclusion = 'success' if os.environ['OUTCOME'] == 'success' and state['control']['passed'] and not state['pending'] else 'failure'
+          for part in json.loads((report / 'parts.json').read_text()):
+              subprocess.run(['gh', 'api', '--method', 'POST', f"repos/{os.environ['GH_REPO']}/check-runs",
+                              '-f', f"name={part['name']}", '-f', f"head_sha={os.environ['GITHUB_SHA']}",
+                              '-f', 'status=completed', '-f', f'conclusion={conclusion}',
+                              '-f', f"output[title]={part['name']}", '-F', f"output[summary]=@{part['file']}"], check=True)
+          PY
+      - name: Fail if inventory failed
+        if: always() && steps.inventory.outcome == 'failure'
+        run: |
+          cat .local/inventory/inventory.log
+          exit 1
