@@ -376,6 +376,20 @@ class CallerSiteTest(unittest.TestCase):
         self.assertEqual(12, len(hits[0]["before"]))
         self.assertTrue(hits[0]["before"][-1].startswith("0x1030 "))
 
+    def test_a_stack_buffer_address_is_reported_as_one(self):
+        # add x0, sp, #0x300 ; bl #0x1108
+        hits, _, _ = caller_hits(aarch64([0x910C03E0, 0x94000040], 0x1000), 0x1104, {}, {0x1000: "f"})
+        self.assertEqual("address of a stack buffer", hits[0]["x0"]["kind"])
+        self.assertEqual("sp+0x300 as sp stood at 0x1000", hits[0]["x0"]["detail"])
+
+    def test_an_x0_that_is_an_earlier_calls_return_names_that_call(self):
+        # bl #0x1200 ; bl #0x1108
+        hits, _, _ = caller_hits(aarch64([0x9400007F, 0x94000040], 0x1000), 0x1104, {},
+                                 {0x1000: "f", 0x11FC: "GetStdCfgValue"})
+        self.assertEqual("unknown", hits[0]["x0"]["kind"])
+        self.assertIn("bl #0x11fc", hits[0]["x0"]["detail"])
+        self.assertIn("GetStdCfgValue", hits[0]["x0"]["detail"])
+
     def test_a_malformed_object_is_recorded_in_the_caller_search(self):
         import tempfile, zipfile
         with tempfile.TemporaryDirectory() as tmp:

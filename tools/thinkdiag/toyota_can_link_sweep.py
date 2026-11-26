@@ -1169,8 +1169,17 @@ def _x0_origin(state, starts, sections):
             return {"kind": "load from a relocation slot",
                     "detail": f"slot {address:#x} names {symbol}"}
         return {"kind": "load from data", "detail": f"{address:#x}"}
+    if source == "stack":
+        return {"kind": "address of a stack buffer",
+                "detail": f"sp{origin['value']:+#x} as sp stood at {origin['at']}"}
     if source == "clobbered":
-        return {"kind": "unknown", "detail": "x0 holds an earlier call's return value"}
+        called = origin.get("call")
+        if not called:
+            return {"kind": "unknown", "detail": "x0 holds an earlier call's return value"}
+        symbol = starts.get(origin["call"])
+        return {"kind": "unknown",
+                "detail": f"the return value of `{origin['text']}` at {origin['call']:#x}"
+                          + (f" (`{symbol}`)" if symbol else "")}
     return {"kind": "unknown", "detail": "x0 is written in a way this scanner cannot follow"}
 
 
@@ -1191,7 +1200,7 @@ def caller_hits(instructions, target=None, slots=None, starts=None, window=CALLE
         if cap is not None and scanned > cap:
             return hits, scanned, True
         if instruction.address in starts:
-            state = {}
+            state = {"sp": {"source": "sp", "value": 0}}
             recent.clear()
         operands = list(instruction.operands)
         mnemonic = instruction.mnemonic
@@ -1221,7 +1230,11 @@ def caller_hits(instructions, target=None, slots=None, starts=None, window=CALLE
             state[key0] = {"source": "address", "value": operands[1].imm}
         elif mnemonic in ("add", "sub") and len(operands) == 3 and operands[2].type == ARM64_OP_IMM and key0:
             origin = state.get(_state_key(instruction, operands[1].reg), {})
-            if origin.get("source") == "address":
+            if origin.get("source") in ("sp", "stack"):
+                delta = operands[2].imm if mnemonic == "add" else -operands[2].imm
+                state[key0] = {"source": "stack", "value": origin.get("value", 0) + delta,
+                               "at": origin.get("at") or f"{instruction.address:#x}"}
+            elif origin.get("source") == "address":
                 delta = operands[2].imm if mnemonic == "add" else -operands[2].imm
                 state[key0] = {"source": "address", "value": origin["value"] + delta}
             else:
@@ -1231,7 +1244,8 @@ def caller_hits(instructions, target=None, slots=None, starts=None, window=CALLE
                 state[key0] = {"source": "constant", "value": operands[1].imm}
             elif (operands[1].type == ARM64_OP_REG
                   and _state_key(instruction, operands[1].reg) in state):
-                state[key0] = dict(state[_state_key(instruction, operands[1].reg)])
+                origin = state[_state_key(instruction, operands[1].reg)]
+                state[key0] = dict(origin, at=f"{instruction.address:#x}") if origin.get("source") == "sp" else dict(origin)
             else:
                 state.pop(key0, None)
         elif mnemonic.startswith("ldr") or mnemonic.startswith("ldur"):
@@ -1245,8 +1259,14 @@ def caller_hits(instructions, target=None, slots=None, starts=None, window=CALLE
             elif destination is not None:
                 state.pop(_state_key(instruction, destination.reg), None)
         elif mnemonic in ("bl", "blr"):
+            called = {"source": "clobbered", "call": instruction.address + 4,
+                      "text": f"{mnemonic} {instruction.op_str}".strip()}
+            if mnemonic == "bl" and operands and operands[0].type == ARM64_OP_IMM:
+                called["call"] = operands[0].imm
+            elif mnemonic == "blr":
+                called["call"] = None
             for index in range(8):
-                state[str(index)] = {"source": "clobbered"}
+                state[str(index)] = dict(called)
         elif mnemonic in ("b", "br", "ret"):
             state = {}
         recent.append(f"{instruction.address:#x}  {mnemonic} {instruction.op_str}".strip())
