@@ -130,3 +130,58 @@ jobs:
         run: |
           cat .local/inventory5/brands.log
           exit 1
+
+  clusters:
+    name: Inventory-6 stem clusters
+    needs: inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install inventory reader
+        run: python -m pip install pyelftools==0.32
+      - name: Download complete inventory data
+        run: |
+          mkdir -p .local/inventory6/source .local/inventory6/downloads
+          gh release download ci-reports-v1 --pattern brand-inventory.json --dir .local/inventory6/source
+      - name: Cluster and profile representatives
+        id: clusters
+        timeout-minutes: 35
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tools/inventory/inventory6.py --source .local/inventory6/source/brand-inventory.json \
+            --work .local/inventory6/downloads --output .local/inventory6/report 2>&1 | tee .local/inventory6/clusters.log
+      - name: Verify Inventory-6 document against this SHA
+        if: steps.clusters.outcome == 'success'
+        run: python tools/inventory/verify_cluster_document.py .local/inventory6/report
+      - name: Publish cluster reports
+        if: always() && steps.clusters.outcome != 'skipped'
+        env:
+          OUTCOME: ${{ steps.clusters.outcome }}
+        run: |
+          test -s .local/inventory6/report/inventory6.md
+          gh release upload ci-reports-v1 .local/inventory6/report/inventory6.md .local/inventory6/report/inventory6.json --clobber
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          path = Path('.local/inventory6/report')
+          state = json.loads((path / 'inventory6.json').read_text())
+          conclusion = 'success' if os.environ['OUTCOME'] == 'success' and len(state['profiles']) == len(state['representatives']) else 'failure'
+          for part in json.loads((path / 'parts.json').read_text()):
+              subprocess.run(['gh', 'api', '--method', 'POST', f"repos/{os.environ['GH_REPO']}/check-runs",
+                              '-f', f"name={part['name']}", '-f', f"head_sha={os.environ['GITHUB_SHA']}",
+                              '-f', 'status=completed', '-f', f'conclusion={conclusion}',
+                              '-f', f"output[title]={part['name']}", '-F', f"output[summary]=@{part['file']}"], check=True)
+          PY
+      - name: Fail on clustering errors
+        if: always() && steps.clusters.outcome == 'failure'
+        run: |
+          cat .local/inventory6/clusters.log
+          exit 1
