@@ -624,3 +624,13 @@ stops there.
 CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `review_direct21` (`toyota_runtime_compile.py:114-145`), then `toyota_ecmect_pack.data_for` injects the 30 reviewed `liveReads` (`toyota_ecmect_pack.py:160-173`). Direct21 review items are disabled candidates (`toyota_live.py:313-318`). DTC/ECU-info definitions come from the same pinned compiler artifact (`toyota_runtime_compile.py:142-145`, `toyota_ecmect_pack.py:160-173`); `test_ecmect_pack.py` verifies 30/1,414/1 against the selected pack, and `verify_source_read_review` checks a deterministic compiler-output pin (`toyota_runtime_compile.py:173-220`, `tools/thinkdiag/schema/mandatory-read-artifacts-v1.json`). This is source/compiler regression evidence, not a native replay of emitted category records. **No oracle for non-ECMECT PID, DTC, or ecuInfo output is established.** No human sign-off hash is established beyond source/artifact SHA pins. Mode B must remain candidate-parse, not enabling.
 
 **Next work:** rank source-bound read-only work from the successful report's literal Mode B and rejection histograms; then implement and test one category only when both executable translation and an oracle comparison exist. Keep Mode B non-enabling. Preserve the existing two enabled systems until another category clears those gates. No merge.
+
+## Stage 4a — read-only function-schema discovery
+
+- CI-only probe inspects 39,363 proven transport-1 K-Line systems; the pinned ECMECT control is separate. Nothing is enabled and no validator changed.
+- FUNCDATA slots 1, 2 and 3 are established fault, clear and live-data blocks, not actuator/coding/special-function classifications (`toyota_functions.py:163-169`, `toyota_live.py:185-206`).
+- Observed non-null blocks: slot 1: 31,251 systems; slot 2: 31,009; slot 3: 38,131; slot 4: 25,746; slot 5: 0.
+- Slot 4 and slot 5 category and record skeleton are NOT ESTABLISHED; span-length histograms are not treated as record layouts. They do not establish counts for any requested category.
+- Names, commands, parameters and security/seed-key markers for actuators, coding and special functions remain NOT ESTABLISHED; no security algorithm is inferred.
+- ECMECT slots 1/2 frame bindings were compared to the bounded COMM native lookup, not a full operation; slot 3 stored live command records lack an established request-builder replay, and slot 4 is unparsed. The CI probe lists exact bytes and outcomes without treating them as requested-category evidence.
+- Full per-slot histograms, ECMECT results, errors and source SHA: `Stage 4a schema probe` check and `stage-4a-probe.md`/`.json` in `ci-reports-v1`. Category blockers cannot be ranked by systems unlocked until category-to-slot assignment is established.

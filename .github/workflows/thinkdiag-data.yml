@@ -257,6 +257,7 @@ jobs:
             --output "$DIR" > "$DIR/stage4a.log" 2>&1
           STATUS=$?
           if [ ! -s "$DIR/stage-4a-probe.md" ] || [ ! -s "$DIR/stage-4a-probe.json" ]; then
+            # shellcheck disable=SC2016
             python3 -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); log=(p/"stage4a.log").read_text(); (p/"stage-4a-probe.md").write_text("# Stage 4a probe failed before report generation\n\n```text\n"+log+"\n```\n"); (p/"stage-4a-probe.json").write_text(json.dumps({"error":log,"exitStatus":int(sys.argv[2])})+"\n")' "$DIR" "$STATUS"
             STATUS=1
           fi

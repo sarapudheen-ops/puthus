@@ -143,8 +143,10 @@ def run(args):
     slots = []
     for slot, hist in counts.items():
         ordered = sorted(hist.items(), key=lambda x: (-x[1], x[0]))
+        parsed = [(k, v) for k, v in ordered if 'recordSkeleton' not in json.loads(k)]
         slots.append({'slot': slot, 'category': LABELS[slot], 'evidence': CITES[slot],
-                      'systemsWithBlock': sum(hist.values()), 'distinctObservedSkeletons': len(hist) if slot <= 3 else None,
+                      'systemsWithBlock': sum(hist.values()), 'distinctObservedSkeletons': len(parsed) if slot <= 3 else None,
+                      'unparsedSystems': sum(v for k, v in ordered if 'recordSkeleton' in json.loads(k)),
                       'spanLengthBuckets': len(hist) if slot > 3 else None,
                       'top10': [{'shape': json.loads(k), 'systems': v} for k,v in ordered[:10]],
                       'otherSystems': sum(v for _,v in ordered[10:]),
@@ -154,7 +156,7 @@ def run(args):
 
 def markdown(data):
     out = ['# Stage 4a schema probe', '', f"Head: `{data['headSha']}`; proven transport-1 K-Line systems: {data['systems']:,}. ECMECT is separately pinned, not in the 39,363.", '',
-           'Investigation only; no category enabled. Histograms are system-weighted, not unique-function counts. Unknown slots have span-length buckets only, not inferred record shapes.', '',
+           'Investigation only; no category enabled. Histograms are system-weighted, not unique-function counts. Unknown slots have span-length buckets only, not inferred record shapes. Distinct skeletons exclude unparsed spans; see JSON unparsedSystems.', '',
            '| slot | category evidence | non-null systems | distinct skeletons | top ten shapes and system counts | other systems |', '|---:|---|---:|---:|---|---:|']
     for x in data['slots']:
         top = '<br>'.join(f"`{json.dumps(p['shape'], separators=(',',':'))}`: {p['systems']}" for p in x['top10']) or 'none'
