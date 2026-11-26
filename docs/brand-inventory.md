@@ -1,426 +1,864 @@
-# Brand inventory — exploratory Toyota-table investigation
+# Brand inventory — decoded BIN structure and file stems
 
-Read-only evidence only; nothing is enabled. This document's inventory sections are verified in CI against the report generated on the commit containing this file. For complete per-file data, consult the [CI reports release](https://github.com/sarapudheen-ops/puthus/releases/tag/ci-reports-v1) and the check run for that commit. A commit cannot embed its own SHA without changing that SHA.
+Read-only evidence; nothing is enabled. The section below is verified by CI against the report generated for the commit containing this document. A commit cannot contain its own SHA without changing it. For the complete report and per-file JSON see [ci-reports-v1](https://github.com/sarapudheen-ops/puthus/releases/tag/ci-reports-v1) and the check on that commit.
 
-## Main baseline
+Toyota control: 108/108 applicable sampled BINs decoded and parsed using the filename-specific converter readers. The filename-agnostic generic typed-table check below is separate and should not be confused with that control.
 
-Main `aa4a816216f845867bf9345200cb532d50bf7450`: [release-data run](https://github.com/sarapudheen-ops/puthus/actions/runs/45638513378) succeeded. [Toyota masked-step outcomes](https://github.com/sarapudheen-ops/puthus/runs/139302918325):
+<!-- INVENTORY4 START -->
+## Inventory-4: decoded structure and filename stems
 
-| step | raw outcome |
-| --- | --- |
-| code1_lifecycle_sweep | success |
-| publish_ecu_input | success |
-| publish_native_outcome | success |
-| publish_link_promotion | success |
-| publish_stage1b_report | success |
-| publish_stage1c_report | success |
-| publish_sweep_reports | success |
-| publish_convert_log | success |
-| publish_sweep_evidence | success |
-| publish_static_reports | success |
-| publish_dtc_shards | success |
-| publish_inspection_check | success |
-| publish_stage3a_report | success |
-| publish_stage0_report | failure (known and accepted) |
+exploratory: filename ignored, success is self-verifying only if the container reader accepts the layout.
 
-## Toyota control
+Only Toyota and brands with byte-identical `libDEVICEID.so` are measured. Entropy is Shannon entropy of the first 4 KiB, rounded to three decimals; below 7.2 is “looks structured”, otherwise “looks random”. This heuristic does not verify correctness. Toyota table decoding has no integrity check. The generic reader is `toyota_structure.typed_table`; it can accept a structurally valid table without proving its semantics.
 
-108/108 applicable sampled BINs parsed; strict majority (>50%) passed, with zero errors. The outer sample comprises all 8 eligible files; the nested sample comprises 100 of 1,307 eligible files (50 shallowest, then uniform stride). See the generated report for the exact path and control details.
+| brand | decoded | structured / random | first 8 bytes top 5 (hex: count) | matches Toyota first 8 (files; values) | generic parsed / attempted |
+| --- | ---: | --- | --- | --- | --- |
+| TOYOTA | 75 | 75 / 0 | 0d00000000450000: 16, 0c00000000400000: 11, 0900000000310000: 7, 0b000000003b0000: 6, 0c00000003400000: 4 | 75; 01000000b4b00000, 03011100000002af, 030114000000020c, 03011400000002a9, 03011400000002aa, 03011400000002c2, 05000000051d0000, 08000000002c0000, 0900000000310000, 0b000000003b0000, 0b000000023b0000, 0c00000000400000, 0c00000003400000, 0d00000000450000, 0d00000002450000, 0e000000004a0000, 0f000000004f0000, 1000000000540000, 1100000001000100, 1127000034550000, 1801000000810100, 1c010000001d3200, 1c01000000952900, 1c01000000d12f00, 214e000024370000, 99000000ffffffff, b31a000001000000 | 0 / 75 |
+| ASTONMARTIN | 5 | 5 / 0 | 02090054434f4445: 4, 362300004dba0000: 1 | 0; none | 0 / 5 |
+| AUDI | 14 | 14 / 0 | 0100000008000000: 2, 0001003b00000002: 1, 0300000019030000: 1, 04000000af000101: 1, 0505004155444900: 1 | 1; 1801000000810100 | 0 / 14 |
+| AUSTHOLDEN | 16 | 16 / 0 | 010300002c410000: 2, 0000000000000000: 1, 0000493514000000: 1, 0103000000000000: 1, 0103000047430000: 1 | 0; none | 0 / 16 |
+| BENZ | 6 | 6 / 0 | 08005647534e4147: 1, 0c00000100e13300: 1, 1801000000810100: 1, 28508f0000150a01: 1, 3a00000001000100: 1 | 1; 1801000000810100 | 0 / 6 |
+| BXGM | 0 | 0 / 0 | none | 0; none | 0 / 0 |
+| CHANGAN | 32 | 32 / 0 | 0f22000200007a10: 2, 372500000000ba29: 2, 380800000000c241: 2, 761811000000b2c3: 2, a4170300000022bd: 2 | 0; none | 0 / 32 |
+| CITROEN | 17 | 17 / 0 | 1110000028000000: 2, 0026000018040000: 1, 01000000980a0000: 1, 0100020500323138: 1, 012f000029010000: 1 | 1; 1801000000810100 | 0 / 17 |
+| DAEWOO | 0 | 0 / 0 | none | 0; none | 0 / 0 |
+| DAIHATSU | 2 | 2 / 0 | 00f00000740c0000: 1, 20000000005d1800: 1 | 0; none | 0 / 2 |
+| FLYER | 69 | 69 / 0 | b00b10000000825d: 7, 7b3600000000dab3: 4, a52a000000002a55: 4, cb11000000005a8e: 4, 0f14100000007aa0: 3 | 0; none | 0 / 69 |
+| FUTIAN | 8 | 8 / 0 | 2e12000000007291: 2, 0166000004010000: 1, 01660000e97c0200: 1, 77000000011000fc: 1, 981000000000c284: 1 | 0; none | 0 / 8 |
+| GM | 33 | 33 / 0 | 0000000000000000: 1, 0103000000000000: 1, 010300000c430000: 1, 010300001c430000: 1, 0103000034400000: 1 | 1; 1801000000810100 | 0 / 33 |
+| IVECO | 0 | 0 / 0 | none | 0; none | 0 / 0 |
+| JIAO | 8 | 8 / 0 | bc0200000000e215: 2, 000000001b030000: 1, 0100000000000a00: 1, 026b0000e3040000: 1, 040000000010a0ec: 1 | 0; none | 0 / 8 |
+| JINLONG | 5 | 5 / 0 | 0000000091020000: 1, 0100160000000a00: 1, 026b0000dc020000: 1, 0300000014000000: 1, 1c0016000000e200: 1 | 0; none | 0 / 5 |
+| LANDROVER | 88 | 88 / 0 | 011b98cd68020e30: 3, 011b98cd68020f30: 2, 000000000000032b: 1, 0000000000000543: 1, 0007030180000002: 1 | 0; none | 0 / 88 |
+| LIUWEI_TY | 23 | 23 / 0 | 8b08260a00005a44: 4, 9c12000a0000e294: 4, 551211000000aa92: 3, 751700000000aabb: 3, 0000000048860000: 1 | 0; none | 0 / 23 |
+| LUXGEN | 1 | 1 / 0 | 1a01870000000277: 1 | 0; none | 0 / 1 |
+| MAZDA | 10 | 10 / 0 | 08000000543a0300: 1, 08000000b8790000: 1, 08000000ca130000: 1, 0f6f000000000000: 1, 1801000000810100: 1 | 1; 1801000000810100 | 0 / 10 |
+| OPEL | 16 | 15 / 1 | 0020ef0700002608: 1, 00a4fb0200012400: 1, 0100058824100000: 1, 01000588440f0000: 1, 010005885d200000: 1 | 1; 1801000000810100 | 0 / 16 |
+| PEUGEOT | 17 | 17 / 0 | 01000000980a0000: 1, 012f000000000000: 1, 0900000001000100: 1, 1400000016000000: 1, 1410000028000000: 1 | 1; 1801000000810100 | 0 / 17 |
+| QOROS | 6 | 6 / 0 | de0509000000f22e: 2, 0000000066040000: 1, 019e000062050000: 1, 2a000000001020de: 1, 4d160000000a0020: 1 | 0; none | 0 / 6 |
+| SAICMG | 15 | 15 / 0 | 010000000f800000: 2, 020000000c000000: 1, 0801000000090900: 1, 08010000000d2700: 1, 0801000000310000: 1 | 1; 1801000000810100 | 0 / 15 |
+| SAICROEWE | 12 | 12 / 0 | 010000000c000000: 1, 010000000f800000: 1, 0801000000090900: 1, 0801000000471c00: 1, 0801000000690200: 1 | 0; none | 0 / 12 |
+| SEAT | 11 | 11 / 0 | 0001003b00000002: 1, 0300000019030000: 1, 04000000af000101: 1, 0505004155444900: 1, 06011080ff310000: 1 | 1; 1801000000810100 | 0 / 11 |
+| SGM | 28 | 28 / 0 | 00f0000091560802: 1, 0100000000000000: 1, 010000008c1f0000: 1, 0201000001a00000: 1, 0300000001009202: 1 | 1; 1801000000810100 | 0 / 28 |
+| SKODA | 12 | 12 / 0 | 0001003b00000002: 1, 0300000019030000: 1, 04000000af000101: 1, 0505004155444900: 1, 06011080ff310000: 1 | 1; 1801000000810100 | 0 / 12 |
+| SMART | 3 | 3 / 0 | 08004d45375f3435: 1, 1801000000810100: 1, 2808010000c60e00: 1 | 1; 1801000000810100 | 0 / 3 |
+| SPRINTER | 3 | 3 / 0 | 0200000001000100: 1, 1801000000810100: 1, 28185f00006d6200: 1 | 1; 1801000000810100 | 0 / 3 |
+| SUZUKI | 9 | 9 / 0 | 00fc91380000bd74: 1, 02fb000000032230: 1, 1a15ff0004233000: 1, 2000001000279202: 1, 4100000000002001: 1 | 0; none | 0 / 9 |
+| USAFORD | 1 | 1 / 0 | 1801000000810100: 1 | 1; 1801000000810100 | 0 / 1 |
+| VOLVO | 4 | 4 / 0 | 18000100c47b0500: 1, 1801000000510100: 1, 65020000c50100ff: 1, c4e5018702410348: 1 | 0; none | 0 / 4 |
+| VW | 14 | 14 / 0 | 0001003b00000002: 1, 0300000019030000: 1, 04000000af000101: 1, 0505004155444900: 1, 06011080ff310000: 1 | 1; 1801000000810100 | 0 / 14 |
 
-<!-- INVENTORY3 START -->
-## Inventory-3: BIN headers, libDEVICEID, and Toyota-table experiment
+### Decoded per-file entropy
 
-exploratory: Toyota table applied to other brands; success is self-verifying because the decoded bytes must parse in the container reader, failure proves nothing.
+The values below are the first-4-KiB entropy of each sampled decoded BIN; paths are archive member names.
 
-YZJM magic: `05 00 59 5a 4a 4d 00`. Other recognized magic uses the explicit signatures listed in `tools/inventory/inventory3.py`; text, entropy and arbitrary nonzero bytes are not treated as recognized magic. Unmeasured samples include encrypted or oversized members.
+**TOYOTA**
 
-The same per-archive sampling rule as Inventory-2 is used; the exploratory denominator is sampled YZJM files with a converter reader keyed to the file name. An empty denominator is not a 0% failure. Decoded YZJM counts mean the decoder returned bytes, not that the key or payload is valid: YZJM has no integrity check. The Toyota table is kept only in memory, never published.
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0001.BIN`: 2.361 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0002.BIN`: 2.340 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0004.BIN`: 3.250 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0005.BIN`: 2.888 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0006.BIN`: 2.849 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0007.BIN`: 2.438 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0008.BIN`: 2.890 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0009.BIN`: 2.895 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_000a.BIN`: 2.750 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_000b.BIN`: 2.352 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_000c.BIN`: 2.194 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_000d.BIN`: 2.269 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_000e.BIN`: 2.234 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_000f.BIN`: 2.588 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0011.BIN`: 2.547 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0012.BIN`: 2.715 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0013.BIN`: 2.237 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0014.BIN`: 2.350 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0015.BIN`: 2.350 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0016.BIN`: 2.135 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0017.BIN`: 3.015 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0018.BIN`: 3.167 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0019.BIN`: 2.223 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_001e.BIN`: 2.774 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_001f.BIN`: 2.076 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0020.BIN`: 2.666 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0021.BIN`: 2.049 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0022.BIN`: 2.277 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0023.BIN`: 2.129 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0024.BIN`: 2.907 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0025.BIN`: 2.794 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_005c.BIN`: 3.104 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_009a.BIN`: 2.912 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_00cb.BIN`: 2.466 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_00fe.BIN`: 1.617 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0130.BIN`: 1.738 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_01ab.BIN`: 2.220 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_01e9.BIN`: 2.275 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_021b.BIN`: 2.729 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0259.BIN`: 2.379 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_000d.BIN`: 2.273 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_004f.BIN`: 2.535 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_0099.BIN`: 2.655 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_00cd.BIN`: 2.347 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_0104.BIN`: 2.000 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_0137.BIN`: 2.216 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_016b.BIN`: 2.418 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_019d.BIN`: 1.922 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_01dc.BIN`: 2.336 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_0209.BIN`: 2.431 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/JP/Ecu_Data_0261.BIN`: 2.347 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_000f.BIN`: 2.588 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_004f.BIN`: 2.535 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_0095.BIN`: 2.106 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_00c8.BIN`: 2.299 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_00fe.BIN`: 1.617 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_0130.BIN`: 1.736 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_01bd.BIN`: 2.193 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_01f4.BIN`: 2.319 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/NA/Ecu_Data_0227.BIN`: 2.343 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/CUSTLISTDATA.BIN`: 3.901 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/CUSTOMLISTM.BIN`: 4.652 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/DTCH_CFG.BIN`: 4.317 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/ECUPROGRAM.BIN`: 3.623 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/FUNCDATA_EU.BIN`: 3.979 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/FUNCDATA_JP.BIN`: 3.855 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/FUNCDATA_NA.BIN`: 3.932 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/FUNCH_CFG.BIN`: 2.524 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/MENU.BIN`: 3.008 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/SPECFUNC.BIN`: 5.088 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/SYSLIST_EU.BIN`: 4.572 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/SYSLIST_JP.BIN`: 5.177 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/SYSLIST_NA.BIN`: 4.881 — looks structured
+- `DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/SYSTEMENTER.BIN`: 4.241 — looks structured
 
-| brand | sampled | YZJM | other magic (top first-8-byte hex: count) | no recognized header | unmeasured | libDEVICEID size / SHA-256 | vs Toyota | same VA bytes | contains Toyota table | decoded YZJM | exploratory parsed/applicable | outcome |
-| --- | ---: | ---: | --- | ---: | ---: | --- | --- | --- | --- | ---: | --- | --- |
-| TOYOTA | 76 | 75 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | reference | not applicable | not applicable | 75 | 68/68 | decodes with Toyota table, container layout not verified |
-| ASTONMARTIN | 6 | 5 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 5 | 0/0 | no verdict change |
-| AUDI | 24 | 14 | none (total 0) | 9 | 1 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 14 | 0/0 | no verdict change |
-| AUSTHOLDEN | 26 | 16 | none (total 0) | 10 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 16 | 0/0 | no verdict change |
-| AUTOSEARCH | 100 | 99 | none (total 0) | 0 | 1 | 79600 / `f3c1ce545cb5181703de5e7cb2c8a36a9853800fe247a22a03723b82eedee3b9` | different | false | true | 99 | 0/0 | no verdict change |
-| BENZ | 25 | 6 | none (total 0) | 19 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 6 | 0/0 | no verdict change |
-| BMW | 100 | 8 | none (total 0) | 92 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 8 | 0/0 | no verdict change |
-| BXFIAT | 2 | 1 | none (total 0) | 1 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 1 | 0/0 | no verdict change |
-| BXGM | 3 | 0 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 0 | 0/0 | no verdict change |
-| CHANGAN | 33 | 32 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 32 | 0/0 | no verdict change |
-| CHANGCHENG | 33 | 20 | none (total 0) | 13 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 20 | 0/0 | no verdict change |
-| CHANGHE | 14 | 7 | none (total 0) | 7 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 7 | 0/0 | no verdict change |
-| CHRYSLER | 24 | 20 | none (total 0) | 4 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 20 | 0/0 | no verdict change |
-| CITROEN | 22 | 17 | none (total 0) | 3 | 2 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 17 | 0/0 | no verdict change |
-| DAEWOO | 3 | 0 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 0 | 0/0 | no verdict change |
-| DAIHATSU | 3 | 2 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 2 | 0/0 | no verdict change |
-| DEMO | 2 | 0 | none (total 0) | 2 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 0 | 0/0 | no verdict change |
-| DONGNAN | 12 | 11 | none (total 0) | 1 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 11 | 0/0 | no verdict change |
-| EOBD2 | 2 | 2 | none (total 0) | 0 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 2 | 0/0 | no verdict change |
-| FERRARI | 7 | 6 | none (total 0) | 1 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 6 | 0/0 | no verdict change |
-| FIAT | 12 | 5 | none (total 0) | 7 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 5 | 0/0 | no verdict change |
-| FLYER | 74 | 69 | none (total 0) | 5 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 69 | 0/0 | no verdict change |
-| FUTIAN | 9 | 8 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 8 | 0/0 | no verdict change |
-| GM | 37 | 33 | none (total 0) | 4 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 33 | 0/0 | no verdict change |
-| HAFEI | 7 | 3 | none (total 0) | 4 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 3 | 0/0 | no verdict change |
-| HMAZDA | 14 | 11 | none (total 0) | 3 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 11 | 0/0 | no verdict change |
-| HONDA | 11 | 8 | none (total 0) | 3 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 8 | 0/0 | no verdict change |
-| HUACHEN | 21 | 12 | none (total 0) | 9 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 12 | 0/0 | no verdict change |
-| HYUNDAI | 63 | 18 | 504b030400000808: 1 (total 1) | 44 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 18 | 0/0 | no verdict change |
-| INDIANMAHINDRA | 3 | 0 | none (total 0) | 3 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 0 | 0/0 | no verdict change |
-| INDIANMARUTI | 12 | 9 | none (total 0) | 3 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 9 | 0/0 | no verdict change |
-| INDIANTATA | 3 | 0 | none (total 0) | 3 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 0 | 0/0 | no verdict change |
-| ISUZU | 12 | 2 | none (total 0) | 10 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 2 | 0/0 | no verdict change |
-| IVECO | 7 | 0 | none (total 0) | 7 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 0 | 0/0 | no verdict change |
-| JACTY | 36 | 22 | none (total 0) | 14 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 22 | 0/0 | no verdict change |
-| JIAO | 11 | 8 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 8 | 0/0 | no verdict change |
-| JINLONG | 7 | 5 | none (total 0) | 2 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 5 | 0/0 | no verdict change |
-| JPISUZU | 12 | 7 | none (total 0) | 5 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 7 | 0/0 | no verdict change |
-| KARRY_TY | 13 | 9 | none (total 0) | 4 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 9 | 0/0 | no verdict change |
-| KIA | 46 | 20 | 504b030400000808: 1 (total 1) | 25 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 20 | 0/0 | no verdict change |
-| LANDROVER | 100 | 88 | none (total 0) | 11 | 1 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 88 | 0/0 | no verdict change |
-| LIFAN | 9 | 7 | none (total 0) | 2 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 7 | 0/0 | no verdict change |
-| LIUWEI_TY | 26 | 23 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 23 | 0/0 | no verdict change |
-| LUFENG | 6 | 5 | none (total 0) | 1 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 5 | 0/0 | no verdict change |
-| LUXGEN | 2 | 1 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 1 | 0/0 | no verdict change |
-| MASERATI | 7 | 6 | none (total 0) | 1 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 6 | 0/0 | no verdict change |
-| MAXUS | 21 | 20 | none (total 0) | 1 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 20 | 0/0 | no verdict change |
-| MAZDA | 13 | 10 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 10 | 0/0 | no verdict change |
-| MITSUBISHI | 100 | 53 | none (total 0) | 47 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 53 | 0/0 | no verdict change |
-| NISSAN | 286 | 15 | none (total 0) | 271 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 15 | 0/0 | no verdict change |
-| OPEL | 19 | 16 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 16 | 0/0 | no verdict change |
-| PEUGEOT | 22 | 17 | none (total 0) | 3 | 2 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 17 | 0/0 | no verdict change |
-| PORSCHE | 45 | 30 | none (total 0) | 15 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 30 | 0/0 | no verdict change |
-| QIRUI_TY | 19 | 11 | none (total 0) | 8 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 11 | 0/0 | no verdict change |
-| QOROS | 7 | 6 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 6 | 0/0 | no verdict change |
-| RENAULT | 100 | 7 | none (total 0) | 93 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 7 | 0/0 | no verdict change |
-| SAAB | 3 | 1 | none (total 0) | 2 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 1 | 0/0 | no verdict change |
-| SAICMG | 16 | 15 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 15 | 0/0 | no verdict change |
-| SAICROEWE | 14 | 12 | none (total 0) | 2 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 12 | 0/0 | no verdict change |
-| SEAT | 22 | 11 | none (total 0) | 10 | 1 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 11 | 0/0 | no verdict change |
-| SGM | 32 | 28 | none (total 0) | 4 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 28 | 0/0 | no verdict change |
-| SKODA | 22 | 12 | none (total 0) | 9 | 1 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 12 | 0/0 | no verdict change |
-| SMART | 6 | 3 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 3 | 0/0 | no verdict change |
-| SPRINTER | 9 | 3 | none (total 0) | 6 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 3 | 0/0 | no verdict change |
-| SSANGYONG | 10 | 5 | none (total 0) | 5 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 5 | 0/0 | no verdict change |
-| SUBARU | 10 | 6 | none (total 0) | 4 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 6 | 0/0 | no verdict change |
-| SUZUKI | 10 | 9 | none (total 0) | 1 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 9 | 0/0 | no verdict change |
-| USAFORD | 4 | 1 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 1 | 0/0 | no verdict change |
-| VAZ | 4 | 2 | none (total 0) | 2 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 2 | 0/0 | no verdict change |
-| VOLVO | 7 | 4 | none (total 0) | 3 | 0 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 4 | 0/0 | no verdict change |
-| VW | 29 | 14 | none (total 0) | 14 | 1 | 79600 / `44c9976c37f4f957f955b0b9fe90899b6a0a36208c908ac01ffc5f9b42184cb4` | identical | true | true | 14 | 0/0 | no verdict change |
-| ZHONGTAI | 19 | 15 | none (total 0) | 4 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 15 | 0/0 | no verdict change |
-| ZHONGXING | 15 | 11 | none (total 0) | 4 | 0 | 79600 / `e6a1276c431bb661541ab83ae1903d01604f7bf863466ff15377200505b7562f` | different | false | true | 11 | 0/0 | no verdict change |
+**ASTONMARTIN**
 
-### Exploratory ranking
+- `DIAGNOSTIC/VEHICLES/EUROPE/ASTONMARTIN/V10.22/ASTONMARTIN_SYS_DATA.BIN`: 1.062 — looks structured
+- `DIAGNOSTIC/VEHICLES/EUROPE/ASTONMARTIN/V10.22/STRING_CN.BIN`: 5.285 — looks structured
+- `DIAGNOSTIC/VEHICLES/EUROPE/ASTONMARTIN/V10.22/STRING_EN.BIN`: 5.377 — looks structured
+- `DIAGNOSTIC/VEHICLES/EUROPE/ASTONMARTIN/V10.22/STRING_HK.BIN`: 5.293 — looks structured
+- `DIAGNOSTIC/VEHICLES/EUROPE/ASTONMARTIN/V10.22/STRING_RU.BIN`: 5.384 — looks structured
 
-| rank | brand | parsed/applicable | rate |
-| ---: | --- | --- | ---: |
-| 1 | ASTONMARTIN | 0/0 | not applicable |
-| 2 | AUDI | 0/0 | not applicable |
-| 3 | AUSTHOLDEN | 0/0 | not applicable |
-| 4 | AUTOSEARCH | 0/0 | not applicable |
-| 5 | BENZ | 0/0 | not applicable |
-| 6 | BMW | 0/0 | not applicable |
-| 7 | BXFIAT | 0/0 | not applicable |
-| 8 | BXGM | 0/0 | not applicable |
-| 9 | CHANGAN | 0/0 | not applicable |
-| 10 | CHANGCHENG | 0/0 | not applicable |
-| 11 | CHANGHE | 0/0 | not applicable |
-| 12 | CHRYSLER | 0/0 | not applicable |
-| 13 | CITROEN | 0/0 | not applicable |
-| 14 | DAEWOO | 0/0 | not applicable |
-| 15 | DAIHATSU | 0/0 | not applicable |
-| 16 | DEMO | 0/0 | not applicable |
-| 17 | DONGNAN | 0/0 | not applicable |
-| 18 | EOBD2 | 0/0 | not applicable |
-| 19 | FERRARI | 0/0 | not applicable |
-| 20 | FIAT | 0/0 | not applicable |
-| 21 | FLYER | 0/0 | not applicable |
-| 22 | FUTIAN | 0/0 | not applicable |
-| 23 | GM | 0/0 | not applicable |
-| 24 | HAFEI | 0/0 | not applicable |
-| 25 | HMAZDA | 0/0 | not applicable |
-| 26 | HONDA | 0/0 | not applicable |
-| 27 | HUACHEN | 0/0 | not applicable |
-| 28 | HYUNDAI | 0/0 | not applicable |
-| 29 | INDIANMAHINDRA | 0/0 | not applicable |
-| 30 | INDIANMARUTI | 0/0 | not applicable |
-| 31 | INDIANTATA | 0/0 | not applicable |
-| 32 | ISUZU | 0/0 | not applicable |
-| 33 | IVECO | 0/0 | not applicable |
-| 34 | JACTY | 0/0 | not applicable |
-| 35 | JIAO | 0/0 | not applicable |
-| 36 | JINLONG | 0/0 | not applicable |
-| 37 | JPISUZU | 0/0 | not applicable |
-| 38 | KARRY_TY | 0/0 | not applicable |
-| 39 | KIA | 0/0 | not applicable |
-| 40 | LANDROVER | 0/0 | not applicable |
-| 41 | LIFAN | 0/0 | not applicable |
-| 42 | LIUWEI_TY | 0/0 | not applicable |
-| 43 | LUFENG | 0/0 | not applicable |
-| 44 | LUXGEN | 0/0 | not applicable |
-| 45 | MASERATI | 0/0 | not applicable |
-| 46 | MAXUS | 0/0 | not applicable |
-| 47 | MAZDA | 0/0 | not applicable |
-| 48 | MITSUBISHI | 0/0 | not applicable |
-| 49 | NISSAN | 0/0 | not applicable |
-| 50 | OPEL | 0/0 | not applicable |
-| 51 | PEUGEOT | 0/0 | not applicable |
-| 52 | PORSCHE | 0/0 | not applicable |
-| 53 | QIRUI_TY | 0/0 | not applicable |
-| 54 | QOROS | 0/0 | not applicable |
-| 55 | RENAULT | 0/0 | not applicable |
-| 56 | SAAB | 0/0 | not applicable |
-| 57 | SAICMG | 0/0 | not applicable |
-| 58 | SAICROEWE | 0/0 | not applicable |
-| 59 | SEAT | 0/0 | not applicable |
-| 60 | SGM | 0/0 | not applicable |
-| 61 | SKODA | 0/0 | not applicable |
-| 62 | SMART | 0/0 | not applicable |
-| 63 | SPRINTER | 0/0 | not applicable |
-| 64 | SSANGYONG | 0/0 | not applicable |
-| 65 | SUBARU | 0/0 | not applicable |
-| 66 | SUZUKI | 0/0 | not applicable |
-| 67 | USAFORD | 0/0 | not applicable |
-| 68 | VAZ | 0/0 | not applicable |
-| 69 | VOLVO | 0/0 | not applicable |
-| 70 | VW | 0/0 | not applicable |
-| 71 | ZHONGTAI | 0/0 | not applicable |
-| 72 | ZHONGXING | 0/0 | not applicable |
+**AUDI**
 
-### Exploratory literal error histograms
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/AUDI_HIDEFUNC_CONFIG.BIN`: 4.342 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/AUDI_INFO.BIN`: 3.695 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/AUDI_LONGCODEDATA.BIN`: 4.700 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/AUDI_SYSDATA.BIN`: 6.428 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/AUDI_SYSTRANSTAB.BIN`: 5.729 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/AUDI_VW_ECUFLASH_CONFIG.BIN`: 3.135 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/BASEINFO.BIN`: 5.170 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/CAR_TABLE.BIN`: 4.125 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/DTCH_CFG.BIN`: 4.394 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/FUNCH_CFG.BIN`: 2.671 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/GFS_AUDIALGORITHM.BIN`: 5.437 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/GFS_AUDIODXPID.BIN`: 5.366 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/GFS_ODXCALC.BIN`: 4.651 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUDI/V10.46/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
 
-- **TOYOTA**: no failed applicable samples
-- **ASTONMARTIN**: no failed applicable samples
-- **AUDI**: no failed applicable samples
-- **AUSTHOLDEN**: no failed applicable samples
-- **AUTOSEARCH**: no failed applicable samples
-- **BENZ**: no failed applicable samples
-- **BMW**: no failed applicable samples
-- **BXFIAT**: no failed applicable samples
-- **BXGM**: no failed applicable samples
-- **CHANGAN**: no failed applicable samples
-- **CHANGCHENG**: no failed applicable samples
-- **CHANGHE**: no failed applicable samples
-- **CHRYSLER**: no failed applicable samples
-- **CITROEN**: no failed applicable samples
-- **DAEWOO**: no failed applicable samples
-- **DAIHATSU**: no failed applicable samples
-- **DEMO**: no failed applicable samples
-- **DONGNAN**: no failed applicable samples
-- **EOBD2**: no failed applicable samples
-- **FERRARI**: no failed applicable samples
-- **FIAT**: no failed applicable samples
-- **FLYER**: no failed applicable samples
-- **FUTIAN**: no failed applicable samples
-- **GM**: no failed applicable samples
-- **HAFEI**: no failed applicable samples
-- **HMAZDA**: no failed applicable samples
-- **HONDA**: no failed applicable samples
-- **HUACHEN**: no failed applicable samples
-- **HYUNDAI**: no failed applicable samples
-- **INDIANMAHINDRA**: no failed applicable samples
-- **INDIANMARUTI**: no failed applicable samples
-- **INDIANTATA**: no failed applicable samples
-- **ISUZU**: no failed applicable samples
-- **IVECO**: no failed applicable samples
-- **JACTY**: no failed applicable samples
-- **JIAO**: no failed applicable samples
-- **JINLONG**: no failed applicable samples
-- **JPISUZU**: no failed applicable samples
-- **KARRY_TY**: no failed applicable samples
-- **KIA**: no failed applicable samples
-- **LANDROVER**: no failed applicable samples
-- **LIFAN**: no failed applicable samples
-- **LIUWEI_TY**: no failed applicable samples
-- **LUFENG**: no failed applicable samples
-- **LUXGEN**: no failed applicable samples
-- **MASERATI**: no failed applicable samples
-- **MAXUS**: no failed applicable samples
-- **MAZDA**: no failed applicable samples
-- **MITSUBISHI**: no failed applicable samples
-- **NISSAN**: no failed applicable samples
-- **OPEL**: no failed applicable samples
-- **PEUGEOT**: no failed applicable samples
-- **PORSCHE**: no failed applicable samples
-- **QIRUI_TY**: no failed applicable samples
-- **QOROS**: no failed applicable samples
-- **RENAULT**: no failed applicable samples
-- **SAAB**: no failed applicable samples
-- **SAICMG**: no failed applicable samples
-- **SAICROEWE**: no failed applicable samples
-- **SEAT**: no failed applicable samples
-- **SGM**: no failed applicable samples
-- **SKODA**: no failed applicable samples
-- **SMART**: no failed applicable samples
-- **SPRINTER**: no failed applicable samples
-- **SSANGYONG**: no failed applicable samples
-- **SUBARU**: no failed applicable samples
-- **SUZUKI**: no failed applicable samples
-- **USAFORD**: no failed applicable samples
-- **VAZ**: no failed applicable samples
-- **VOLVO**: no failed applicable samples
-- **VW**: no failed applicable samples
-- **ZHONGTAI**: no failed applicable samples
-- **ZHONGXING**: no failed applicable samples
+**AUSTHOLDEN**
 
-## Summary
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/DTCH_CFG.BIN`: 4.223 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/FUNCH_CFG.BIN`: 2.725 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/GM_CODING_MENU.BIN`: 3.718 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/GM_DTCSTATE.BIN`: 4.252 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/GM_TDTC_CFG.BIN`: 5.324 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/GM_VINENG.BIN`: 4.978 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/GM_VINOKS.BIN`: 3.939 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MDIACTLINK.BIN`: 4.993 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MDIDSLINK.BIN`: 5.167 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MDIDSMODULE.BIN`: 5.315 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MDIDTCMODULE.BIN`: 4.278 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MDIFUNCMENU.BIN`: 4.989 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MDIMODULE.BIN`: 3.787 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MDISYSTEM.BIN`: 4.172 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MODULEACTPID.BIN`: 3.936 — looks structured
+- `DIAGNOSTIC/VEHICLES/AUSTHOLDEN/V10.16/MSTATUSDATA.BIN`: 2.733 — looks structured
 
-| brand | files | archive bytes | decoded parsed/applicable | generic overlap | discriminating overlap | named exports¹ | role libraries | verdict | reason |
-| --- | ---: | ---: | --- | --- | --- | --- | --- | --- | --- |
-| TOYOTA | 209 | 71755650 | 68/68 | 36/36 | 156/156 | 1: yes, 2: yes, 3: yes, 4: yes, 5: yes, 6: yes | libTOYOTA_ACTF.so, libTOYOTA_CALC.so, libTOYOTA_CDSF.so, libTOYOTA_COMM.so, libTOYOTA_DTCF.so, libTOYOTA_ECUF.so, libTOYOTA_ECUK.so, libTOYOTA_FDATA.so, libTOYOTA_FILE.so, libTOYOTA_FRZF.so, libTOYOTA_FZIP.so, libTOYOTA_INFO.so, libTOYOTA_OLD.so, libTOYOTA_SCAN.so, libTOYOTA_SCUST.so, libTOYOTA_SPEC.so, libTOYOTA_SYSP.so | same family as Toyota | Toyota reference; decoded control passed |
-| ASTONMARTIN | 34 | 7154262 | 0/1 | 34/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libASTONMARTIN_CALC.so, libASTONMARTIN_CDSF.so, libASTONMARTIN_COMM.so, libASTONMARTIN_DTCF.so, libASTONMARTIN_FILE.so, libASTONMARTIN_SPEC.so, libASTONMARTIN_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| AUDI | 70 | 104882444 | 0/1 | 35/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libAUDI_CALC.so, libAUDI_COMM.so, libAUDI_FILE.so, libAUDI_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| AUSTHOLDEN | 60 | 42146060 | 0/1 | 35/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libAUSTHOLDEN_ACTF.so, libAUSTHOLDEN_CALC.so, libAUSTHOLDEN_CDSF.so, libAUSTHOLDEN_COMM.so, libAUSTHOLDEN_DTCF.so, libAUSTHOLDEN_FILE.so, libAUSTHOLDEN_OLD.so, libAUSTHOLDEN_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| AUTOSEARCH | 496 | 91606306 | 0/0 | 28/36 | 3/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| BENZ | 1870 | 817896907 | 0/1 | 34/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libBENZ_CALC.so, libBENZ_COMM.so, libBENZ_FILE.so, libBENZ_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| BMW | 2760 | 1973240752 | 0/1 | 34/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libBMW_CALC.so, libBMW_COMM.so, libBMW_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| BXFIAT | 28 | 4789970 | 0/1 | 32/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| BXGM | 25 | 4465150 | 0/1 | 34/36 | 3/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libBXGM_ACTF.so, libBXGM_CALC.so, libBXGM_CDSF.so, libBXGM_COMM.so, libBXGM_DTCF.so, libBXGM_FILE.so, libBXGM_OLD.so, libBXGM_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| CHANGAN | 63 | 33767269 | 0/1 | 35/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libCHANGAN_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| CHANGCHENG | 281 | 33516510 | 0/1 | 35/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libCHANGCHENG_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| CHANGHE | 54 | 12217645 | 0/1 | 34/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libCHANGHE_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| CHRYSLER | 60 | 38976420 | 0/1 | 35/36 | 3/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libCHRYSLER_ACTF.so, libCHRYSLER_CALC.so, libCHRYSLER_CDSF.so, libCHRYSLER_COMM.so, libCHRYSLER_DTCF.so, libCHRYSLER_FILE.so, libCHRYSLER_OLD.so, libCHRYSLER_SPEC.so, libCHRYSLER_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| CITROEN | 99 | 73336139 | 0/1 | 36/36 | 7/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libCITROEN_OLD.so, libCITROEN_SPEC.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| DAEWOO | 33 | 3620001 | 0/1 | 35/36 | 0/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libDAEWOO_ACTF.so, libDAEWOO_CALC.so, libDAEWOO_COMM.so, libDAEWOO_DTCF.so, libDAEWOO_FILE.so, libDAEWOO_OLD.so, libDAEWOO_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| DAIHATSU | 50 | 8457341 | 0/1 | 36/36 | 10/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: yes | libDAIHATSU_ACTF.so, libDAIHATSU_CALC.so, libDAIHATSU_CDSF.so, libDAIHATSU_COMM.so, libDAIHATSU_DTCF.so, libDAIHATSU_FILE.so, libDAIHATSU_FRZF.so, libDAIHATSU_SPEC.so, libDAIHATSU_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| DEMO | 253 | 60542274 | 0/0 | 33/36 | 0/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| DONGNAN | 40 | 9363412 | 0/1 | 35/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libDONGNAN_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| EOBD2 | 24 | 7084892 | 0/0 | 34/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| FERRARI | 41 | 6095516 | 0/1 | 33/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| FIAT | 62 | 27446550 | 0/1 | 35/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libFIAT_CALC.so, libFIAT_COMM.so, libFIAT_FILE.so, libFIAT_INFO.so, libFIAT_OLD.so, libFIAT_SPEC.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| FLYER | 99 | 39501934 | 0/1 | 34/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libFLYER_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| FUTIAN | 32 | 10240484 | 0/1 | 34/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| GM | 70 | 81427611 | 0/1 | 35/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libGM_ACTF.so, libGM_CALC.so, libGM_CDSF.so, libGM_COMM.so, libGM_DTCF.so, libGM_FILE.so, libGM_OLD.so, libGM_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| HAFEI | 28 | 1955310 | 0/1 | 34/36 | 2/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libHAFEI_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| HMAZDA | 41 | 8655492 | 0/1 | 34/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libHMAZDA_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| HONDA | 174 | 35064563 | 0/0 | 34/36 | 6/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libHONDA_ACTF.so, libHONDA_CALC.so, libHONDA_CDSF.so, libHONDA_COMM.so, libHONDA_DTCF.so, libHONDA_FILE.so, libHONDA_FRZF.so, libHONDA_SPEC.so, libHONDA_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| HUACHEN | 64 | 13961981 | 0/1 | 34/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libHUACHEN_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| HYUNDAI | 298 | 97477672 | 0/1 | 34/36 | 15/156 | 1: yes, 2: no, 3: yes, 4: no, 5: no, 6: no | libHYUNDAI_ACTF.so, libHYUNDAI_CALC.so, libHYUNDAI_COMM.so, libHYUNDAI_DTCF.so, libHYUNDAI_ECUF.so, libHYUNDAI_FILE.so, libHYUNDAI_FRZF.so, libHYUNDAI_OLD.so, libHYUNDAI_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| INDIANMAHINDRA | 33 | 6901825 | 0/1 | 35/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| INDIANMARUTI | 144 | 23447578 | 0/1 | 35/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| INDIANTATA | 34 | 6477772 | 0/1 | 35/36 | 3/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| ISUZU | 41 | 12737896 | 0/1 | 32/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libISUZU_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| IVECO | 41 | 11507833 | 0/0 | 32/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| JACTY | 118 | 23210542 | 0/1 | 34/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| JIAO | 38 | 4086316 | 0/1 | 35/36 | 2/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libJIAO_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| JINLONG | 38 | 6130703 | 0/1 | 35/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| JPISUZU | 83 | 16298713 | 0/1 | 35/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libJPISUZU_OLD.so, libJPISUZU_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| KARRY_TY | 55 | 20047040 | 0/1 | 35/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| KIA | 280 | 87457269 | 0/1 | 34/36 | 14/156 | 1: yes, 2: no, 3: yes, 4: no, 5: no, 6: no | libKIA_ACTF.so, libKIA_CALC.so, libKIA_COMM.so, libKIA_DTCF.so, libKIA_ECUF.so, libKIA_FILE.so, libKIA_FRZF.so, libKIA_OLD.so, libKIA_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| LANDROVER | 1012 | 221491702 | 0/1 | 36/36 | 11/156 | 1: yes, 2: no, 3: yes, 4: no, 5: no, 6: yes | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| LIFAN | 34 | 6983671 | 0/1 | 34/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| LIUWEI_TY | 52 | 16045883 | 0/1 | 34/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| LUFENG | 30 | 3385986 | 0/1 | 35/36 | 2/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libLUFENG_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| LUXGEN | 37 | 4621630 | 0/1 | 33/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libLUXGEN_CALC.so, libLUXGEN_CDSF.so, libLUXGEN_COMM.so, libLUXGEN_DTCF.so, libLUXGEN_FILE.so, libLUXGEN_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| MASERATI | 124 | 22442491 | 0/1 | 33/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| MAXUS | 48 | 17422250 | 0/1 | 34/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| MAZDA | 55 | 30461807 | 0/1 | 35/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libMAZDA_ACTF.so, libMAZDA_CALC.so, libMAZDA_CDSF.so, libMAZDA_COMM.so, libMAZDA_DTCF.so, libMAZDA_FILE.so, libMAZDA_OLD.so, libMAZDA_SPEC.so, libMAZDA_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| MITSUBISHI | 640 | 81990250 | 0/1 | 34/36 | 6/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libMITSUBISHI_ACTF.so, libMITSUBISHI_CALC.so, libMITSUBISHI_CDSF.so, libMITSUBISHI_COMM.so, libMITSUBISHI_DTCF.so, libMITSUBISHI_FILE.so, libMITSUBISHI_FRZF.so, libMITSUBISHI_OLD.so, libMITSUBISHI_SPEC.so, libMITSUBISHI_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| NISSAN | 189 | 93893330 | 0/1 | 35/36 | 10/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libNISSAN_ACTF.so, libNISSAN_CALC.so, libNISSAN_CDSF.so, libNISSAN_COMM.so, libNISSAN_DTCF.so, libNISSAN_FILE.so, libNISSAN_FRZF.so, libNISSAN_OLD.so, libNISSAN_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| OPEL | 72 | 20288626 | 0/1 | 34/36 | 6/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libOPEL_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| PEUGEOT | 102 | 93817125 | 0/1 | 36/36 | 7/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libPEUGEOT_OLD.so, libPEUGEOT_SPEC.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| PORSCHE | 186 | 138720919 | 0/1 | 35/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libPORSCHE_ACTF.so, libPORSCHE_CALC.so, libPORSCHE_CDSF.so, libPORSCHE_COMM.so, libPORSCHE_DTCF.so, libPORSCHE_FILE.so, libPORSCHE_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| QIRUI_TY | 71 | 16222386 | 0/1 | 35/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| QOROS | 30 | 5034092 | 0/1 | 33/36 | 2/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| RENAULT | 2488 | 74272742 | 0/1 | 35/36 | 7/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libRENAULT_CALC.so, libRENAULT_COMM.so, libRENAULT_OLD.so, libRENAULT_SCAN.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SAAB | 31 | 3953696 | 0/1 | 34/36 | 2/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libSAAB_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SAICMG | 46 | 23713539 | 0/1 | 34/36 | 7/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SAICROEWE | 47 | 22003435 | 0/1 | 34/36 | 7/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SEAT | 73 | 65944685 | 0/1 | 35/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SGM | 73 | 42172085 | 0/1 | 34/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libSGM_ACTF.so, libSGM_CALC.so, libSGM_CDSF.so, libSGM_COMM.so, libSGM_DTCF.so, libSGM_FILE.so, libSGM_OLD.so, libSGM_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SKODA | 68 | 70347681 | 0/1 | 35/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SMART | 230 | 28418037 | 0/1 | 34/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SPRINTER | 855 | 60951766 | 0/1 | 34/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libSPRINTER_CALC.so, libSPRINTER_COMM.so, libSPRINTER_FILE.so, libSPRINTER_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SSANGYONG | 216 | 39931734 | 0/1 | 35/36 | 12/156 | 1: yes, 2: no, 3: yes, 4: no, 5: no, 6: yes | libSSANGYONG_ACTF.so, libSSANGYONG_CALC.so, libSSANGYONG_COMM.so, libSSANGYONG_DTCF.so, libSSANGYONG_FILE.so, libSSANGYONG_OLD.so, libSSANGYONG_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SUBARU | 111 | 24613174 | 0/1 | 36/36 | 7/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libSUBARU_ACTF.so, libSUBARU_CALC.so, libSUBARU_CDSF.so, libSUBARU_COMM.so, libSUBARU_DTCF.so, libSUBARU_FILE.so, libSUBARU_FRZF.so, libSUBARU_OLD.so, libSUBARU_SPEC.so, libSUBARU_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| SUZUKI | 159 | 28573927 | 0/1 | 35/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libSUZUKI_ACTF.so, libSUZUKI_CALC.so, libSUZUKI_CDSF.so, libSUZUKI_COMM.so, libSUZUKI_DTCF.so, libSUZUKI_FILE.so, libSUZUKI_OLD.so, libSUZUKI_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| USAFORD | 79 | 62472136 | 0/1 | 35/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libUSAFORD_ACTF.so, libUSAFORD_CALC.so, libUSAFORD_CDSF.so, libUSAFORD_COMM.so, libUSAFORD_DTCF.so, libUSAFORD_FILE.so, libUSAFORD_OLD.so, libUSAFORD_SPEC.so, libUSAFORD_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| VAZ | 33 | 4260470 | 0/1 | 35/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libVAZ_ACTF.so, libVAZ_CALC.so, libVAZ_CDSF.so, libVAZ_COMM.so, libVAZ_DTCF.so, libVAZ_FILE.so, libVAZ_OLD.so, libVAZ_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| VOLVO | 83 | 17560256 | 0/1 | 35/36 | 5/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libVOLVO_ACTF.so, libVOLVO_CALC.so, libVOLVO_CDSF.so, libVOLVO_COMM.so, libVOLVO_DTCF.so, libVOLVO_FILE.so, libVOLVO_SYSP.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| VW | 76 | 87237127 | 0/1 | 35/36 | 1/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| ZHONGTAI | 43 | 9016649 | 0/1 | 35/36 | 8/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | libZHONGTAI_OLD.so | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
-| ZHONGXING | 54 | 10683026 | 0/1 | 35/36 | 4/156 | 1: no, 2: no, 3: yes, 4: no, 5: no, 6: no | none | NOT ESTABLISHED | exploratory Toyota-table parse rate below 90% or not applicable |
+**BENZ**
 
-¹ Named export order: 1. `SystemEnterPart`; 2. `GetDTCCodeFromAnsP3P4`; 3. `CanSetParameterNormal`; 4. `SendCmdAndGetDtcP3P4`; 5. `ReadDtcModeP3P4`; 6. `GetShowDtcInfo`
+- `DIAGNOSTIC/VEHICLES/BENZ/V11.20/BENZ_SYS_DATA.BIN`: 3.731 — looks structured
+- `DIAGNOSTIC/VEHICLES/BENZ/V11.20/BENZ_VINCODE_CFG.BIN`: 3.248 — looks structured
+- `DIAGNOSTIC/VEHICLES/BENZ/V11.20/DTCH_CFG.BIN`: 3.919 — looks structured
+- `DIAGNOSTIC/VEHICLES/BENZ/V11.20/ECU_FLASH_DATA.BIN`: 5.521 — looks structured
+- `DIAGNOSTIC/VEHICLES/BENZ/V11.20/FUNCH_CFG.BIN`: 2.760 — looks structured
+- `DIAGNOSTIC/VEHICLES/BENZ/V11.20/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
 
-## Ranking
+**BXGM**
 
-Descending decoded parsed/applicable rate, then discriminating overlap; no-applicable brands rank last. This is evidence, not a measure of enabled functionality.
 
-| rank | brand | decoded parsed/applicable | discriminating overlap |
-| ---: | --- | --- | ---: |
-| 1 | HYUNDAI | 0/1 | 15 |
-| 2 | KIA | 0/1 | 14 |
-| 3 | SSANGYONG | 0/1 | 12 |
-| 4 | LANDROVER | 0/1 | 11 |
-| 5 | DAIHATSU | 0/1 | 10 |
-| 6 | NISSAN | 0/1 | 10 |
-| 7 | CHANGAN | 0/1 | 8 |
-| 8 | DONGNAN | 0/1 | 8 |
-| 9 | FLYER | 0/1 | 8 |
-| 10 | FUTIAN | 0/1 | 8 |
-| 11 | HMAZDA | 0/1 | 8 |
-| 12 | LIFAN | 0/1 | 8 |
-| 13 | LIUWEI_TY | 0/1 | 8 |
-| 14 | MAXUS | 0/1 | 8 |
-| 15 | MAZDA | 0/1 | 8 |
-| 16 | USAFORD | 0/1 | 8 |
-| 17 | ZHONGTAI | 0/1 | 8 |
-| 18 | CITROEN | 0/1 | 7 |
-| 19 | PEUGEOT | 0/1 | 7 |
-| 20 | RENAULT | 0/1 | 7 |
-| 21 | SAICMG | 0/1 | 7 |
-| 22 | SAICROEWE | 0/1 | 7 |
-| 23 | SUBARU | 0/1 | 7 |
-| 24 | MITSUBISHI | 0/1 | 6 |
-| 25 | OPEL | 0/1 | 6 |
-| 26 | FERRARI | 0/1 | 5 |
-| 27 | FIAT | 0/1 | 5 |
-| 28 | INDIANMARUTI | 0/1 | 5 |
-| 29 | JPISUZU | 0/1 | 5 |
-| 30 | MASERATI | 0/1 | 5 |
-| 31 | PORSCHE | 0/1 | 5 |
-| 32 | SGM | 0/1 | 5 |
-| 33 | SMART | 0/1 | 5 |
-| 34 | SPRINTER | 0/1 | 5 |
-| 35 | SUZUKI | 0/1 | 5 |
-| 36 | VOLVO | 0/1 | 5 |
-| 37 | ASTONMARTIN | 0/1 | 4 |
-| 38 | AUSTHOLDEN | 0/1 | 4 |
-| 39 | BMW | 0/1 | 4 |
-| 40 | CHANGCHENG | 0/1 | 4 |
-| 41 | CHANGHE | 0/1 | 4 |
-| 42 | GM | 0/1 | 4 |
-| 43 | HUACHEN | 0/1 | 4 |
-| 44 | JACTY | 0/1 | 4 |
-| 45 | JINLONG | 0/1 | 4 |
-| 46 | KARRY_TY | 0/1 | 4 |
-| 47 | QIRUI_TY | 0/1 | 4 |
-| 48 | ZHONGXING | 0/1 | 4 |
-| 49 | BXGM | 0/1 | 3 |
-| 50 | CHRYSLER | 0/1 | 3 |
-| 51 | INDIANTATA | 0/1 | 3 |
-| 52 | HAFEI | 0/1 | 2 |
-| 53 | JIAO | 0/1 | 2 |
-| 54 | LUFENG | 0/1 | 2 |
-| 55 | QOROS | 0/1 | 2 |
-| 56 | SAAB | 0/1 | 2 |
-| 57 | AUDI | 0/1 | 1 |
-| 58 | BENZ | 0/1 | 1 |
-| 59 | BXFIAT | 0/1 | 1 |
-| 60 | INDIANMAHINDRA | 0/1 | 1 |
-| 61 | ISUZU | 0/1 | 1 |
-| 62 | LUXGEN | 0/1 | 1 |
-| 63 | SEAT | 0/1 | 1 |
-| 64 | SKODA | 0/1 | 1 |
-| 65 | VAZ | 0/1 | 1 |
-| 66 | VW | 0/1 | 1 |
-| 67 | DAEWOO | 0/1 | 0 |
-| 68 | HONDA | 0/0 | 6 |
-| 69 | IVECO | 0/0 | 4 |
-| 70 | AUTOSEARCH | 0/0 | 3 |
-| 71 | EOBD2 | 0/0 | 1 |
-| 72 | DEMO | 0/0 | 0 |
-<!-- INVENTORY3 END -->
+**CHANGAN**
+
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/CHANGAN_FUNCFG.BIN`: 5.743 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/COMMON_SPECIAL_FUNCTION.BIN`: 4.903 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/ECU_FLASH_PACKDB.BIN`: 4.454 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/MAPFILTERID.BIN`: 4.920 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/MODELMENUMAP.BIN`: 4.402 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/OBD2_SYS_DATA.BIN`: 3.905 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/SLLIB.BIN`: 4.475 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/SYSSCAN.BIN`: 2.024 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE1_CN.BIN`: 4.385 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE1_EN.BIN`: 4.380 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE2_CN.BIN`: 4.378 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE2_EN.BIN`: 4.377 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE3_CN.BIN`: 4.375 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE3_EN.BIN`: 4.373 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE4_CN.BIN`: 4.335 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE4_EN.BIN`: 4.339 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE5_CN.BIN`: 4.329 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE5_EN.BIN`: 4.337 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE6_CN.BIN`: 4.678 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE6_EN.BIN`: 4.687 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE7_CN.BIN`: 4.832 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE7_EN.BIN`: 4.834 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE8_CN.BIN`: 4.496 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE8_EN.BIN`: 4.476 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE9_CN.BIN`: 4.621 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE9_EN.BIN`: 4.651 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE_CN.BIN`: 4.514 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE_EN.BIN`: 4.485 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE_OLD_CN.BIN`: 4.372 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/UCODE_OLD_EN.BIN`: 4.404 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/VINLIBRARY.BIN`: 4.983 — looks structured
+- `DIAGNOSTIC/VEHICLES/CHANGAN/V10.42/VINMODEL.BIN`: 4.205 — looks structured
+
+**CITROEN**
+
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/ACTIVE_TEST.BIN`: 4.203 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/CITROEN_PSA_DS_DATA.BIN`: 5.932 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/CITROEN_SYS_DATA.BIN`: 3.490 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/CITROEN_SYS_SCAN.BIN`: 5.177 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/DTCH_CFG.BIN`: 4.286 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/ECUID_MAPID.BIN`: 4.862 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/FUNCHELPMESSAGE.BIN`: 3.106 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/FUNCH_CFG.BIN`: 2.105 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/FUNHELPMESSAGE.BIN`: 3.106 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/PSA_COM.BIN`: 4.168 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/PSA_COND.BIN`: 3.376 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/PSA_DESCRITOR.BIN`: 5.092 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/PSA_ECU.BIN`: 2.619 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/SPEFUNCTION.BIN`: 5.102 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/SYS_NAME.BIN`: 5.004 — looks structured
+- `DIAGNOSTIC/VEHICLES/CITROEN/V10.30/VEH_INFO.BIN`: 4.748 — looks structured
+
+**DAEWOO**
+
+
+**DAIHATSU**
+
+- `DIAGNOSTIC/VEHICLES/DAIHATSU/V10.22/DAIHATSU_SYS_DATA.BIN`: 4.130 — looks structured
+- `DIAGNOSTIC/VEHICLES/DAIHATSU/V10.22/DAIHATSU_SYS_LIST.BIN`: 4.756 — looks structured
+
+**FLYER**
+
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/COMMON_SPECIAL_FUNCTION.BIN`: 4.640 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/DTCH_CFG.BIN`: 4.389 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/FLYER_FUNCFG.BIN`: 3.622 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/FLYER_SPECFUNCFG.BIN`: 5.274 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/MAPFILTERID.BIN`: 4.777 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/OBD2_SYS_DATA.BIN`: 3.905 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/SLLIB.BIN`: 3.725 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/SYSSCAN.BIN`: 1.759 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE10_CN.BIN`: 4.969 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE10_EN.BIN`: 4.967 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE10_HK.BIN`: 4.969 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE10_IT.BIN`: 4.965 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE11_CN.BIN`: 4.939 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE11_EN.BIN`: 4.926 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE11_HK.BIN`: 4.939 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE11_IT.BIN`: 4.915 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE12_CN.BIN`: 4.868 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE12_EN.BIN`: 4.868 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE12_HK.BIN`: 4.868 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE12_IT.BIN`: 4.861 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE13_CN.BIN`: 4.646 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE13_EN.BIN`: 4.643 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE13_HK.BIN`: 4.635 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE13_IT.BIN`: 4.643 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE14_CN.BIN`: 4.612 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE14_EN.BIN`: 4.628 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE14_HK.BIN`: 4.612 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE14_IT.BIN`: 4.628 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE1_CN.BIN`: 4.313 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE1_EN.BIN`: 4.302 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE1_HK.BIN`: 4.313 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE1_IT.BIN`: 4.327 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE2_CN.BIN`: 4.321 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE2_EN.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE2_HK.BIN`: 4.321 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE2_IT.BIN`: 4.321 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE3_CN.BIN`: 4.326 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE3_EN.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE3_HK.BIN`: 4.337 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE3_IT.BIN`: 4.330 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE4_CN.BIN`: 4.314 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE4_EN.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE4_HK.BIN`: 4.314 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE4_IT.BIN`: 4.304 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE5_CN.BIN`: 4.330 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE5_EN.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE5_HK.BIN`: 4.351 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE5_IT.BIN`: 4.342 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE6_CN.BIN`: 4.355 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE6_EN.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE6_HK.BIN`: 4.359 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE6_IT.BIN`: 4.335 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE7_CN.BIN`: 4.326 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE7_EN.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE7_HK.BIN`: 4.326 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE7_IT.BIN`: 4.326 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE8_CN.BIN`: 4.331 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE8_EN.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE8_HK.BIN`: 4.331 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE8_IT.BIN`: 4.348 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE9_CN.BIN`: 4.911 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE9_EN.BIN`: 4.934 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE9_HK.BIN`: 4.911 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE9_IT.BIN`: 4.936 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE_CN.BIN`: 4.517 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE_EN.BIN`: 4.561 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE_HK.BIN`: 4.530 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/UCODE_IT.BIN`: 4.518 — looks structured
+- `DIAGNOSTIC/VEHICLES/FLYER/V10.24/VINMODEL.BIN`: 3.859 — looks structured
+
+**FUTIAN**
+
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/DTCHELP.BIN`: 5.386 — looks structured
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/FOTON_FUNCFG.BIN`: 5.792 — looks structured
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/MAPFILTERID.BIN`: 4.817 — looks structured
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/SLLIB.BIN`: 3.637 — looks structured
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/SYSSCAN.BIN`: 3.896 — looks structured
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/UCODE_CN.BIN`: 4.271 — looks structured
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/UCODE_EN.BIN`: 4.250 — looks structured
+- `DIAGNOSTIC/VEHICLES/FUTIAN/V10.20/UCODE_HK.BIN`: 4.271 — looks structured
+
+**GM**
+
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/DTCH_CFG.BIN`: 4.223 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/FUNCH_CFG.BIN`: 2.725 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_DTCSTATE.BIN`: 4.252 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_DTC_CFG.BIN`: 5.562 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_FDATA.BIN`: 5.339 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_FFLIB_CFG.BIN`: 5.290 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_FUNCACTDATA.BIN`: 4.960 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_FUNCCFG.BIN`: 4.940 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_FUNCMENU.BIN`: 5.126 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_FUNC_MENU.BIN`: 5.145 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_OKS.BIN`: 5.696 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_RESETCFG.BIN`: 4.795 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_SYSCFG.BIN`: 5.749 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_SYSINFO.BIN`: 4.572 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_TDTC_CFG.BIN`: 5.324 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_TSELCFG.BIN`: 5.121 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_VEHICLE.BIN`: 3.441 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_VINCFG.BIN`: 4.820 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_VINENG.BIN`: 4.965 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/GM_VINOKS.BIN`: 3.950 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDIACTLINK.BIN`: 4.988 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDIDSLINK.BIN`: 5.177 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDIDSMODULE.BIN`: 5.316 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDIDTCMODULE.BIN`: 4.285 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDIFUNCMENU.BIN`: 4.986 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDIIDMODULE.BIN`: 5.061 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDIMODULE.BIN`: 3.804 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MDISYSTEM.BIN`: 5.334 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MODULEACTPID.BIN`: 3.937 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/MSTATUSDATA.BIN`: 2.732 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/SYS_DATA_GM.BIN`: 0.795 — looks structured
+- `DIAGNOSTIC/VEHICLES/GM/V11.22/VINCFG.BIN`: 3.531 — looks structured
+
+**IVECO**
+
+
+**JIAO**
+
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/JIAO_FUNCFG.BIN`: 4.061 — looks structured
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/MAPFILTERID.BIN`: 2.547 — looks structured
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/OBD2_SYS_DATA.BIN`: 4.053 — looks structured
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/SYSSCAN.BIN`: 3.015 — looks structured
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/UCODE_CN.BIN`: 4.443 — looks structured
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/UCODE_EN.BIN`: 1.799 — looks structured
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/UCODE_OLD_CN.BIN`: 4.285 — looks structured
+- `DIAGNOSTIC/VEHICLES/JIAO/V10.04/UCODE_OLD_EN.BIN`: 4.280 — looks structured
+
+**JINLONG**
+
+- `DIAGNOSTIC/VEHICLES/JINLONG/V10.02/JINLONGZY_FUNCFG.BIN`: 3.894 — looks structured
+- `DIAGNOSTIC/VEHICLES/JINLONG/V10.02/JINLONGZY_SWMAP.BIN`: 1.726 — looks structured
+- `DIAGNOSTIC/VEHICLES/JINLONG/V10.02/SYSSCAN.BIN`: 3.379 — looks structured
+- `DIAGNOSTIC/VEHICLES/JINLONG/V10.02/UCODE_CN.BIN`: 3.745 — looks structured
+- `DIAGNOSTIC/VEHICLES/JINLONG/V10.02/UCODE_EN.BIN`: 2.125 — looks structured
+
+**LANDROVER**
+
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/CONFIGMESSAGE.BIN`: 4.161 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/DATASTREAMFF.BIN`: 4.961 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/DDA_DATASTREAM.BIN`: 3.632 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/DDA_SPECFUNCMENU.BIN`: 3.766 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/JCONFIG_FILE.BIN`: 4.491 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/JLR_MENU_RESET.BIN`: 3.754 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/JVINDECODE.BIN`: 3.984 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/KEYCRC.BIN`: 4.827 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/LAND_T4_SYS_DATA.BIN`: 3.052 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/MBPFILE.BIN`: 3.895 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/OBD2_SYS_DATA.BIN`: 3.905 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/PFV_CONFIG_FILE.BIN`: 4.422 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/PFV_DEFSYS_FILE.BIN`: 3.224 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/PFV_FREEZEFRAME.BIN`: 3.535 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/PFV_MAPFILE.BIN`: 4.462 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/PFV_SPECFUNCMENU.BIN`: 2.676 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/PFV_SPEC_MAP.BIN`: 4.593 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/QTQV_STRING.BIN`: 4.795 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAA.BIN`: 5.194 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAB.BIN`: 5.105 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAC.BIN`: 4.933 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAD.BIN`: 5.202 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAE.BIN`: 4.246 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAF.BIN`: 4.309 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAG.BIN`: 3.614 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/TCDATAH.BIN`: 3.956 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/UID_MENU.BIN`: 4.160 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/UNIT.BIN`: 2.306 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/VDEFFILE.BIN`: 4.780 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/VINSDV.BIN`: 3.843 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/VMFILE.BIN`: 3.978 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/VRDECODE.BIN`: 4.659 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/CONFIG_FILE_08.BIN`: 2.833 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/CONFIG_FILE_25.BIN`: 2.978 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/CONFIG_FILE_41.BIN`: 2.925 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/DTC_DL_FILE_11.BIN`: 3.823 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/DTC_DL_FILE_26.BIN`: 3.900 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/DTC_DL_FILE_42.BIN`: 3.822 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_1020.BIN`: 5.646 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_111.BIN`: 5.441 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_132.BIN`: 6.001 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_166.BIN`: 5.536 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_199.BIN`: 5.714 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_240.BIN`: 5.757 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_336.BIN`: 5.568 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_352.BIN`: 5.469 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_367.BIN`: 5.315 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_385.BIN`: 5.551 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_401.BIN`: 5.564 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_418.BIN`: 5.340 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_437.BIN`: 5.641 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_452.BIN`: 5.523 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_467.BIN`: 5.604 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_485.BIN`: 5.400 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_502.BIN`: 5.446 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_520.BIN`: 5.686 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_536.BIN`: 5.518 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_564.BIN`: 5.599 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_584.BIN`: 5.644 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_599.BIN`: 5.514 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_651.BIN`: 5.376 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_76.BIN`: 5.625 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_824.BIN`: 5.415 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_879.BIN`: 5.542 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_894.BIN`: 5.547 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_909.BIN`: 5.706 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_934.BIN`: 5.244 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_960.BIN`: 5.478 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SPEC_FILE_98.BIN`: 5.412 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FDID_FILE_14.BIN`: 4.574 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FDID_FILE_29.BIN`: 4.179 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FDID_FILE_42.BIN`: 4.587 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FDID_FILE_57.BIN`: 4.435 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FDID_FILE_71.BIN`: 4.033 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FDID_FILE_85.BIN`: 4.371 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FILE_18.BIN`: 3.731 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FILE_31.BIN`: 4.027 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FILE_46.BIN`: 4.083 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FILE_60.BIN`: 3.974 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FILE_74.BIN`: 3.625 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/PFV_SYS_FILE_89.BIN`: 3.428 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/SYSTEM_FILE_102.BIN`: 2.836 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/SYSTEM_FILE_117.BIN`: 2.787 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/SYSTEM_FILE_21.BIN`: 2.937 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/SYSTEM_FILE_36.BIN`: 3.295 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/SYSTEM_FILE_52.BIN`: 2.778 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/SYSTEM_FILE_67.BIN`: 3.247 — looks structured
+- `DIAGNOSTIC/VEHICLES/LANDROVER/V10.64/COMMONLIBFILES/SYSTEM_FILE_83.BIN`: 2.989 — looks structured
+
+**LIUWEI_TY**
+
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/DTCH_CFG.BIN`: 4.305 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/LIUWEI_TY_FUNCFG.BIN`: 5.732 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/MAPFILTERID.BIN`: 4.626 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/OBD2_SYS_DATA.BIN`: 3.905 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/SLLIB.BIN`: 4.386 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/SYSSCAN.BIN`: 3.262 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE1_CN.BIN`: 4.615 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE1_EN.BIN`: 4.609 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE1_HK.BIN`: 4.615 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE1_RU.BIN`: 4.609 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE2_CN.BIN`: 4.517 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE2_EN.BIN`: 4.512 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE2_HK.BIN`: 4.523 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE2_RU.BIN`: 4.512 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE3_CN.BIN`: 4.677 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE3_EN.BIN`: 4.677 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE3_HK.BIN`: 4.677 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE3_RU.BIN`: 4.677 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE_CN.BIN`: 4.425 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE_EN.BIN`: 4.426 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE_HK.BIN`: 4.410 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/UCODE_RU.BIN`: 4.426 — looks structured
+- `DIAGNOSTIC/VEHICLES/LIUWEI_TY/V10.26/VINMODEL.BIN`: 4.108 — looks structured
+
+**LUXGEN**
+
+- `DIAGNOSTIC/VEHICLES/LUXGEN/V10.02/LUXGEN_SYS_DATA.BIN`: 4.791 — looks structured
+
+**MAZDA**
+
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/CARVINDE.BIN`: 5.589 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MAZDA_CDSF.BIN`: 4.352 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MAZDA_DTCF.BIN`: 5.071 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MAZDA_IMMO.BIN`: 4.457 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MAZDA_INFO.BIN`: 5.256 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MAZDA_OLD.BIN`: 5.769 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MAZDA_SPEC.BIN`: 4.568 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MAZDA_SYSP.BIN`: 4.489 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/MENU_1.BIN`: 4.212 — looks structured
+- `DIAGNOSTIC/VEHICLES/MAZDA/V10.46/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+
+**OPEL**
+
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/DTCH_CFG.BIN`: 4.325 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/DTC_CFG.BIN`: 4.748 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2ACTLINK.BIN`: 5.578 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2DSLINK.BIN`: 5.561 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2DSMODULE.BIN`: 5.753 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2DTCBCDLIST.BIN`: 4.909 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2DTCMODULE.BIN`: 4.917 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2FUNCMENU.BIN`: 5.448 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2MODULE.BIN`: 5.170 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2SPECCFG.BIN`: 5.342 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/M2SYSTEM.BIN`: 4.437 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/OPEL_SYS_DATA.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/SCANVEHICLE.BIN`: 5.008 — looks structured
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/SECDATACFG.BIN`: 7.989 — looks random
+- `DIAGNOSTIC/VEHICLES/OPEL/V10.84/SPECMENU.BIN`: 5.055 — looks structured
+
+**PEUGEOT**
+
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/ACTIONTEST.BIN`: 3.969 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/DTCH_CFG.BIN`: 4.302 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/ECUID_MAPID.BIN`: 4.862 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/FUNCHELPMESSAGE.BIN`: 3.353 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/FUNCH_CFG.BIN`: 2.321 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PEUGEOT_PSA_DS_DATA.BIN`: 5.712 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PEUGEOT_SPEC_CAL.BIN`: 4.600 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PEUGEOT_SYS_DATA.BIN`: 3.161 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PEUGEOT_SYS_SCAN.BIN`: 4.952 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PSA_COM.BIN`: 4.221 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PSA_COND.BIN`: 3.413 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PSA_DESCRITOR.BIN`: 5.054 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/PSA_ECU.BIN`: 2.619 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/SPECFUNTION.BIN`: 4.915 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/SYS_NAME.BIN`: 5.013 — looks structured
+- `DIAGNOSTIC/VEHICLES/PEUGEOT/V10.52/VEH_INFO.BIN`: 4.706 — looks structured
+
+**QOROS**
+
+- `DIAGNOSTIC/VEHICLES/QOROS/V10.02/ECODE.BIN`: 6.870 — looks structured
+- `DIAGNOSTIC/VEHICLES/QOROS/V10.02/MAPFILTERID.BIN`: 3.854 — looks structured
+- `DIAGNOSTIC/VEHICLES/QOROS/V10.02/QOROS_FUNCFG.BIN`: 4.059 — looks structured
+- `DIAGNOSTIC/VEHICLES/QOROS/V10.02/SYSSCAN.BIN`: 3.200 — looks structured
+- `DIAGNOSTIC/VEHICLES/QOROS/V10.02/UCODE_CN.BIN`: 4.363 — looks structured
+- `DIAGNOSTIC/VEHICLES/QOROS/V10.02/UCODE_EN.BIN`: 4.369 — looks structured
+
+**SAICMG**
+
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/DTCDATA.BIN`: 5.059 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/DTCHELP.BIN`: 3.390 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/ECUREPLACE.BIN`: 3.901 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/FREEZEECUINFO.BIN`: 5.283 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/MG_DTCDATA.BIN`: 5.174 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/MG_DTCHELP.BIN`: 3.390 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/MG_SYSTEMDATA.BIN`: 3.184 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/ROEWE_FCF.BIN`: 3.933 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/SGAN.BIN`: 4.051 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/SYSECUNAME.BIN`: 4.441 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/SYSTEMDATA.BIN`: 3.196 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/SYS_CONFIG.BIN`: 4.854 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/VEHICLEMENU.BIN`: 2.332 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICMG/V10.38/VIN_SCAN.BIN`: 4.697 — looks structured
+
+**SAICROEWE**
+
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/DTCDATA.BIN`: 5.056 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/DTCHELP.BIN`: 3.390 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/ECUREPLACE.BIN`: 3.902 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/FREEZEECUINFO.BIN`: 5.274 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/OBD2_SYS_DATA.BIN`: 3.905 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/ROEWE_FCF.BIN`: 3.933 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/SGAN.BIN`: 4.064 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/SYSECUNAME.BIN`: 4.440 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/SYSTEMDATA.BIN`: 3.196 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/SYS_CONFIG.BIN`: 4.862 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/VEHICLEMENU.BIN`: 2.108 — looks structured
+- `DIAGNOSTIC/VEHICLES/SAICROEWE/V10.32/VIN_SCAN.BIN`: 4.716 — looks structured
+
+**SEAT**
+
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/AUDI_HIDEFUNC_CONFIG.BIN`: 4.359 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/AUDI_INFO.BIN`: 3.695 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/AUDI_LONGCODEDATA.BIN`: 4.868 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/AUDI_SYSDATA.BIN`: 6.416 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/AUDI_SYSTRANSTAB.BIN`: 5.729 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/AUDI_VW_ECUFLASH_CONFIG.BIN`: 3.136 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/CAR_TABLE.BIN`: 4.151 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/DTCH_CFG.BIN`: 4.394 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/FUNCH_CFG.BIN`: 2.671 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/GFS_ODXCALC.BIN`: 4.634 — looks structured
+- `DIAGNOSTIC/VEHICLES/SEAT/V10.20/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+
+**SGM**
+
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/DTCH_CFG.BIN`: 4.010 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/ECUDATA.BIN`: 5.092 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/FFCFG.BIN`: 5.240 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/FUNCH_CFG.BIN`: 3.160 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/M2ACTLINK.BIN`: 4.122 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/M2CAR.BIN`: 4.604 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/M2RESET.BIN`: 3.708 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/MODULEACTPID.BIN`: 4.301 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/R3DSLIB.BIN`: 4.680 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/R3DTCLIB.BIN`: 4.476 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/R3VERLIB.BIN`: 4.354 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/SGM_CODING_START.BIN`: 4.362 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/SGM_DATA.BIN`: 6.326 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/SGM_DTC_STATUS.BIN`: 3.999 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/SGM_PRO_DATA.BIN`: 5.828 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/STATUSDATA.BIN`: 3.893 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/SYS_DATA_SGM.BIN`: 4.187 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2DSLIB.BIN`: 4.680 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2DTCCODECFG.BIN`: 4.473 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2DTCLIB.BIN`: 4.618 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2ECUDATA.BIN`: 4.948 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2FF.BIN`: 4.162 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2SYSINFO.BIN`: 4.010 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2VEHCFG.BIN`: 4.276 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/T2VERLIB.BIN`: 4.578 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/VEHCFG.BIN`: 4.678 — looks structured
+- `DIAGNOSTIC/VEHICLES/SGM/V10.72/VIN_CAR.BIN`: 4.416 — looks structured
+
+**SKODA**
+
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/AUDI_HIDEFUNC_CONFIG.BIN`: 4.359 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/AUDI_INFO.BIN`: 3.695 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/AUDI_LONGCODEDATA.BIN`: 4.868 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/AUDI_SYSDATA.BIN`: 6.415 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/AUDI_SYSTRANSTAB.BIN`: 5.729 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/AUDI_VW_ECUFLASH_CONFIG.BIN`: 3.136 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/BASEINFO.BIN`: 5.170 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/CAR_TABLE.BIN`: 4.151 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/DTCH_CFG.BIN`: 4.394 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/FUNCH_CFG.BIN`: 2.671 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/GFS_ODXCALC.BIN`: 4.655 — looks structured
+- `DIAGNOSTIC/VEHICLES/SKODA/V10.18/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+
+**SMART**
+
+- `DIAGNOSTIC/VEHICLES/SMART/V10.22/ECU_FLASH_DATA.BIN`: 4.015 — looks structured
+- `DIAGNOSTIC/VEHICLES/SMART/V10.22/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/SMART/V10.22/SMART_SYS_DATA.BIN`: 4.322 — looks structured
+
+**SPRINTER**
+
+- `DIAGNOSTIC/VEHICLES/SPRINTER/V10.46/FUNCH_CFG.BIN`: 1.881 — looks structured
+- `DIAGNOSTIC/VEHICLES/SPRINTER/V10.46/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/SPRINTER/V10.46/SPRINTER_SYS_DATA.BIN`: 4.483 — looks structured
+
+**SUZUKI**
+
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/DTCCFG.BIN`: 5.103 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/DTCH_CFG.BIN`: 4.418 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/MODECFG.BIN`: 4.821 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/SCANCFG.BIN`: 4.824 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/SLLIB.BIN`: 4.640 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/SPECCFG.BIN`: 3.530 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/SYS_DATA.BIN`: 2.828 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/VEHICLEINFO.BIN`: 4.298 — looks structured
+- `DIAGNOSTIC/VEHICLES/SUZUKI/V10.46/VINSCAN.BIN`: 4.256 — looks structured
+
+**USAFORD**
+
+- `DIAGNOSTIC/VEHICLES/USAFORD/V11.30/OBD2_SYS_DATA.BIN`: 4.232 — looks structured
+
+**VOLVO**
+
+- `DIAGNOSTIC/VEHICLES/VOLVO/V10.46/OBD2_SYS_DATA.BIN`: 4.053 — looks structured
+- `DIAGNOSTIC/VEHICLES/VOLVO/V10.46/VOLVO_FF_DATA.BIN`: 5.176 — looks structured
+- `DIAGNOSTIC/VEHICLES/VOLVO/V10.46/VOLVO_SPECIALFUNCTION.BIN`: 4.528 — looks structured
+- `DIAGNOSTIC/VEHICLES/VOLVO/V10.46/VOLVO_SYS_DATA.BIN`: 5.749 — looks structured
+
+**VW**
+
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/AUDI_GUIDEPATH.BIN`: 4.242 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/AUDI_HIDEFUNC_CONFIG.BIN`: 4.359 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/AUDI_INFO.BIN`: 3.695 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/AUDI_LONGCODEDATA.BIN`: 4.700 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/AUDI_SYSDATA.BIN`: 6.428 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/AUDI_SYSTRANSTAB.BIN`: 5.729 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/AUDI_VW_ECUFLASH_CONFIG.BIN`: 3.135 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/BASEINFO.BIN`: 5.170 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/CAR_TABLE.BIN`: 4.122 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/DTCH_CFG.BIN`: 4.394 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/FUNCH_CFG.BIN`: 2.671 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/GFS_ODXCALC.BIN`: 4.634 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/OBD2_SYS_DATA.BIN`: 4.148 — looks structured
+- `DIAGNOSTIC/VEHICLES/VW/V10.40/UDS_DSDATA_LT3.BIN`: 4.642 — looks structured
+
+### Generic reader literal error histograms
+
+- **TOYOTA** (0/75): ValueError: Typed-table has 129 unexplained trailing bytes: 1; ValueError: Typed-table has 2929208 unexplained trailing bytes: 1; ValueError: Typed-table has 5752962 unexplained trailing bytes: 1; ValueError: Typed-table has 599900 unexplained trailing bytes: 1; ValueError: Typed-table has 82014 unexplained trailing bytes: 1; ValueError: Typed-table has 9068023 unexplained trailing bytes: 1; ValueError: Typed-table size 100663296 exceeds span 16490: 1; ValueError: Typed-table size 1310851072 exceeds span 2035802: 1; ValueError: Typed-table size 1560281138 exceeds span 3076762: 1; ValueError: Typed-table size 16777216 exceeds span 10710: 1; ValueError: Typed-table size 16777216 exceeds span 10818: 1; ValueError: Typed-table size 16777216 exceeds span 10902: 1; ValueError: Typed-table size 16777216 exceeds span 10910: 1; ValueError: Typed-table size 16777216 exceeds span 109798: 1; ValueError: Typed-table size 16777216 exceeds span 112630: 1; ValueError: Typed-table size 16777216 exceeds span 11858: 1; ValueError: Typed-table size 16777216 exceeds span 134858: 2; ValueError: Typed-table size 16777216 exceeds span 13698: 1; ValueError: Typed-table size 16777216 exceeds span 14990: 1; ValueError: Typed-table size 16777216 exceeds span 16578: 1; ValueError: Typed-table size 16777216 exceeds span 19790: 1; ValueError: Typed-table size 16777216 exceeds span 20686: 1; ValueError: Typed-table size 16777216 exceeds span 21562: 1; ValueError: Typed-table size 16777216 exceeds span 22382: 1; ValueError: Typed-table size 16777216 exceeds span 22946: 1; ValueError: Typed-table size 16777216 exceeds span 22966: 1; ValueError: Typed-table size 16777216 exceeds span 2298: 2; ValueError: Typed-table size 16777216 exceeds span 24658: 1; ValueError: Typed-table size 16777216 exceeds span 25994: 1; ValueError: Typed-table size 16777216 exceeds span 2754: 1; ValueError: Typed-table size 16777216 exceeds span 27966: 1; ValueError: Typed-table size 16777216 exceeds span 37906: 1; ValueError: Typed-table size 16777216 exceeds span 38502: 1; ValueError: Typed-table size 16777216 exceeds span 4238: 1; ValueError: Typed-table size 16777216 exceeds span 4354: 1; ValueError: Typed-table size 16777216 exceeds span 43762: 1; ValueError: Typed-table size 16777216 exceeds span 44498: 1; ValueError: Typed-table size 16777216 exceeds span 4762: 1; ValueError: Typed-table size 16777216 exceeds span 50286: 1; ValueError: Typed-table size 16777216 exceeds span 5110: 1; ValueError: Typed-table size 16777216 exceeds span 5702: 1; ValueError: Typed-table size 16777216 exceeds span 5950: 2; ValueError: Typed-table size 16777216 exceeds span 6378: 2; ValueError: Typed-table size 16777216 exceeds span 66946: 1; ValueError: Typed-table size 16777216 exceeds span 6830: 1; ValueError: Typed-table size 16777216 exceeds span 7338: 1; ValueError: Typed-table size 16777216 exceeds span 82654: 1; ValueError: Typed-table size 16777216 exceeds span 83930: 1; ValueError: Typed-table size 16777216 exceeds span 8402: 1; ValueError: Typed-table size 16777216 exceeds span 86234: 1; ValueError: Typed-table size 16777216 exceeds span 86414: 1; ValueError: Typed-table size 16777216 exceeds span 8962: 1; ValueError: Typed-table size 16777216 exceeds span 9098: 1; ValueError: Typed-table size 16777216 exceeds span 9514: 1; ValueError: Typed-table size 16777216 exceeds span 9618: 1; ValueError: Typed-table size 16777216 exceeds span 98402: 1; ValueError: Typed-table size 16777216 exceeds span 9954: 1; ValueError: Typed-table size 1895825455 exceeds span 3056514: 1; ValueError: Typed-table size 19245314 exceeds span 212394: 1; ValueError: Typed-table size 3070230569 exceeds span 2702146: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 50331648 exceeds span 6126: 1; ValueError: Typed-table size 50331648 exceeds span 6418: 1; ValueError: Typed-table size 50331648 exceeds span 9234: 1; ValueError: Typed-table size 527362 exceeds span 6130: 1; ValueError: Typed-table size 655491072 exceeds span 2801702: 1; ValueError: Typed-table size 67108864 exceeds span 21590: 1; ValueError: Typed-table size 67108864 exceeds span 31534: 1; ValueError: Typed-table size 67108864 exceeds span 5474: 1; ValueError: Typed-table size 67108864 exceeds span 6370: 1; ValueError: Typed-table size 901634 exceeds span 47490: 1
+- **ASTONMARTIN** (0/5): ValueError: Typed-table size 1130317124 exceeds span 539294: 1; ValueError: Typed-table size 1163871556 exceeds span 748078: 1; ValueError: Typed-table size 1214203204 exceeds span 539922: 1; ValueError: Typed-table size 1381975364 exceeds span 880030: 1; ValueError: Typed-table size 658505728 exceeds span 49094: 1
+- **AUDI** (0/14): ValueError: Typed-table has 2324010 unexplained trailing bytes: 1; ValueError: Typed-table has 23994 unexplained trailing bytes: 1; ValueError: Typed-table has 249 unexplained trailing bytes: 1; ValueError: Typed-table has 25663082 unexplained trailing bytes: 1; ValueError: Typed-table has 431590 unexplained trailing bytes: 1; ValueError: Typed-table size 1665204240 exceeds span 42630: 1; ValueError: Typed-table size 16777473 exceeds span 866: 1; ValueError: Typed-table size 2328363011 exceeds span 341230: 1; ValueError: Typed-table size 280756224 exceeds span 122746: 1; ValueError: Typed-table size 33554432 exceeds span 5530: 1; ValueError: Typed-table size 3604553 exceeds span 19242: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 37027840 exceeds span 146342: 1; ValueError: Typed-table size 905970176 exceeds span 440658: 1
+- **AUSTHOLDEN** (0/16): ValueError: Typed-table has 1178688 unexplained trailing bytes: 1; ValueError: Typed-table has 281526 unexplained trailing bytes: 1; ValueError: Typed-table has 451045 unexplained trailing bytes: 1; ValueError: Typed-table size 131345 exceeds span 18: 1; ValueError: Typed-table size 1518862336 exceeds span 1020002: 1; ValueError: Typed-table size 1900544 exceeds span 11338: 1; ValueError: Typed-table size 2097152 exceeds span 66902: 1; ValueError: Typed-table size 30976 exceeds span 6810: 1; ValueError: Typed-table size 3328245760 exceeds span 1304482: 1; ValueError: Typed-table size 3741319168 exceeds span 146174: 1; ValueError: Typed-table size 4076929024 exceeds span 223714: 1; ValueError: Typed-table size 50462720 exceeds span 118946: 1; ValueError: Typed-table size 50462720 exceeds span 1841386: 1; ValueError: Typed-table size 50462720 exceeds span 21778898: 1; ValueError: Typed-table size 50462720 exceeds span 5210346: 1; ValueError: Typed-table size 50462720 exceeds span 5503538: 1
+- **BENZ** (0/6): ValueError: Typed-table has 134723 unexplained trailing bytes: 1; ValueError: Typed-table has 457 unexplained trailing bytes: 1; ValueError: Typed-table has 523518 unexplained trailing bytes: 1; ValueError: Typed-table has 7734513 unexplained trailing bytes: 1; ValueError: Typed-table size 1358954762 exceeds span 2067390: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1
+- **BXGM** (0/0): none
+- **CHANGAN** (0/32): ValueError: Typed-table has 1326 unexplained trailing bytes: 1; ValueError: Typed-table has 16376 unexplained trailing bytes: 1; ValueError: Typed-table has 17772 unexplained trailing bytes: 1; ValueError: Typed-table has 40404 unexplained trailing bytes: 1; ValueError: Typed-table has 40412 unexplained trailing bytes: 1; ValueError: Typed-table has 40964 unexplained trailing bytes: 1; ValueError: Typed-table has 41112 unexplained trailing bytes: 1; ValueError: Typed-table has 41504 unexplained trailing bytes: 1; ValueError: Typed-table has 42384 unexplained trailing bytes: 1; ValueError: Typed-table has 43376 unexplained trailing bytes: 1; ValueError: Typed-table has 46476 unexplained trailing bytes: 1; ValueError: Typed-table has 46768 unexplained trailing bytes: 1; ValueError: Typed-table has 51652 unexplained trailing bytes: 1; ValueError: Typed-table has 53704 unexplained trailing bytes: 1; ValueError: Typed-table has 54220 unexplained trailing bytes: 1; ValueError: Typed-table has 54248 unexplained trailing bytes: 1; ValueError: Typed-table has 58372 unexplained trailing bytes: 1; ValueError: Typed-table has 60588 unexplained trailing bytes: 1; ValueError: Typed-table has 62052 unexplained trailing bytes: 1; ValueError: Typed-table has 64004 unexplained trailing bytes: 1; ValueError: Typed-table has 67820 unexplained trailing bytes: 1; ValueError: Typed-table has 71752 unexplained trailing bytes: 1; ValueError: Typed-table has 78524 unexplained trailing bytes: 1; ValueError: Typed-table size 1093948236 exceeds span 5586: 1; ValueError: Typed-table size 1178206250 exceeds span 11391166: 1; ValueError: Typed-table size 1312901187 exceeds span 5254: 1; ValueError: Typed-table size 1349255168 exceeds span 1802: 1; ValueError: Typed-table size 1351745537 exceeds span 118658: 1; ValueError: Typed-table size 22400 exceeds span 10214: 1; ValueError: Typed-table size 2868903937 exceeds span 11194: 1; ValueError: Typed-table size 64512 exceeds span 1302: 1; ValueError: Typed-table size 883621889 exceeds span 162202: 1
+- **CITROEN** (0/17): ValueError: Typed-table has 1052600 unexplained trailing bytes: 1; ValueError: Typed-table has 117318 unexplained trailing bytes: 1; ValueError: Typed-table has 25 unexplained trailing bytes: 1; ValueError: Typed-table has 85794 unexplained trailing bytes: 1; ValueError: Typed-table size 1133356288 exceeds span 6712594: 1; ValueError: Typed-table size 16777024 exceeds span 24126: 1; ValueError: Typed-table size 195100672 exceeds span 32914: 1; ValueError: Typed-table size 273219584 exceeds span 70: 2; ValueError: Typed-table size 3160113 exceeds span 54614: 1; ValueError: Typed-table size 327680 exceeds span 10402: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 649068544 exceeds span 1736498: 1; ValueError: Typed-table size 6947328 exceeds span 355546: 1; ValueError: Typed-table size 696254464 exceeds span 428598: 1; ValueError: Typed-table size 897318912 exceeds span 1812206: 1; ValueError: Typed-table size 984875008 exceeds span 2199158: 1
+- **DAEWOO** (0/0): none
+- **DAIHATSU** (0/2): ValueError: Typed-table size 1795162136 exceeds span 251314: 1; ValueError: Typed-table size 4026597376 exceeds span 109754: 1
+- **FLYER** (0/69): ValueError: Typed-table has 17140 unexplained trailing bytes: 7; ValueError: Typed-table has 24012 unexplained trailing bytes: 1; ValueError: Typed-table has 24048 unexplained trailing bytes: 1; ValueError: Typed-table has 24580 unexplained trailing bytes: 1; ValueError: Typed-table has 26316 unexplained trailing bytes: 2; ValueError: Typed-table has 26332 unexplained trailing bytes: 1; ValueError: Typed-table has 26836 unexplained trailing bytes: 1; ValueError: Typed-table has 27832 unexplained trailing bytes: 1; ValueError: Typed-table has 27876 unexplained trailing bytes: 1; ValueError: Typed-table has 27944 unexplained trailing bytes: 1; ValueError: Typed-table has 28552 unexplained trailing bytes: 1; ValueError: Typed-table has 28680 unexplained trailing bytes: 2; ValueError: Typed-table has 28744 unexplained trailing bytes: 2; ValueError: Typed-table has 30564 unexplained trailing bytes: 1; ValueError: Typed-table has 30600 unexplained trailing bytes: 1; ValueError: Typed-table has 30756 unexplained trailing bytes: 1; ValueError: Typed-table has 30892 unexplained trailing bytes: 1; ValueError: Typed-table has 31604 unexplained trailing bytes: 1; ValueError: Typed-table has 33252 unexplained trailing bytes: 1; ValueError: Typed-table has 33304 unexplained trailing bytes: 1; ValueError: Typed-table has 35356 unexplained trailing bytes: 1; ValueError: Typed-table has 37020 unexplained trailing bytes: 1; ValueError: Typed-table has 37736 unexplained trailing bytes: 1; ValueError: Typed-table has 41022 unexplained trailing bytes: 1; ValueError: Typed-table has 54140 unexplained trailing bytes: 1; ValueError: Typed-table has 54336 unexplained trailing bytes: 1; ValueError: Typed-table has 54384 unexplained trailing bytes: 1; ValueError: Typed-table has 55424 unexplained trailing bytes: 1; ValueError: Typed-table has 55440 unexplained trailing bytes: 1; ValueError: Typed-table has 57560 unexplained trailing bytes: 1; ValueError: Typed-table has 57884 unexplained trailing bytes: 1; ValueError: Typed-table has 58308 unexplained trailing bytes: 1; ValueError: Typed-table has 58344 unexplained trailing bytes: 1; ValueError: Typed-table has 58500 unexplained trailing bytes: 1; ValueError: Typed-table has 59020 unexplained trailing bytes: 1; ValueError: Typed-table has 62500 unexplained trailing bytes: 1; ValueError: Typed-table has 62556 unexplained trailing bytes: 1; ValueError: Typed-table has 62632 unexplained trailing bytes: 1; ValueError: Typed-table has 63392 unexplained trailing bytes: 1; ValueError: Typed-table has 63600 unexplained trailing bytes: 2; ValueError: Typed-table has 64160 unexplained trailing bytes: 1; ValueError: Typed-table has 65796 unexplained trailing bytes: 1; ValueError: Typed-table has 73208 unexplained trailing bytes: 1; ValueError: Typed-table has 73688 unexplained trailing bytes: 2; ValueError: Typed-table has 74724 unexplained trailing bytes: 2; ValueError: Typed-table has 83644 unexplained trailing bytes: 1; ValueError: Typed-table has 88044 unexplained trailing bytes: 1; ValueError: Typed-table has 88364 unexplained trailing bytes: 1; ValueError: Typed-table has 88516 unexplained trailing bytes: 1; ValueError: Typed-table size 1079902208 exceeds span 531406: 1; ValueError: Typed-table size 1163480134 exceeds span 11078: 1; ValueError: Typed-table size 1173618690 exceeds span 185962: 1; ValueError: Typed-table size 1360330755 exceeds span 281958: 1; ValueError: Typed-table size 2868903937 exceeds span 11194: 1; ValueError: Typed-table size 3330801752 exceeds span 12180794: 1; ValueError: Typed-table size 58464 exceeds span 1790: 1; ValueError: Typed-table size 788529152 exceeds span 35622: 1
+- **FUTIAN** (0/8): ValueError: Typed-table has 35404 unexplained trailing bytes: 1; ValueError: Typed-table has 38324 unexplained trailing bytes: 2; ValueError: Typed-table size 1310720 exceeds span 47690: 1; ValueError: Typed-table size 1711734784 exceeds span 17402: 1; ValueError: Typed-table size 2098462722 exceeds span 854126: 1; ValueError: Typed-table size 3708485632 exceeds span 85746: 1; ValueError: Typed-table size 64512 exceeds span 710: 1
+- **GM** (0/33): ValueError: Typed-table has 1178688 unexplained trailing bytes: 1; ValueError: Typed-table has 16741511 unexplained trailing bytes: 1; ValueError: Typed-table has 18742596 unexplained trailing bytes: 1; ValueError: Typed-table has 279270 unexplained trailing bytes: 1; ValueError: Typed-table has 281526 unexplained trailing bytes: 1; ValueError: Typed-table has 477925 unexplained trailing bytes: 1; ValueError: Typed-table size 11927552 exceeds span 110110: 1; ValueError: Typed-table size 1310720 exceeds span 124418: 1; ValueError: Typed-table size 131345 exceeds span 18: 1; ValueError: Typed-table size 1318725757 exceeds span 235754: 1; ValueError: Typed-table size 1520435200 exceeds span 1080146: 1; ValueError: Typed-table size 1900544 exceeds span 11338: 1; ValueError: Typed-table size 2486173696 exceeds span 50422: 1; ValueError: Typed-table size 3359375360 exceeds span 29029062: 1; ValueError: Typed-table size 33620153 exceeds span 13233426: 1; ValueError: Typed-table size 34144256 exceeds span 1493262: 1; ValueError: Typed-table size 3424190464 exceeds span 1303482: 1; ValueError: Typed-table size 3523215360 exceeds span 12886170: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 3924033538 exceeds span 12495402: 1; ValueError: Typed-table size 4080795648 exceeds span 2886306: 1; ValueError: Typed-table size 4142268416 exceeds span 382434: 1; ValueError: Typed-table size 4155244544 exceeds span 7962938: 1; ValueError: Typed-table size 4261412864 exceeds span 150522: 1; ValueError: Typed-table size 43776 exceeds span 9118: 1; ValueError: Typed-table size 50462720 exceeds span 122974: 1; ValueError: Typed-table size 50462720 exceeds span 1892594: 1; ValueError: Typed-table size 50462720 exceeds span 22405554: 1; ValueError: Typed-table size 50462720 exceeds span 5458002: 1; ValueError: Typed-table size 50462720 exceeds span 5729846: 1; ValueError: Typed-table size 6553600 exceeds span 1222162: 1; ValueError: Typed-table size 684785667 exceeds span 2063798: 1; ValueError: Typed-table size 8390526 exceeds span 264910: 1
+- **IVECO** (0/0): none
+- **JIAO** (0/8): ValueError: Typed-table has 1162 unexplained trailing bytes: 1; ValueError: Typed-table has 3608 unexplained trailing bytes: 1; ValueError: Typed-table has 4840 unexplained trailing bytes: 1; ValueError: Typed-table has 5552 unexplained trailing bytes: 1; ValueError: Typed-table size 10 exceeds span 6: 1; ValueError: Typed-table size 2868903937 exceeds span 10338: 1; ValueError: Typed-table size 60576 exceeds span 18: 1; ValueError: Typed-table size 87293952 exceeds span 67890: 1
+- **JINLONG** (0/5): ValueError: Typed-table has 132 unexplained trailing bytes: 1; ValueError: Typed-table size 10 exceeds span 6: 1; ValueError: Typed-table size 262144 exceeds span 50: 1; ValueError: Typed-table size 53280768 exceeds span 30906: 1; ValueError: Typed-table size 61145088 exceeds span 1246: 1
+- **LANDROVER** (0/88): ValueError: Typed-table has 1004 unexplained trailing bytes: 1; ValueError: Typed-table has 11564 unexplained trailing bytes: 1; ValueError: Typed-table has 1157542 unexplained trailing bytes: 1; ValueError: Typed-table has 124442 unexplained trailing bytes: 1; ValueError: Typed-table has 17246 unexplained trailing bytes: 1; ValueError: Typed-table has 207248 unexplained trailing bytes: 1; ValueError: Typed-table has 288250 unexplained trailing bytes: 1; ValueError: Typed-table has 29687 unexplained trailing bytes: 1; ValueError: Typed-table has 36366 unexplained trailing bytes: 1; ValueError: Typed-table has 57436 unexplained trailing bytes: 1; ValueError: Typed-table has 57993 unexplained trailing bytes: 1; ValueError: Typed-table has 737608 unexplained trailing bytes: 1; ValueError: Typed-table has 822220 unexplained trailing bytes: 1; ValueError: Typed-table has 85560 unexplained trailing bytes: 1; ValueError: Typed-table has 887916 unexplained trailing bytes: 1; ValueError: Typed-table size 1048576 exceeds span 1714: 1; ValueError: Typed-table size 1048576 exceeds span 2038: 1; ValueError: Typed-table size 1210112 exceeds span 746290: 1; ValueError: Typed-table size 131072 exceeds span 60166: 1; ValueError: Typed-table size 1310720 exceeds span 22762: 1; ValueError: Typed-table size 1310720 exceeds span 405790: 1; ValueError: Typed-table size 1310720 exceeds span 42130: 1; ValueError: Typed-table size 1310720 exceeds span 680742: 1; ValueError: Typed-table size 131137536 exceeds span 6170: 1; ValueError: Typed-table size 134283264 exceeds span 7814: 1; ValueError: Typed-table size 1375885851 exceeds span 1906: 1; ValueError: Typed-table size 1447448576 exceeds span 4746: 1; ValueError: Typed-table size 1479374612 exceeds span 1006: 1; ValueError: Typed-table size 151007280 exceeds span 2534: 1; ValueError: Typed-table size 1599489616 exceeds span 13522: 1; ValueError: Typed-table size 16711937 exceeds span 1158: 1; ValueError: Typed-table size 16777393 exceeds span 7830: 1; ValueError: Typed-table size 17760256 exceeds span 3690: 1; ValueError: Typed-table size 1835008 exceeds span 141426: 1; ValueError: Typed-table size 1835008 exceeds span 45186: 1; ValueError: Typed-table size 1835008 exceeds span 7138: 1; ValueError: Typed-table size 1835008 exceeds span 97422: 1; ValueError: Typed-table size 2008503821 exceeds span 530: 1; ValueError: Typed-table size 2008503822 exceeds span 578: 1; ValueError: Typed-table size 2008503822 exceeds span 626: 1; ValueError: Typed-table size 2008503823 exceeds span 670: 1; ValueError: Typed-table size 2067256081 exceeds span 1022: 1; ValueError: Typed-table size 21495808 exceeds span 22458: 1; ValueError: Typed-table size 2292992 exceeds span 84790: 1; ValueError: Typed-table size 230912 exceeds span 24906: 1; ValueError: Typed-table size 2317968667 exceeds span 1486: 1; ValueError: Typed-table size 2413650705 exceeds span 982: 1; ValueError: Typed-table size 251658242 exceeds span 148410: 1; ValueError: Typed-table size 251658242 exceeds span 64966: 1; ValueError: Typed-table size 251658242 exceeds span 65806: 1; ValueError: Typed-table size 2685272064 exceeds span 71886: 1; ValueError: Typed-table size 2685337600 exceeds span 41118: 1; ValueError: Typed-table size 2687959040 exceeds span 102310: 1; ValueError: Typed-table size 276627456 exceeds span 66266: 1; ValueError: Typed-table size 2868903937 exceeds span 11194: 1; ValueError: Typed-table size 3137339144 exceeds span 4490: 1; ValueError: Typed-table size 33488912 exceeds span 426: 1; ValueError: Typed-table size 3364174608 exceeds span 858: 1; ValueError: Typed-table size 3392548877 exceeds span 714: 1; ValueError: Typed-table size 3392548878 exceeds span 630: 1; ValueError: Typed-table size 3392548878 exceeds span 654: 2; ValueError: Typed-table size 3392548878 exceeds span 730: 1; ValueError: Typed-table size 3392548879 exceeds span 806: 1; ValueError: Typed-table size 3392548879 exceeds span 818: 1; ValueError: Typed-table size 3392548880 exceeds span 858: 1; ValueError: Typed-table size 3392548881 exceeds span 1026: 1; ValueError: Typed-table size 3392548881 exceeds span 998: 1; ValueError: Typed-table size 3392548883 exceeds span 1210: 1; ValueError: Typed-table size 3392548887 exceeds span 1238: 1; ValueError: Typed-table size 3621681425 exceeds span 1054: 1; ValueError: Typed-table size 3621681425 exceeds span 870: 1; ValueError: Typed-table size 3621681427 exceeds span 922: 1; ValueError: Typed-table size 4129280 exceeds span 2962030: 1; ValueError: Typed-table size 4227559179 exceeds span 634: 1; ValueError: Typed-table size 4227559180 exceeds span 554: 1; ValueError: Typed-table size 425201927 exceeds span 462: 1; ValueError: Typed-table size 4278194181 exceeds span 34674: 1; ValueError: Typed-table size 4278194181 exceeds span 41530: 1; ValueError: Typed-table size 4278256018 exceeds span 18334: 1; ValueError: Typed-table size 50331650 exceeds span 706170: 1; ValueError: Typed-table size 552677141 exceeds span 1042: 1; ValueError: Typed-table size 576822579 exceeds span 2826: 1; ValueError: Typed-table size 65536 exceeds span 930: 1; ValueError: Typed-table size 786432 exceeds span 1010: 1; ValueError: Typed-table size 786432 exceeds span 710: 1; ValueError: Typed-table size 787797343 exceeds span 6182: 1; ValueError: Typed-table size 844544 exceeds span 2374: 1
+- **LIUWEI_TY** (0/23): ValueError: Typed-table has 12020 unexplained trailing bytes: 4; ValueError: Typed-table has 34252 unexplained trailing bytes: 2; ValueError: Typed-table has 34780 unexplained trailing bytes: 2; ValueError: Typed-table has 35020 unexplained trailing bytes: 1; ValueError: Typed-table has 35148 unexplained trailing bytes: 1; ValueError: Typed-table has 35856 unexplained trailing bytes: 2; ValueError: Typed-table has 52816 unexplained trailing bytes: 2; ValueError: Typed-table has 54428 unexplained trailing bytes: 1; ValueError: Typed-table has 54432 unexplained trailing bytes: 1; ValueError: Typed-table has 71370 unexplained trailing bytes: 1; ValueError: Typed-table size 1465207116 exceeds span 934: 1; ValueError: Typed-table size 2166882304 exceeds span 98594: 1; ValueError: Typed-table size 2597060608 exceeds span 3480578: 1; ValueError: Typed-table size 273547264 exceeds span 121310: 1; ValueError: Typed-table size 2868903937 exceeds span 11194: 1; ValueError: Typed-table size 64512 exceeds span 714: 1
+- **LUXGEN** (0/1): ValueError: Typed-table has 9396 unexplained trailing bytes: 1
+- **MAZDA** (0/10): ValueError: Typed-table has 1162183 unexplained trailing bytes: 1; ValueError: Typed-table size 159711235 exceeds span 244498: 1; ValueError: Typed-table size 1962935082 exceeds span 8598082: 1; ValueError: Typed-table size 2021392384 exceeds span 3003358: 1; ValueError: Typed-table size 3033792512 exceeds span 3908394: 1; ValueError: Typed-table size 3040149505 exceeds span 7262998: 1; ValueError: Typed-table size 33619968 exceeds span 509482: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 58984222 exceeds span 228062: 1; ValueError: Typed-table size 82837504 exceeds span 11920378: 1
+- **OPEL** (0/16): ValueError: Typed-table has 1699258 unexplained trailing bytes: 1; ValueError: Typed-table has 199046 unexplained trailing bytes: 1; ValueError: Typed-table has 3100550 unexplained trailing bytes: 1; ValueError: Typed-table has 32648 unexplained trailing bytes: 1; ValueError: Typed-table has 373246 unexplained trailing bytes: 1; ValueError: Typed-table has 70386 unexplained trailing bytes: 1; ValueError: Typed-table has 796502 unexplained trailing bytes: 1; ValueError: Typed-table size 131072 exceeds span 29250: 1; ValueError: Typed-table size 293666816 exceeds span 45278: 1; ValueError: Typed-table size 327680 exceeds span 58706: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 4026662912 exceeds span 392886: 1; ValueError: Typed-table size 4026662912 exceeds span 71734: 1; ValueError: Typed-table size 4456450 exceeds span 2097210: 1; ValueError: Typed-table size 541327360 exceeds span 398314: 1; ValueError: Typed-table size 63363073 exceeds span 1780434: 1
+- **PEUGEOT** (0/17): ValueError: Typed-table has 532321 unexplained trailing bytes: 1; ValueError: Typed-table has 65 unexplained trailing bytes: 1; ValueError: Typed-table has 74886 unexplained trailing bytes: 1; ValueError: Typed-table has 85794 unexplained trailing bytes: 1; ValueError: Typed-table has 953827 unexplained trailing bytes: 1; ValueError: Typed-table size 113511169 exceeds span 17773602: 1; ValueError: Typed-table size 1162104643 exceeds span 13586: 1; ValueError: Typed-table size 16776963 exceeds span 23654: 1; ValueError: Typed-table size 1899757568 exceeds span 87774: 1; ValueError: Typed-table size 269811712 exceeds span 142: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 5898240 exceeds span 27466: 1; ValueError: Typed-table size 628228096 exceeds span 255674: 1; ValueError: Typed-table size 755236864 exceeds span 2866722: 1; ValueError: Typed-table size 789774336 exceeds span 1737750: 1; ValueError: Typed-table size 897318912 exceeds span 1812206: 1; ValueError: Typed-table size 917504 exceeds span 10542: 1
+- **QOROS** (0/6): ValueError: Typed-table has 10024 unexplained trailing bytes: 1; ValueError: Typed-table has 1646 unexplained trailing bytes: 1; ValueError: Typed-table has 9948 unexplained trailing bytes: 1; ValueError: Typed-table size 2558599168 exceeds span 45666: 1; ValueError: Typed-table size 56864 exceeds span 246: 1; ValueError: Typed-table size 92471296 exceeds span 60010: 1
+- **SAICMG** (0/15): ValueError: Typed-table has 155324 unexplained trailing bytes: 1; ValueError: Typed-table has 2788 unexplained trailing bytes: 1; ValueError: Typed-table size 1409286170 exceeds span 126486: 1; ValueError: Typed-table size 2228224 exceeds span 135842: 2; ValueError: Typed-table size 2952790046 exceeds span 13786: 1; ValueError: Typed-table size 33554434 exceeds span 30974: 1; ValueError: Typed-table size 33554441 exceeds span 2267630: 1; ValueError: Typed-table size 33554454 exceeds span 95406: 1; ValueError: Typed-table size 33554460 exceeds span 1970610: 1; ValueError: Typed-table size 33554471 exceeds span 1299306: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 4294901760 exceeds span 3750: 1; ValueError: Typed-table size 50331648 exceeds span 92190: 1; ValueError: Typed-table size 872415256 exceeds span 140390: 1
+- **SAICROEWE** (0/12): ValueError: Typed-table has 155324 unexplained trailing bytes: 1; ValueError: Typed-table has 2788 unexplained trailing bytes: 1; ValueError: Typed-table size 1409286170 exceeds span 126486: 1; ValueError: Typed-table size 2228224 exceeds span 135842: 1; ValueError: Typed-table size 2868903937 exceeds span 11194: 1; ValueError: Typed-table size 3238002715 exceeds span 11446: 1; ValueError: Typed-table size 33554434 exceeds span 30782: 1; ValueError: Typed-table size 33554441 exceeds span 2251982: 1; ValueError: Typed-table size 33554454 exceeds span 92130: 1; ValueError: Typed-table size 33554460 exceeds span 1956258: 1; ValueError: Typed-table size 33554470 exceeds span 1294374: 1; ValueError: Typed-table size 4294901760 exceeds span 1618: 1
+- **SEAT** (0/11): ValueError: Typed-table has 23994 unexplained trailing bytes: 1; ValueError: Typed-table has 249 unexplained trailing bytes: 1; ValueError: Typed-table has 431590 unexplained trailing bytes: 1; ValueError: Typed-table size 16777473 exceeds span 866: 1; ValueError: Typed-table size 255066112 exceeds span 119742: 1; ValueError: Typed-table size 33554432 exceeds span 5302: 1; ValueError: Typed-table size 3604553 exceeds span 19110: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 37027840 exceeds span 141866: 1; ValueError: Typed-table size 671089152 exceeds span 437186: 1; ValueError: Typed-table size 863371266 exceeds span 316990: 1
+- **SGM** (0/28): ValueError: Typed-table has 10986734 unexplained trailing bytes: 1; ValueError: Typed-table has 149212 unexplained trailing bytes: 1; ValueError: Typed-table has 158036 unexplained trailing bytes: 1; ValueError: Typed-table has 16131380 unexplained trailing bytes: 1; ValueError: Typed-table has 169276 unexplained trailing bytes: 1; ValueError: Typed-table has 1719540 unexplained trailing bytes: 1; ValueError: Typed-table has 177042 unexplained trailing bytes: 1; ValueError: Typed-table has 17770 unexplained trailing bytes: 1; ValueError: Typed-table has 290760 unexplained trailing bytes: 1; ValueError: Typed-table has 33900 unexplained trailing bytes: 1; ValueError: Typed-table has 42020 unexplained trailing bytes: 1; ValueError: Typed-table has 726918 unexplained trailing bytes: 1; ValueError: Typed-table has 728501 unexplained trailing bytes: 1; ValueError: Typed-table has 87352 unexplained trailing bytes: 1; ValueError: Typed-table size 11404031 exceeds span 8442: 1; ValueError: Typed-table size 1245185 exceeds span 79762: 1; ValueError: Typed-table size 135528448 exceeds span 59010: 1; ValueError: Typed-table size 1377304576 exceeds span 952682: 1; ValueError: Typed-table size 1940127744 exceeds span 106302: 1; ValueError: Typed-table size 229376512 exceeds span 4458438: 1; ValueError: Typed-table size 3265069059 exceeds span 916758: 1; ValueError: Typed-table size 34079378 exceeds span 18: 1; ValueError: Typed-table size 3496738816 exceeds span 2497234: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 4026597896 exceeds span 1290: 1; ValueError: Typed-table size 4041080832 exceeds span 648502: 1; ValueError: Typed-table size 55554 exceeds span 986: 1; ValueError: Typed-table size 786432 exceeds span 20022: 1
+- **SKODA** (0/12): ValueError: Typed-table has 23994 unexplained trailing bytes: 1; ValueError: Typed-table has 249 unexplained trailing bytes: 1; ValueError: Typed-table has 431590 unexplained trailing bytes: 1; ValueError: Typed-table size 1665204240 exceeds span 42630: 1; ValueError: Typed-table size 16777473 exceeds span 866: 1; ValueError: Typed-table size 255066112 exceeds span 119742: 1; ValueError: Typed-table size 33554432 exceeds span 5302: 1; ValueError: Typed-table size 3604553 exceeds span 19110: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 37027840 exceeds span 139978: 1; ValueError: Typed-table size 671089152 exceeds span 437186: 1; ValueError: Typed-table size 864485378 exceeds span 317006: 1
+- **SMART** (0/3): ValueError: Typed-table size 3224884 exceeds span 91850: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 4227858446 exceeds span 86934: 1
+- **SPRINTER** (0/3): ValueError: Typed-table has 9 unexplained trailing bytes: 1; ValueError: Typed-table size 2298478690 exceeds span 680274: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1
+- **SUZUKI** (0/9): ValueError: Typed-table has 15270 unexplained trailing bytes: 1; ValueError: Typed-table has 327321 unexplained trailing bytes: 1; ValueError: Typed-table has 94024 unexplained trailing bytes: 1; ValueError: Typed-table size 1111046192 exceeds span 13638: 1; ValueError: Typed-table size 1577058352 exceeds span 20386: 1; ValueError: Typed-table size 318832640 exceeds span 19042: 1; ValueError: Typed-table size 4294902048 exceeds span 1934: 1; ValueError: Typed-table size 758133305 exceeds span 26286: 1; ValueError: Typed-table size 855638674 exceeds span 1775322: 1
+- **USAFORD** (0/1): ValueError: Typed-table size 3674210305 exceeds span 26802: 1
+- **VOLVO** (0/4): ValueError: Typed-table size 2079588357 exceeds span 521058: 1; ValueError: Typed-table size 2868903937 exceeds span 10338: 1; ValueError: Typed-table size 562364160 exceeds span 12654: 1; ValueError: Typed-table size 84166659 exceeds span 1725362: 1
+- **VW** (0/14): ValueError: Typed-table has 23994 unexplained trailing bytes: 1; ValueError: Typed-table has 249 unexplained trailing bytes: 1; ValueError: Typed-table has 431590 unexplained trailing bytes: 1; ValueError: Typed-table has 4709506 unexplained trailing bytes: 1; ValueError: Typed-table size 1665204240 exceeds span 42630: 1; ValueError: Typed-table size 16777473 exceeds span 866: 1; ValueError: Typed-table size 2328363011 exceeds span 341230: 1; ValueError: Typed-table size 280756224 exceeds span 122746: 1; ValueError: Typed-table size 33554432 exceeds span 5278: 1; ValueError: Typed-table size 3604553 exceeds span 19110: 1; ValueError: Typed-table size 3674210305 exceeds span 21546: 1; ValueError: Typed-table size 37027840 exceeds span 141910: 1; ValueError: Typed-table size 3921805312 exceeds span 166690: 1; ValueError: Typed-table size 905970176 exceeds span 440658: 1
+
+### BIN filename stems
+
+Rule: use the BIN basename, remove `.BIN` case-insensitively, remove standalone region tokens EU, JP, NA and version tokens Vnn.nn delimited by underscore, hyphen or dot; collapse those delimiters and uppercase. Directory names (including region and version) are discarded. Numeric suffixes and other tokens are preserved. Counts cover all outer BINs and enumerated nested ZIPs, not just the decoded sample; the ZIP inspection limit is four unencrypted nested archives of at most 256 MiB each. A skipped or unreadable archive is reported, so a limited census is not called complete. `*` means the stem is also present in Toyota.
+
+| brand | distinct stems | top 15 stems (count; * = Toyota) | unenumerated nested ZIPs |
+| --- | ---: | --- | --- |
+| TOYOTA | 596 | `ECU_DATA_0001`* (3), `ECU_DATA_0002`* (3), `ECU_DATA_0006`* (3), `ECU_DATA_0008`* (3), `ECU_DATA_0009`* (3), `ECU_DATA_000A`* (3), `ECU_DATA_000B`* (3), `ECU_DATA_000D`* (3), `ECU_DATA_000F`* (3), `ECU_DATA_0011`* (3), `ECU_DATA_0012`* (3), `ECU_DATA_0013`* (3), `ECU_DATA_0014`* (3), `ECU_DATA_0016`* (3), `ECU_DATA_0017`* (3) | none |
+| ASTONMARTIN | 6 | `ASTONMARTIN_SYS_DATA` (1), `MENU`* (1), `STRING_CN` (1), `STRING_EN` (1), `STRING_HK` (1), `STRING_RU` (1) | none |
+| AUDI | 24 | `ADAPTMENU_CONFIG` (1), `AUDIIMMOCALC` (1), `AUDI_HIDEFUNC_CONFIG` (1), `AUDI_INFO` (1), `AUDI_LONGCODEDATA` (1), `AUDI_SYSDATA` (1), `AUDI_SYSTRANSTAB` (1), `AUDI_VW_ECUFLASH_CONFIG` (1), `BASEINFO` (1), `BENCHMODE_CONFIG` (1), `BOOT_CONFIG` (1), `CAR_TABLE` (1), `DTCH_CFG`* (1), `FUNCH_CFG`* (1), `GFS_AUDIALGORITHM` (1) | none |
+| AUSTHOLDEN | 26 | `AUSTHOLDEN_SYS_DATA` (1), `DTCH_CFG`* (1), `DTC_CFG_HOLDEN` (1), `FUNCH_CFG`* (1), `GM_CODING_MENU` (1), `GM_DTCSTATE` (1), `GM_OKS` (1), `GM_RESETCFG` (1), `GM_TDTC_CFG` (1), `GM_VINENG` (1), `GM_VINOKS` (1), `HDN_LIB` (1), `HDN_LIB_RODEO` (1), `HDN_LIB_VE` (1), `HDN_LIB_VZ` (1) | none |
+| AUTOSEARCH | 475 | `BMW` (1), `FORD_VEHICLE` (1), `GMVEHICLE` (1), `GM_VIN` (1), `GM_VINCFG` (1), `GM_VINENG` (1), `JAGUAR` (1), `JAGUAROLD` (1), `MG_ROEWE` (1), `RENAULT` (1), `SGM_VIN` (1), `STR` (1), `VINCONFIG` (1), `VINREFMODE` (1), `VIN_000` (1) | none |
+| BENZ | 25 | `0104482940_001` (1), `6429023501_001` (1), `6429027501_001` (1), `6429031605_001` (1), `6429035101_001` (1), `6429036907_001` (1), `6429037107_001` (1), `6429040200_001` (1), `ADASCONFIGURE` (1), `BENZ_SYS_DATA` (1), `BENZ_VINCODE_CFG` (1), `CFFANDHW` (1), `DOIPCONFIGUE` (1), `DTCH_CFG`* (1), `ECUCONFIGUER` (1) | none |
+| BMW | 2663 | `CFGLIB_010000` (1), `CFGLIB_010001` (1), `CFGLIB_010002` (1), `CFGLIB_010003` (1), `CFGLIB_010004` (1), `CFGLIB_010005` (1), `CFGLIB_010006` (1), `CFGLIB_010007` (1), `CFGLIB_010008` (1), `CFGLIB_010009` (1), `CFGLIB_020001` (1), `CFGLIB_020002` (1), `CFGLIB_020003` (1), `CFGLIB_020004` (1), `CFGLIB_020005` (1) | none |
+| BXFIAT | 2 | `FIAT_SYSDATA` (1), `MENU`* (1) | none |
+| BXGM | 3 | `GM_LIB` (1), `MENU`* (1), `SYS_DATA_BXGM` (1) | none |
+| CHANGAN | 33 | `CHANGAN_FUNCFG` (1), `COMMON_SPECIAL_FUNCTION` (1), `ECU_FLASH_PACKDB` (1), `MAPFILTERID` (1), `MENU`* (1), `MODELMENUMAP` (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE1_CN` (1), `UCODE1_EN` (1), `UCODE2_CN` (1), `UCODE2_EN` (1), `UCODE3_CN` (1), `UCODE3_EN` (1) | none |
+| CHANGCHENG | 33 | `CHANGCHENG_FUNCFG` (1), `CHANGCHENG_MAPDATA` (1), `CHANGCHENG_SWMAP` (1), `CHB071EAD_ACU_FLASHDRV` (1), `DTCH_CFG`* (1), `EC01_IFC_FLASHDRV` (1), `GWMFLASH_FUNCFG` (1), `GWMFLASH_MENU_EN` (1), `GWMFLASH_SYSSCAN` (1), `H2S_ESCL_FLASHDRV` (1), `H8_8AT_ACC_FLASHDRV` (1), `H9_8AT_ACC_FLASHDRV` (1), `MENU`* (1), `MENU_HAVAL` (1), `MENU_ORA` (1) | none |
+| CHANGHE | 14 | `CHANGHE_FUNCFG` (1), `CHANGHE_MAPDATA` (1), `CHANGHE_SWMAP` (1), `DTCH_CFG`* (1), `JAC_FUNCFG` (1), `MENU`* (1), `MENU_B` (1), `MENU_TC` (1), `OBD2_SYS_DATA`* (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1) | none |
+| CHRYSLER | 24 | `CHRYSLER_SYS_DATA` (1), `DTCCFG` (1), `DTCH_CFG`* (1), `ECODE` (1), `FUNCH_CFG`* (1), `MENU`* (1), `MENU_DODGE` (1), `MENU_JEEP` (1), `MENU_RAM` (1), `OBD2_SYS_DATA`* (1), `SPECMAP` (1), `STRING` (1), `STRING_AR` (1), `STRING_CN` (1), `STRING_DE` (1) | none |
+| CITROEN | 22 | `ACTIVE_TEST` (1), `CITROEN_PSA_DS_DATA` (1), `CITROEN_SYS_DATA` (1), `CITROEN_SYS_SCAN` (1), `DSD` (1), `DTCH_CFG`* (1), `ECUID_MAPID` (1), `FUNCHELPMESSAGE` (1), `FUNCH_CFG`* (1), `FUNHELPMESSAGE` (1), `MENU`* (1), `MENU_F` (1), `OBD2_SYS_DATA`* (1), `PSA_COM` (1), `PSA_COND` (1) | none |
+| DAEWOO | 3 | `DAEWOO_LIB` (1), `DAEWOO_SYS_DATA` (1), `MENU`* (1) | none |
+| DAIHATSU | 3 | `DAIHATSU_SYS_DATA` (1), `DAIHATSU_SYS_LIST` (1), `MENU`* (1) | none |
+| DEMO | 2 | `DTCH_CFG`* (1), `FUNCH_CFG`* (1) | none |
+| DONGNAN | 12 | `DONGNAN_FUNCFG` (1), `DTCH_CFG`* (1), `MAPFILTERID` (1), `MENU`* (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_HK` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1), `UCODE_OLD_HK` (1) | none |
+| EOBD2 | 2 | `DTCH_CFG`* (1), `OBD2_SYS_DATA`* (1) | none |
+| FERRARI | 7 | `ECODE` (1), `FIAT_AUTOSCAN` (1), `FIAT_SYSDATA` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `VINSCAN` (1) | none |
+| FIAT | 12 | `FIAT_AUTOSCAN` (1), `FIAT_SYSDATA` (1), `FIAT_SYSSCAN` (1), `FIAT_VINSCAN` (1), `FUNCH_CFG`* (1), `MENU`* (1), `MENU_A` (1), `MENU_EV` (1), `MENU_L` (1), `MENU_N` (1), `MENU_R` (1), `OBD2_SYS_DATA`* (1) | none |
+| FLYER | 74 | `COMMON_SPECIAL_FUNCTION` (1), `DTCH_CFG`* (1), `FLYER_FUNCFG` (1), `FLYER_SPECFUNCFG` (1), `MAPFILTERID` (1), `MENU`* (1), `MODELMENUMAP` (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE10_CN` (1), `UCODE10_EN` (1), `UCODE10_HK` (1), `UCODE10_IT` (1), `UCODE11_CN` (1) | none |
+| FUTIAN | 9 | `DTCHELP` (1), `FOTON_FUNCFG` (1), `MAPFILTERID` (1), `MENU`* (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_HK` (1) | none |
+| GM | 37 | `DTCH_CFG`* (1), `FUNCH_CFG`* (1), `GM_DTCSTATE` (1), `GM_DTC_CFG` (1), `GM_FDATA` (1), `GM_FFLIB_CFG` (1), `GM_FUNCACTDATA` (1), `GM_FUNCCFG` (1), `GM_FUNCMENU` (1), `GM_FUNC_MENU` (1), `GM_LIB` (1), `GM_LIB_2` (1), `GM_OKS` (1), `GM_RESETCFG` (1), `GM_SYSCFG` (1) | none |
+| HAFEI | 7 | `HAFEI_FUNCFG` (1), `MAPFILTERID` (1), `MENU`* (1), `SYSSCAN` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1), `UCODE_OLD_RU` (1) | none |
+| HMAZDA | 14 | `DTCH_CFG`* (1), `HMAZDA_FUNCFG` (1), `MAPFILTERID` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE1_CN` (1), `UCODE1_EN` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1), `VINMODEL` (1) | none |
+| HONDA | 11 | `DTCH_CFG`* (1), `FUNCH_CFG`* (1), `HONDA_BCM_DATA` (1), `HONDA_ECU_CFG01` (1), `HONDA_ECU_CFG02` (1), `HONDA_ECU_SCAN` (1), `HONDA_MANUAL_DATA` (1), `HONDA_SYS_DATA` (1), `HONDA_SYS_HELP` (1), `HONDA_SYS_MAP` (1), `OBD2_SYS_DATA`* (1) | none |
+| HUACHEN | 21 | `DTCH_CFG`* (1), `HUACHEN_FUNCFG` (1), `HUACHEN_MAPDATA` (1), `MENU`* (1), `MENU_MYHRZY` (1), `MENU_TC` (1), `MYHRZY_ECODE` (1), `MYHRZY_FUNCFG` (1), `MYHRZY_SYSSCAN` (1), `MYHRZY_UCODE_CN` (1), `MYHRZY_UCODE_EN` (1), `MYHRZY_UCODE_OLD_CN` (1), `MYHRZY_UCODE_OLD_EN` (1), `OBD2_SYS_DATA`* (1), `OLDSYSSCAN` (1) | none |
+| HYUNDAI | 63 | `46KWPIMMODATA1` (1), `46KWPIMMODATA3` (1), `ADASFUNCDATA` (1), `ADASTEXTDATA` (1), `CRYPTSEED` (1), `DLICENSEDATA` (1), `DTCH_CFG`* (1), `EACTUATOR` (1), `EACTUATOR2` (1), `ECUUPGR` (1), `FUNCH_CFG`* (1), `HYUNDAI_LIB` (1), `HYUNDAI_SYS_DATA` (1), `MDPSLIST` (1), `MENU`* (1) | none |
+| INDIANMAHINDRA | 3 | `MAHINDRA_FUNCSYSDATA` (1), `MAHINDRA_SYS_DATA` (1), `MENU`* (1) | none |
+| INDIANMARUTI | 12 | `DTCCFG` (1), `DTCH_CFG`* (1), `MARUTI_SYS_DATA` (1), `MENU`* (1), `MENU_MARUTI` (1), `MODECFG` (1), `SCANCFG` (1), `SLLIB` (1), `SPECCFG` (1), `SYS_DATA` (1), `VEHICLEINFO` (1), `VINSCAN` (1) | none |
+| INDIANTATA | 3 | `MENU`* (1), `TATA_FUNCSYSDATA` (1), `TATA_SYS_DATA` (1) | none |
+| ISUZU | 12 | `DTCHELP` (1), `DTCH_CFG`* (1), `FUNCH_CFG`* (1), `ISUZU_SYS_DATA` (1), `MENU`* (1), `MENU_9` (1), `MENU_SF09` (1), `MENU_SF11` (1), `MENU_SF13` (1), `MENU_SF16` (1), `MENU_SF20` (1), `MENU_SF24` (1) | none |
+| IVECO | 7 | `HD_IVECO_ADAS_SYS` (1), `HD_IVECO_FUNCFG` (1), `HD_IVECO_MENU` (1), `HD_IVECO_MENU_HELP` (1), `HD_IVECO_SYSSCAN` (1), `HD_IVECO_TOPLIST_FUNCFG` (1), `IVECO_KEY` (1) | none |
+| JACTY | 36 | `JACMINITRUCKZY_ECODE` (1), `JACMINITRUCKZY_FUNCFG` (1), `JACMINITRUCKZY_SYSSCAN` (1), `JACMINITRUCKZY_UCODE_CN` (1), `JACMINITRUCKZY_UCODE_EN` (1), `JACMINITRUCKZY_UCODE_OLD_CN` (1), `JACMINITRUCKZY_UCODE_OLD_EN` (1), `JACMINITRUCKZY_UCODE_OLD_RU` (1), `JACMINITRUCKZY_UCODE_RU` (1), `JACPICKUPZY_ECODE` (1), `JACPICKUPZY_FUNCFG` (1), `JACPICKUPZY_SYSSCAN` (1), `JACPICKUPZY_UCODE_CN` (1), `JACPICKUPZY_UCODE_EN` (1), `JACPICKUPZY_UCODE_OLD_CN` (1) | none |
+| JIAO | 11 | `JIAO_FUNCFG` (1), `LIB` (1), `MAPFILTERID` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SYSSCAN` (1), `TEMP` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1) | none |
+| JINLONG | 7 | `JINLONGZY_FUNCFG` (1), `JINLONGZY_SWMAP` (1), `JINLONG_MAPDATA` (1), `MENU`* (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1) | none |
+| JPISUZU | 12 | `ADASMENU` (1), `DTCH_CFG`* (1), `FUNCMENU` (1), `JMCSPEC` (1), `MENU`* (1), `MENU_TLISUZU` (1), `RESETCFG` (1), `SLLIB` (1), `SLLIB2` (1), `SYSDATA` (1), `SYSDATANEW` (1), `VINSEARCHLIB` (1) | none |
+| KARRY_TY | 13 | `CHERY_ECODE` (1), `CHERY_FUNCFG` (1), `ECODE` (1), `KARRY_FUNCFG` (1), `KARRY_SWMAP` (1), `KARRY_TY_MAPDATA` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1) | none |
+| KIA | 46 | `46KWPIMMODATA1` (1), `46KWPIMMODATA3` (1), `ADASFUNCDATA` (1), `ADASTEXTDATA` (1), `CRYPTSEED` (1), `DLICENSEDATA` (1), `DTCH_CFG`* (1), `EACTUATOR` (1), `EACTUATOR2` (1), `ECUUPGR` (1), `FUNCH_CFG`* (1), `KIA_LIB` (1), `KIA_SYS_DATA` (1), `MDPSLIST` (1), `MENU`* (1) | none |
+| LANDROVER | 932 | `CONFIGMESSAGE` (1), `CONFIG_FILE_01` (1), `CONFIG_FILE_02` (1), `CONFIG_FILE_03` (1), `CONFIG_FILE_04` (1), `CONFIG_FILE_05` (1), `CONFIG_FILE_06` (1), `CONFIG_FILE_07` (1), `CONFIG_FILE_08` (1), `CONFIG_FILE_09` (1), `CONFIG_FILE_10` (1), `CONFIG_FILE_12` (1), `CONFIG_FILE_13` (1), `CONFIG_FILE_14` (1), `CONFIG_FILE_15` (1) | none |
+| LIFAN | 9 | `LIFAN_DLICENSE` (1), `LIFAN_FUNCFG` (1), `MAPFILTERID` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1) | none |
+| LIUWEI_TY | 26 | `DTCH_CFG`* (1), `LIB` (1), `LIUWEI_TY_FUNCFG` (1), `MAPFILTERID` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `SYSSCAN` (1), `TEMP` (1), `UCODE1_CN` (1), `UCODE1_EN` (1), `UCODE1_HK` (1), `UCODE1_RU` (1), `UCODE2_CN` (1), `UCODE2_EN` (1) | none |
+| LUFENG | 6 | `LUFENG_FUNCFG` (1), `MAPFILTERID` (1), `MENU`* (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1) | none |
+| LUXGEN | 2 | `LUXGEN_SYS_DATA` (1), `MENU`* (1) | none |
+| MASERATI | 7 | `ECODE` (1), `FIAT_AUTOSCAN` (1), `FIAT_SYSDATA` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `SYSTEMFILTER` (1) | none |
+| MAXUS | 21 | `COMMON_SPECIAL_FUNCTION` (1), `MAPFILTERID` (1), `MAXUS_FUNCFG` (1), `MENU`* (1), `MODELMENUMAP` (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE1_CN` (1), `UCODE1_EN` (1), `UCODE1_HK` (1), `UCODE2_CN` (1), `UCODE2_EN` (1), `UCODE2_HK` (1), `UCODE3_CN` (1), `UCODE3_EN` (1) | none |
+| MAZDA | 13 | `CARVINDE` (1), `FUNCH_CFG`* (1), `MAZDA_CDSF` (1), `MAZDA_DTCF` (1), `MAZDA_IMMO` (1), `MAZDA_INFO` (1), `MAZDA_OLD` (1), `MAZDA_SPEC` (1), `MAZDA_SYSP` (1), `MENU`* (1), `MENU_1` (1), `OBD2_SYS_DATA`* (1), `SYSMODE` (1) | none |
+| MITSUBISHI | 523 | `ABSMENU` (1), `ABSSYSMODE` (1), `ACCMENU` (1), `ACCSYSMODE` (1), `ACINIMENU` (1), `ACINISYSMODE` (1), `ADBLUEMENU` (1), `ADBLUESYSMODE` (1), `AFSMENU` (1), `AFSSYSMODE` (1), `AIRFUELMENU` (1), `AIRFUELSYSMODE` (1), `ATMENU` (1), `ATSYSMODE` (1), `BMSMENU` (1) | none |
+| NISSAN | 2088 | `00C1792FC49B165364DF2BB7F7D5B655` (2), `01962D9EB6FCA1E5766046AECC7B78D0` (2), `01FDA82B6043B477B9EF1A6FE6F8EDA5` (2), `02081846FAD6F483BFC9EB582C917335` (2), `020A55D1B97805EC18F24F75B8ADC349` (2), `023D38518F50BA0EA8FCE54E670E09D7` (2), `027ABFA1A34D3EACECC97458772C3E7A` (2), `02A20CA5C6E473B7C54E75E1038CEAC5` (2), `02DF56B397603CF7BDA7ED6F46F25FEA` (2), `031C70626A22105B07B34024BC04A9B7` (2), `038C5121152D92EDF18806310788957B` (2), `03C6F868C48051DD310D0CF1D7CED50D` (2), `03FF3F2121C9044619D9E8CAF5183694` (2), `050FBF1A65A734395838C3D6D101B315` (2), `05671446121BF1F30DA1F82D9F6D9C22` (2) | DIAGNOSTIC/VEHICLES/NISSAN/V10.56/QICHEN.ZIP |
+| OPEL | 19 | `DTCH_CFG`* (1), `DTC_CFG` (1), `M2ACTLINK` (1), `M2DSLINK` (1), `M2DSMODULE` (1), `M2DTCBCDLIST` (1), `M2DTCMODULE` (1), `M2FUNCMENU` (1), `M2MODULE` (1), `M2SPECCFG` (1), `M2SYSTEM` (1), `MENU`* (1), `MENU_GMSA` (1), `MENU_VAUXHALL` (1), `OBD2_SYS_DATA`* (1) | none |
+| PEUGEOT | 22 | `ACTIONTEST` (1), `DSD` (1), `DTCH_CFG`* (1), `ECUID_MAPID` (1), `FUNCHELPMESSAGE` (1), `FUNCH_CFG`* (1), `MENU`* (1), `MENU_DFP` (1), `MENU_OP` (1), `OBD2_SYS_DATA`* (1), `PEUGEOT_PSA_DS_DATA` (1), `PEUGEOT_SPEC_CAL` (1), `PEUGEOT_SYS_DATA` (1), `PEUGEOT_SYS_SCAN` (1), `PSA_COM` (1) | none |
+| PORSCHE | 45 | `918S_ALLDATA` (1), `918S_FLASHCMDS` (1), `992_ALLDATA` (1), `992_FLASHCMDS` (1), `9X1_ALLDATA` (1), `9X1_FLASHCMDS` (1), `9X6_ALLDATA` (1), `9X7_ALLDATA` (1), `ACTHELPINFO` (1), `ADASCONFIG` (1), `ALL_ACTINFO` (1), `ALL_EXDTCFILE` (1), `CAJUN_ALLDATA` (1), `CAJUN_FLASHCMDS` (1), `CODINGFILECFG` (1) | none |
+| QIRUI_TY | 19 | `CHERY_FUNCFG` (1), `CHERY_SWMAP` (1), `ECODE` (1), `MENU`* (1), `MENU_TC` (1), `OBD2_SYS_DATA`* (1), `QIRUI_TY_MAPDATA` (1), `SYSSCAN` (1), `UCODE_AR` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_HK` (1), `UCODE_OLD_AR` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1) | none |
+| QOROS | 7 | `ECODE` (1), `MAPFILTERID` (1), `MENU`* (1), `QOROS_FUNCFG` (1), `SYSSCAN` (1), `UCODE_CN` (1), `UCODE_EN` (1) | none |
+| RENAULT | 2417 | `001983E66629E566AC6FB0DB7E40C7F8` (1), `001B4F4F025A814F8791E7F36342774F` (1), `001C38733D1ED9390495ACA421504157` (1), `002862CAD41E4E16AC901C657A8C87A8` (1), `0034FE4C77254D13E25D11778849CD20` (1), `003AAA587EED538A15A016E9B6241D65` (1), `0071964DBD31AD591AE4350CF5110627` (1), `008CBC6E339AD7721CE4EAED19D42883` (1), `00AC929D7D0170008EC32B2EF6A0B895` (1), `00AF425B8DC823B7BAB81B63BBE86520` (1), `00D341405EFE4477517D35BA60D8C93F` (1), `00D9C2DFE733A20C106A2304FB42789F` (1), `00EA4244623AC4AA089653E296366EA8` (1), `0107DA0F20258941C2718F0A6C06EED2` (1), `0107DC82A20718D2C7E7771C66F69BAC` (1) | none |
+| SAAB | 3 | `MENU`* (1), `NEW_SAAB` (1), `SAAB_SYS_DATA` (1) | none |
+| SAICMG | 16 | `DTCDATA` (1), `DTCHELP` (1), `ECUREPLACE` (1), `FREEZEECUINFO` (1), `MENU`* (1), `MG_DTCDATA` (1), `MG_DTCHELP` (1), `MG_SYSTEMDATA` (1), `OBD2_SYS_DATA`* (1), `ROEWE_FCF` (1), `SGAN` (1), `SYSECUNAME` (1), `SYSTEMDATA` (1), `SYS_CONFIG` (1), `VEHICLEMENU` (1) | none |
+| SAICROEWE | 14 | `DTCDATA` (1), `DTCHELP` (1), `ECUREPLACE` (1), `FREEZEECUINFO` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `ROEWE_FCF` (1), `ROEWE_SYSTEMDATA` (1), `SGAN` (1), `SYSECUNAME` (1), `SYSTEMDATA` (1), `SYS_CONFIG` (1), `VEHICLEMENU` (1), `VIN_SCAN` (1) | none |
+| SEAT | 22 | `ADAPTMENU_CONFIG` (1), `AUDIIMMOCALC` (1), `AUDI_HIDEFUNC_CONFIG` (1), `AUDI_INFO` (1), `AUDI_LONGCODEDATA` (1), `AUDI_SYSDATA` (1), `AUDI_SYSTRANSTAB` (1), `AUDI_VW_ECUFLASH_CONFIG` (1), `BENCHMODE_CONFIG` (1), `BOOT_CONFIG` (1), `CAR_TABLE` (1), `DTCH_CFG`* (1), `FUNCH_CFG`* (1), `GFS_ODXCALC` (1), `KEYCOPERUPG` (1) | none |
+| SGM | 32 | `DTCH_CFG`* (1), `ECUDATA` (1), `FFCFG` (1), `FUNCH_CFG`* (1), `GMC_LIB` (1), `M2ACTLINK` (1), `M2CAR` (1), `M2RESET` (1), `MENU`* (1), `MENU1` (1), `MODULEACTPID` (1), `OBD2_SYS_DATA`* (1), `R3DSLIB` (1), `R3DTCLIB` (1), `R3VERLIB` (1) | none |
+| SKODA | 22 | `ADAPTMENU_CONFIG` (1), `AUDIIMMOCALC` (1), `AUDI_HIDEFUNC_CONFIG` (1), `AUDI_INFO` (1), `AUDI_LONGCODEDATA` (1), `AUDI_SYSDATA` (1), `AUDI_SYSTRANSTAB` (1), `AUDI_VW_ECUFLASH_CONFIG` (1), `BASEINFO` (1), `BENCHMODE_CONFIG` (1), `BOOT_CONFIG` (1), `CAR_TABLE` (1), `DTCH_CFG`* (1), `FUNCH_CFG`* (1), `GFS_ODXCALC` (1) | none |
+| SMART | 6 | `CODECONFIGUE` (1), `ECU_FLASH_DATA` (1), `FLASHCFG` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `SMART_SYS_DATA` (1) | none |
+| SPRINTER | 9 | `ECUCONFIGUER` (1), `FLASHCFG` (1), `FUNCH_CFG`* (1), `MENU`* (1), `OBD2_SYS_DATA`* (1), `OFFLINECODECONFIGUE` (1), `RESETCONTROLMODULE` (1), `SCNCONFIGUE` (1), `SPRINTER_SYS_DATA` (1) | none |
+| SSANGYONG | 10 | `ADASFUNCDATA` (1), `ADASTEXTDATA` (1), `DTCH_CFG`* (1), `MENU`* (1), `SP_FUNC_MENU_CN` (1), `SP_FUNC_MENU_EN` (1), `SP_FUNC_MENU_HK` (1), `SSANGYONG_SYS_DATA` (1), `SYSDATA` (1), `SYSTEMDATA` (1) | none |
+| SUBARU | 10 | `DTCH_CFG`* (1), `DTC_DS` (1), `ECU_FLASH_PACKDB` (1), `KEYCOPERUPG3` (1), `MENU`* (1), `NEW_S4_SYSDATA` (1), `NEW_SYS_DATA` (1), `OBD2_SYS_DATA`* (1), `RAD_DATA` (1), `SYS_DATA` (1) | none |
+| SUZUKI | 10 | `DTCCFG` (1), `DTCH_CFG`* (1), `MENU`* (1), `MODECFG` (1), `SCANCFG` (1), `SLLIB` (1), `SPECCFG` (1), `SYS_DATA` (1), `VEHICLEINFO` (1), `VINSCAN` (1) | none |
+| USAFORD | 4 | `FUNCH_CFG`* (1), `KEYCOPERUPGG3` (1), `MENU`* (1), `OBD2_SYS_DATA`* (1) | none |
+| VAZ | 4 | `DTCH_CFG`* (1), `FUNCH_CFG`* (1), `MENU`* (1), `VAZ_SYS_DATA` (1) | none |
+| VOLVO | 7 | `MENU`* (1), `MENU_L` (1), `MENU_P` (1), `OBD2_SYS_DATA`* (1), `VOLVO_FF_DATA` (1), `VOLVO_SPECIALFUNCTION` (1), `VOLVO_SYS_DATA` (1) | none |
+| VW | 29 | `ADAPTMENU_CONFIG` (1), `AUDIIMMOCALC` (1), `AUDI_GUIDEPATH` (1), `AUDI_HIDEFUNC_CONFIG` (1), `AUDI_INFO` (1), `AUDI_LONGCODEDATA` (1), `AUDI_SYSDATA` (1), `AUDI_SYSTRANSTAB` (1), `AUDI_VW_ECUFLASH_CONFIG` (1), `BASEINFO` (1), `BENCHMODE_CONFIG` (1), `BOOT_CONFIG` (1), `CAR_TABLE` (1), `DTCH_CFG`* (1), `FUNCH_CFG`* (1) | none |
+| ZHONGTAI | 19 | `COMMON_SPECIAL_FUNCTION` (1), `MAPFILTERID` (1), `MENU`* (1), `MODELMENUMAP` (1), `OBD2_SYS_DATA`* (1), `SLLIB` (1), `SYSSCAN` (1), `UCODE1_CN` (1), `UCODE1_EN` (1), `UCODE1_HK` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_HK` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1) | none |
+| ZHONGXING | 15 | `MENU`* (1), `MENU_TC` (1), `SYSSCAN` (1), `TEMP` (1), `UCODE_CN` (1), `UCODE_EN` (1), `UCODE_ES` (1), `UCODE_OLD_CN` (1), `UCODE_OLD_EN` (1), `UCODE_OLD_ES` (1), `UCODE_OLD_RU` (1), `UCODE_RU` (1), `ZHONGXINGZHY_FUNCFG` (1), `ZHONGXINGZHY_SWMAP` (1), `ZHONGXING_MAPDATA` (1) | none |
+
+All distinct per-brand stem counts are in the JSON report.
+
+### Stems present in at least five non-Toyota brands
+
+| stem | brand count | in Toyota |
+| --- | ---: | --- |
+| `MENU` | 67 | yes |
+| `OBD2_SYS_DATA` | 45 | yes |
+| `DTCH_CFG` | 33 | yes |
+| `FUNCH_CFG` | 25 | yes |
+| `SYSSCAN` | 23 | no |
+| `UCODE_CN` | 20 | no |
+| `UCODE_EN` | 20 | no |
+| `SLLIB` | 14 | no |
+| `UCODE_OLD_CN` | 14 | no |
+| `UCODE_OLD_EN` | 14 | no |
+| `MAPFILTERID` | 13 | no |
+| `UCODE1_CN` | 7 | no |
+| `UCODE1_EN` | 7 | no |
+| `UCODE_HK` | 7 | no |
+| `VINMODEL` | 7 | no |
+| `ECODE` | 6 | no |
+| `KEYCOPERUPGG3` | 5 | no |
+| `MENU_TC` | 5 | no |
+| `SYSTEMDATA` | 5 | no |
+| `UCODE_OLD_RU` | 5 | no |
+| `UCODE_RU` | 5 | no |
+<!-- INVENTORY4 END -->
