@@ -66,3 +66,67 @@ jobs:
         run: |
           cat .local/inventory/inventory.log
           exit 1
+
+  census-control:
+    name: Inventory-5 Toyota census control
+    needs: inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Restore previously generated Toyota packs
+        uses: actions/cache/restore@v5
+        with:
+          path: .local/toyota-vehicle-packs
+          key: toyota-vehicle-packs-v1-${{ runner.os }}-${{ hashFiles('tools/thinkdiag/*.py', 'tools/thinkdiag/requirements.txt', 'tools/thinkdiag/verification/*.json', 'tools/thinkdiag/schema/*') }}
+      - name: Run unchanged Toyota pack census
+        id: control
+        run: |
+          python tools/inventory/census_control.py --packs .local/toyota-vehicle-packs --output .local/inventory5-control
+          echo "passed=$(python -c "import json; print(str(json.load(open('.local/inventory5-control/control-result.json'))['passed']).lower())")" >> "$GITHUB_OUTPUT"
+      - name: Publish Toyota census control
+        run: |
+          conclusion=$(python -c "import json; print('success' if json.load(open('.local/inventory5-control/control-result.json'))['passed'] else 'neutral')")
+          gh api --method POST "repos/$GH_REPO/check-runs" -f name='Inventory-5 Toyota census control' -f "head_sha=$GITHUB_SHA" -f status=completed -f "conclusion=$conclusion" -f 'output[title]=Inventory-5 Toyota census control' -F 'output[summary]=@.local/inventory5-control/control.md'
+          cat .local/inventory5-control/control.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Install inventory reader
+        if: steps.control.outputs.passed == 'true'
+        run: python -m pip install pyelftools==0.32
+      - name: Download complete Inventory-4 data
+        if: steps.control.outputs.passed == 'true'
+        run: |
+          mkdir -p .local/inventory5/source .local/inventory5/downloads
+          gh release download ci-reports-v1 --pattern brand-inventory.json --dir .local/inventory5/source
+      - name: Census eligible brands one archive at a time
+        id: brands
+        if: steps.control.outputs.passed == 'true'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tools/inventory/census_brands.py --source .local/inventory5/source/brand-inventory.json \
+            --control .local/inventory5-control/control-result.json --work .local/inventory5/downloads \
+            --output .local/inventory5/report 2>&1 | tee .local/inventory5/brands.log
+      - name: Verify Inventory-5 document against this SHA
+        if: steps.brands.outcome == 'success'
+        run: python tools/inventory/verify_census_document.py .local/inventory5/report
+      - name: Publish partial brand census
+        if: always() && steps.brands.outcome != 'skipped'
+        env:
+          OUTCOME: ${{ steps.brands.outcome }}
+        run: |
+          test -s .local/inventory5/report/inventory5.md
+          gh release upload ci-reports-v1 .local/inventory5/report/inventory5.md .local/inventory5/report/inventory5.json --clobber
+          conclusion=success
+          if [ "$OUTCOME" != success ]; then conclusion=failure; fi
+          gh api --method POST "repos/$GH_REPO/check-runs" -f name='Inventory-5 brand census' -f "head_sha=$GITHUB_SHA" -f status=completed -f "conclusion=$conclusion" -f 'output[title]=Inventory-5 brand census' -F 'output[summary]=@.local/inventory5/report/inventory5.md'
+      - name: Fail on brand census errors
+        if: always() && steps.brands.outcome == 'failure'
+        run: |
+          cat .local/inventory5/brands.log
+          exit 1
