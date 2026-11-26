@@ -888,12 +888,19 @@ def _elf_tables(data):
             if symbol.name and symbol["st_shndx"] != "SHN_UNDEF":
                 symbols.setdefault(symbol["name"], symbol)
     relocations = []
-    for section in elf.iter_sections():
-        if isinstance(section, RelocationSection):
+    sections = list(elf.iter_sections())
+    for section in sections:
+        if not isinstance(section, RelocationSection):
+            continue
+        try:
             table = elf.get_section(section["sh_link"])
-            for reloc in section.iter_relocations():
-                symbol = table.get_symbol(reloc["r_info_sym"]) if reloc["r_info_sym"] else None
-                relocations.append((reloc, symbol))
+        except Exception:
+            continue
+        if table is None:
+            continue
+        for reloc in section.iter_relocations():
+            symbol = table.get_symbol(reloc["r_info_sym"]) if reloc["r_info_sym"] else None
+            relocations.append((reloc, symbol))
     return elf, symbols, relocations
 
 
@@ -1050,34 +1057,31 @@ def static_cell_search(path, cell_library="libTOYOTA_COMM.so", cell_offset=0x6ec
     if cell_library not in libraries:
         return {"libraries": sorted(libraries), "error": f"{cell_library} is not shipped"}
     target = cell_offset
-    holders = {}          # library -> slot vaddrs that hold the cell's address
-    jni = {}
-    exports = {}
-    errors = {}
+    # Slot vaddrs that hold the cell's address, per object; plus per-object errors.
+    errors, jni, exports, holders = {}, {}, {}, {}
     for name, data in libraries.items():
         try:
             elf, symbols, relocations = _elf_tables(data)
+            slots = set()
+            for reloc, symbol in relocations:
+                if symbol is not None and symbol.name == "CheckXOR":
+                    slots.add(reloc["r_offset"])
+                elif (name == cell_library and "r_addend" in getattr(reloc, "entry", {})
+                      and reloc["r_addend"] == cell_offset):
+                    slots.add(reloc["r_offset"])
+            holders[name] = slots
+            undefined = _undefined_names(elf)
+            jni[name] = {"definesJNI_OnLoad": "JNI_OnLoad" in symbols,
+                         "importsRegisterNatives": "RegisterNatives" in undefined}
+            names = sorted(symbol_name for symbol_name, symbol in symbols.items()
+                           if symbol["st_info"]["type"] == "STT_FUNC" and SETTER_LIKE.search(symbol_name))
+            exports[name] = {"count": len(names), "sample": names[:20],
+                             "xorLike": [name for name in names if "xor" in name.lower()]}
         except Exception as error:
             errors[name] = f"{type(error).__name__}: {error}"
-            continue
-        slots = set()
-        for reloc, symbol in relocations:
-            if symbol is not None and symbol.name == "CheckXOR":
-                slots.add(reloc["r_offset"])
-            elif (name == cell_library and "r_addend" in getattr(reloc, "entry", {})
-                  and reloc["r_addend"] == target):
-                slots.add(reloc["r_offset"])
-        holders[name] = slots
-        undefined = _undefined_names(elf)
-        jni[name] = {"definesJNI_OnLoad": "JNI_OnLoad" in symbols,
-                     "importsRegisterNatives": "RegisterNatives" in undefined}
-        names = sorted(symbol_name for symbol_name, symbol in symbols.items()
-                       if symbol["st_info"]["type"] == "STT_FUNC" and SETTER_LIKE.search(symbol_name))
-        exports[name] = {"count": len(names), "sample": names[:20],
-                         "xorLike": [name for name in names if "xor" in name.lower()]}
     hits, scanned, capped = [], 0, False
     for name, data in libraries.items():
-        holders_of_this_library = holders[name]
+        holders_of_this_library = holders.get(name, set())
         if name != cell_library and not holders_of_this_library:
             continue
         try:
@@ -1502,7 +1506,9 @@ def markdown(payload):
                 for hit in writers["hits"][:40]:
                     lines.append(f"| {hit['library']} | {hit['offset']} | {hit['function']} | "
                                  f"`{hit['instruction']}` | {hit['kind']} | {hit['storedValue']} |")
-            else:
+            elif writers.get("errors"):
+                lines += [f"Search incomplete for {sorted(writers['errors'])}: {writers['errors']}"]
+            if not writers["hits"]:
                 lines += ["**NOT ESTABLISHED: no static writer** — no instruction in any shipped object "
                           "provably stores to the cell or its window, and no relocation makes another "
                           "object reference it."]

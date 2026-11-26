@@ -1,10 +1,13 @@
 import struct
 import unittest
+from pathlib import Path
 
-from toyota_can_link_sweep import (address_evidence, can_tuples, classify, decode_windows,
-                                   annotate_steps, elf_cell_report, failure_group, fault_cause, fault_context,
-                                   markdown, provider_symbol, store_hits, trace_selection, memory_matches, oracle_verdict,
-                                   probe_selection, reconciliation, window_candidates)
+from toyota_can_link_sweep import (address_evidence, annotate_steps, can_tuples, classify,
+                                   decode_windows, elf_cell_report, failure_group, fault_cause,
+                                   fault_context, markdown, memory_matches, oracle_verdict,
+                                   probe_selection, provider_symbol, reconciliation,
+                                   static_cell_search, store_hits, trace_selection,
+                                   window_candidates)
 from toyota_entries import EntryIndex
 
 
@@ -311,6 +314,21 @@ class StaticWriterTest(unittest.TestCase):
     def test_an_unprovable_store_is_not_reported(self):
         hits, _, _ = store_hits(aarch64([0xF9000100], 0x1000), self.CELL, set(), {})
         self.assertEqual([], hits)
+
+
+class StaticSearchTest(unittest.TestCase):
+    def test_a_malformed_object_is_recorded_and_does_not_abort_the_search(self):
+        import tempfile, zipfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "toyota.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("x/libTOYOTA_COMM.so", b"\x7fELF" + b"\x00" * 120)
+                archive.writestr("x/notes.txt", b"not a library")
+            report = static_cell_search(path)
+        self.assertEqual(["libTOYOTA_COMM.so"], report["libraries"])
+        self.assertEqual([], report["hits"])
+        self.assertIn("libTOYOTA_COMM.so", report["errors"])
+        self.assertEqual("libTOYOTA_COMM.so+0x6ec88", report["cell"])
 
 
 class FaultTapTest(unittest.TestCase):
