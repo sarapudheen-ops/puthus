@@ -15,6 +15,8 @@ name: Inspect Toyota release data
 # call sites of OpenAbstractCommDll, records the twelve instructions before each and
 # the origin of x0, and (only when x0 is a supplied function address) runs one
 # exploratory variant. Steps, inputs, permissions and masking are unchanged.
+# Stage 3e docs note: the report in docs/toyota-progress.md is the only other change on
+# this head; this comment keeps actionlint on the same head as the run.
 
 on:
   workflow_dispatch:

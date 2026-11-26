@@ -594,6 +594,31 @@ tuple dies there once the return is zero (976; 232 by default), (2) the −1 pat
 non-zero return before any frame call (744), (3) no CAN-class source projection (245,356),
 (4) no identifier source (245,356), (5) NA Can3 selector 98 (5 systems).
 
+## Stage 3e — who calls the writer, and what its x0 carries
+
+Read-only; nothing enabled. Baseline: main `df69fe6` has no run of its own (the three commits
+above `0e098f0` touch only brand-inventory files), so the newest main release-data run is
+45737946032 on `0e098f0` — success, 13 of 14 masked steps plus the accepted
+`publish_stage0_report` failure.
+
+**Every caller reaches it through its own PLT stub, and none passes an address.** All 24
+objects were disassembled (822,193 instructions, not capped; `static_caller_search` at
+`toyota_can_link_sweep.py:1177`): `OpenAbstractCommDll` is defined in 20 of them, each also
+carries one relocation slot naming it, and each routes it through a four-instruction PLT
+stub — those 20 stubs are the only sites that reach the function. The stubs have **139
+callers** (`GetSysFunCfg`, `DiagnoseMain`, `CheckSystemInfoForAll`, `OBD_Comm`,
+`SetCanFiletID_UINT`, `GetStdCfgValue`, …), each with its twelve preceding instructions.
+
+x0 at those callers: **75 forward the caller's own x0 untouched**; **64 are the return value
+of the call immediately before** (`bl #0x11d20` in `libDIAG.so:CheckSystemInfoForAll`,
+`bl #0x6b00` in `libDEVICEID.so:GetSysFunCfg`). No site passes a constant, a load from data
+or the address of a supplied function, so step 2's condition is not met — **no variant ran
+and no transport call was gained**. The xor-named exports checked (`CheckXOR` 168 B,
+`Can2CheckXOR` 168 B, `CanCmdCheckXor` 96 B, `CmdCheckXor` 68 B) are the cell's own symbol,
+not any x0 in the supplied objects. **So the cell is filled from one frame above anything the
+harness reaches**: the caller's caller produces it, the cell keeps its `.bss` zero, and every
+CAN tuple still stops there.
+
 ## Evidence audit / next work
 
 CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `review_direct21` (`toyota_runtime_compile.py:114-145`), then `toyota_ecmect_pack.data_for` injects the 30 reviewed `liveReads` (`toyota_ecmect_pack.py:160-173`). Direct21 review items are disabled candidates (`toyota_live.py:313-318`). DTC/ECU-info definitions come from the same pinned compiler artifact (`toyota_runtime_compile.py:142-145`, `toyota_ecmect_pack.py:160-173`); `test_ecmect_pack.py` verifies 30/1,414/1 against the selected pack, and `verify_source_read_review` checks a deterministic compiler-output pin (`toyota_runtime_compile.py:173-220`, `tools/thinkdiag/schema/mandatory-read-artifacts-v1.json`). This is source/compiler regression evidence, not a native replay of emitted category records. **No oracle for non-ECMECT PID, DTC, or ecuInfo output is established.** No human sign-off hash is established beyond source/artifact SHA pins. Mode B must remain candidate-parse, not enabling.

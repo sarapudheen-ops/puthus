@@ -1176,10 +1176,10 @@ def _x0_origin(state, starts, sections):
         called = origin.get("call")
         if not called:
             return {"kind": "unknown", "detail": "x0 holds an earlier call's return value"}
-        symbol = starts.get(origin["call"])
+        symbol = starts.get(called)
         return {"kind": "unknown",
-                "detail": f"the return value of `{origin['text']}` at {origin['call']:#x}"
-                          + (f" (`{symbol}`)" if symbol else "")}
+                "detail": f"the return value of `{origin['text']}` made at {origin['site']}"
+                          + (f", which is `{symbol}`" if symbol else "")}
     return {"kind": "unknown", "detail": "x0 is written in a way this scanner cannot follow"}
 
 
@@ -1259,7 +1259,7 @@ def caller_hits(instructions, target=None, slots=None, starts=None, window=CALLE
             elif destination is not None:
                 state.pop(_state_key(instruction, destination.reg), None)
         elif mnemonic in ("bl", "blr"):
-            called = {"source": "clobbered", "call": instruction.address + 4,
+            called = {"source": "clobbered", "call": None, "site": f"{instruction.address:#x}",
                       "text": f"{mnemonic} {instruction.op_str}".strip()}
             if mnemonic == "bl" and operands and operands[0].type == ARM64_OP_IMM:
                 called["call"] = operands[0].imm
@@ -1415,8 +1415,8 @@ def static_caller_search(path, target=CALLER_TARGET, cap=SCAN_CAP):
     kinds = collections.Counter(hit["x0"]["kind"] for hit in stub_calls)
     definitions = {name: item["targetOffset"] for name, item in per_object.items() if item["definesTarget"]}
     slots = {name: item["slots"] for name, item in per_object.items() if item["slots"]}
-    checks = sorted({(item["name"], item["offset"], item["size"])
-                     for name, item in per_object.items() for item in item["xorFunctions"]})
+    checks = sorted({(library, item["name"], item["offset"], item["size"])
+                     for library, entry in per_object.items() for item in entry["xorFunctions"]})
     supplied = [{"library": hit["library"], "offset": hit["offset"], "function": hit["function"],
                  "x0": hit["x0"]} for hit in stub_calls + hits
                 if hit["x0"]["kind"] == "address of a supplied function"]
@@ -1424,8 +1424,8 @@ def static_caller_search(path, target=CALLER_TARGET, cap=SCAN_CAP):
             "slotObjects": slots, "hits": hits, "hitCount": len(hits),
             "stubCalls": stub_calls, "stubCallCount": len(stub_calls),
             "x0Kinds": dict(kinds), "suppliedFunctionX0": supplied,
-            "xorFunctions": [{"name": name, "offset": offset, "size": size}
-                             for name, offset, size in checks],
+            "xorFunctions": [{"library": library, "name": name, "offset": offset, "size": size}
+                             for library, name, offset, size in checks],
             "objects": per_object, "errors": errors,
             "strings": [dict(item, library=name) for name, item in per_object.items()
                         for item in item["strings"]],
