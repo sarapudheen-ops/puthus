@@ -116,7 +116,7 @@ class PackObjectStore(
     @Synchronized
     fun load(container: String, total: Long, range: PackRange, checkCancelled: () -> Unit = {}): Map<*, *> {
         range.validate(total)
-        require(Regex("toyota-[0-9a-f]{64}\\.bin").matches(container)) { "Unsafe vehicle-pack container name" }
+        require(Regex("[a-z0-9-]+-[0-9a-f]{64}\\.bin").matches(container)) { "Unsafe vehicle-pack container name" }
         checkCancelled()
         require(directory.isDirectory || directory.mkdirs()) { "Cannot create private vehicle-pack cache" }
         val file = File(directory, range.sha256 + ".gz")

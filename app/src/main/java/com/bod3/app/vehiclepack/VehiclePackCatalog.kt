@@ -25,7 +25,8 @@ class VehiclePackIndex private constructor(
             require(m["format"] == "bod3-toyota-vehicle-index" && m["formatVersion"] == 1.0 && m["converterVersion"] == 1.0 &&
                 m["sourceSha256"] == SOURCE_SHA256 && m["manualSelectionOnly"] == true) { "Unsupported or unpinned vehicle-pack index" }
             val digest = m["containerSha256"] as? String ?: error("Missing vehicle-pack container hash")
-            require(PackRange.HASH.matches(digest) && m["container"] == "toyota-$digest.bin") { "Unpinned vehicle-pack container" }
+            val container = m.text("container")
+            require(PackRange.HASH.matches(digest) && Regex("[a-z0-9-]+-$digest\\.bin").matches(container)) { "Unpinned vehicle-pack container" }
             val length = whole(m["containerBytes"], PackRange.MAX_CONTAINER_BYTES)
             require(length >= PackRange.MAGIC_BYTES)
             PackRange.parse(m["root"], length)
@@ -36,7 +37,7 @@ class VehiclePackIndex private constructor(
                 val value = it.value as? String ?: error("Invalid conversion reason")
                 require(key.isNotBlank() && value.isNotBlank()); key to value
             } ?: emptyMap()
-            return VehiclePackIndex("toyota-$digest.bin", length, root, reasons, summary)
+            return VehiclePackIndex(container, length, root, reasons, summary)
         }
     }
 }
