@@ -241,6 +241,38 @@ jobs:
             -f status=completed -f conclusion="$CONC" \
             -f 'output[title]=Read-only codes 3/4 census and native setup probe; nothing enabled' \
             -F 'output[summary]=@.local/thinkdiag/report/can-link-sweep/can-link-sweep.md'
+      - name: Run and publish Stage 4a schema probe (read-only)
+        id: stage4a_schema_probe
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          set +e
+          DIR=.local/thinkdiag/report/stage4a
+          mkdir -p "$DIR"
+          python3 tools/thinkdiag/stage4a_schema_probe.py \
+            --archive .local/thinkdiag/TOYOTA.zip \
+            --decoded .local/thinkdiag/decoded \
+            --manifest .local/thinkdiag/report/decoded-manifest.json \
+            --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
+            --output "$DIR" > "$DIR/stage4a.log" 2>&1
+          STATUS=$?
+          if [ ! -s "$DIR/stage-4a-probe.md" ] || [ ! -s "$DIR/stage-4a-probe.json" ]; then
+            # shellcheck disable=SC2016
+            python3 -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); log=(p/"stage4a.log").read_text(); (p/"stage-4a-probe.md").write_text("# Stage 4a probe failed before report generation\n\n```text\n"+log+"\n```\n"); (p/"stage-4a-probe.json").write_text(json.dumps({"error":log,"exitStatus":int(sys.argv[2])})+"\n")' "$DIR" "$STATUS"
+            STATUS=1
+          fi
+          cat "$DIR/stage4a.log"
+          CONC=success
+          if [ "$STATUS" -ne 0 ]; then CONC=failure; fi
+          gh release upload ci-reports-v1 "$DIR/stage-4a-probe.md" "$DIR/stage-4a-probe.json" --clobber
+          UPLOAD=$?
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Stage 4a schema probe' -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion="$CONC" \
+            -f 'output[title]=Stage 4a read-only schema census' \
+            -F "output[summary]=@$DIR/stage-4a-probe.md"
+          CHECK=$?
+          if [ "$STATUS" -ne 0 ] || [ "$UPLOAD" -ne 0 ] || [ "$CHECK" -ne 0 ]; then exit 1; fi
       - name: Run Stage 1b parameterized DTC probe (group-based, read-only)
         id: stage1b_probe
         timeout-minutes: 15
@@ -597,6 +629,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          O_stage4a_schema_probe: ${{ steps.stage4a_schema_probe.outcome }}
           O_code1_lifecycle_sweep: ${{ steps.code1_lifecycle_sweep.outcome }}
           O_publish_ecu_input: ${{ steps.publish_ecu_input.outcome }}
           O_publish_native_outcome: ${{ steps.publish_native_outcome.outcome }}
@@ -615,7 +648,7 @@ jobs:
           mkdir -p .local/thinkdiag/report
           PROMO_LOG=.local/thinkdiag/report/promotion-step.log
           FAILS=0
-          for out in "$O_code1_lifecycle_sweep" "$O_publish_ecu_input" "$O_publish_native_outcome" \
+          for out in "$O_stage4a_schema_probe" "$O_code1_lifecycle_sweep" "$O_publish_ecu_input" "$O_publish_native_outcome" \
             "$O_publish_link_promotion" "$O_publish_stage1b_report" "$O_publish_stage1c_report" \
             "$O_publish_sweep_reports" "$O_publish_convert_log" "$O_publish_sweep_evidence" \
             "$O_publish_static_reports" "$O_publish_dtc_shards" "$O_publish_inspection_check" \
@@ -625,12 +658,13 @@ jobs:
           CONC=success
           if [ "$FAILS" -gt 0 ]; then CONC=failure; fi
           {
-            echo "## Masked step outcomes: $FAILS raw failure(s) among 14 continue-on-error steps"
+            echo "## Masked step outcomes: $FAILS raw failure(s) among 15 continue-on-error steps"
             echo
             echo 'Raw steps.<id>.outcome values are not masked; step conclusions and the job conclusion are.'
             echo
             echo '| step id | raw outcome |'
             echo '|---|---|'
+            echo "| stage4a_schema_probe | $O_stage4a_schema_probe |"
             echo "| code1_lifecycle_sweep | $O_code1_lifecycle_sweep |"
             echo "| publish_ecu_input | $O_publish_ecu_input |"
             echo "| publish_native_outcome | $O_publish_native_outcome |"
@@ -655,5 +689,5 @@ jobs:
           gh api --method POST "repos/$GH_REPO/check-runs" \
             -f name='Toyota masked-step outcomes' -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion="$CONC" \
-            -f "output[title]=$FAILS raw failure(s) among 14 continue-on-error steps" \
+            -f "output[title]=$FAILS raw failure(s) among 15 continue-on-error steps" \
             -F 'output[summary]=@.local/thinkdiag/report/masked-outcomes.md'
