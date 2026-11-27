@@ -652,15 +652,16 @@ jobs:
           doc = Path('docs/toyota-progress.md').read_text()
           body = (f'# Stage 0 report - part 1/1\n\nHead: {__import__("os").environ["GITHUB_SHA"]}\n'
                   f'UTC timestamp: {datetime.datetime.now(datetime.timezone.utc).isoformat()}\n\n{doc}')
-          if len(body) > 24000:
-              raise SystemExit(f'Stage report exceeds safe PR comment bound: {len(body)}')
           Path('.local/thinkdiag/report/stage-0-report.md').write_text(body)
           PY
           gh release upload ci-reports-v1 .local/thinkdiag/report/stage-0-report.md --clobber
-          PR_NUMBER=$(gh pr view "$GITHUB_REF_NAME" --json number --jq .number)
-          export PR_NUMBER
-          gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
-            -F body=@.local/thinkdiag/report/stage-0-report.md
+          PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$PR_NUMBER" ]; then
+            BODY="Stage 0 progress snapshot for \`$GITHUB_SHA\`: full progress and evidence are in the [report asset](https://github.com/$GH_REPO/releases/download/ci-reports-v1/stage-0-report.md). This is a documentation snapshot, not vehicle validation."
+            gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="$BODY"
+          else
+            echo "No open PR for $GITHUB_REF_NAME; release asset published."
+          fi
       - name: Publish masked-step outcomes and promotion log tail
         if: always()
         env:
