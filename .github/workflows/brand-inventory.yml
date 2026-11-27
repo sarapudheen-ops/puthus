@@ -186,6 +186,61 @@ jobs:
           cat .local/inventory6/clusters.log
           exit 1
 
+  family-evidence:
+    name: Inventory-7 family evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # family_evidence.py reads sweep_toyota.FOCUSED_READERS with ast, so the
+      # capstone/unicorn chain is never imported and pyelftools is sufficient.
+      - name: Install ELF reader
+        run: python -m pip install pyelftools==0.32
+      - name: Test family evidence
+        run: python -m unittest discover -s tools/inventory -p 'test_family_evidence.py' -v
+      - name: Run gated decoded family probe
+        id: families
+        timeout-minutes: 35
+        continue-on-error: true
+        run: |
+          mkdir -p .local/inventory7
+          set -o pipefail
+          python tools/inventory/family_evidence.py --output .local/inventory7/report --max-seconds 1900 2>&1 | tee .local/inventory7/families.log
+      - name: Publish Inventory-7 reports
+        if: always() && steps.families.outcome != 'skipped' && hashFiles('.local/inventory7/report/inventory7.md') != ''
+        run: |
+          test -s .local/inventory7/report/inventory7.md
+          test -s .local/inventory7/report/inventory7.json
+          gh release upload ci-reports-v1 .local/inventory7/report/inventory7.md .local/inventory7/report/inventory7.json --clobber
+      - name: Publish check runs
+        if: always() && steps.families.outcome != 'skipped' && hashFiles('.local/inventory7/report/parts.json') != ''
+        env:
+          OUTCOME: ${{ steps.families.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          report = Path('.local/inventory7/report')
+          state = json.loads((report / 'inventory7.json').read_text())
+          conclusion = 'success' if os.environ['OUTCOME'] == 'success' and state['control']['passed'] and not state['pending'] and not state.get('failed') else 'failure'
+          for part in json.loads((report / 'parts.json').read_text()):
+              subprocess.run(['gh', 'api', '--method', 'POST', f"repos/{os.environ['GH_REPO']}/check-runs",
+                              '-f', f"name={part['name']}", '-f', f"head_sha={os.environ['GITHUB_SHA']}",
+                              '-f', 'status=completed', '-f', f'conclusion={conclusion}',
+                              '-f', f"output[title]={part['name']}", '-F', f"output[summary]=@{part['file']}"], check=True)
+          PY
+      - name: Fail if the family probe failed
+        if: always() && steps.families.outcome == 'failure'
+        run: |
+          cat .local/inventory7/families.log
+          exit 1
+
   stage1-coverage:
     name: Multi-brand Stage 1 coverage
     runs-on: ubuntu-latest
@@ -228,6 +283,7 @@ jobs:
 
   stage2-multibrand:
     name: Multi-brand Stage 2 extraction
+    needs: family-evidence
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -240,16 +296,16 @@ jobs:
           python-version: '3.12'
       - name: Install ELF reader
         run: python -m pip install pyelftools==0.32
-      - name: Test Stage 2 converter
-        run: PYTHONPATH=tools/thinkdiag python -m unittest tools/thinkdiag/test_stage2_multibrand.py -v
-      - name: Download Stage 1 coverage matrix
+      - name: Test the Stage 2 evidence gate
+        run: PYTHONPATH=tools/thinkdiag python -m unittest discover -s tools/thinkdiag -p 'test_stage2_multibrand.py' -v
+      - name: Download Inventory-7 family evidence
         run: |
           mkdir -p .local/stage2/in .local/stage2/out
-          gh release download ci-reports-v1 --pattern "stage1-coverage-027d1548c253d2df44b812717478ceffba528d9d.json" --dir .local/stage2/in --clobber
-      - name: Run Stage 2 multi-brand extraction
+          gh release download ci-reports-v1 --pattern inventory7.json --dir .local/stage2/in --clobber
+      - name: Run Stage 2 multi-brand extraction behind the evidence gate
         run: |
           python tools/thinkdiag/stage2_multibrand.py \
-            --stage1-json .local/stage2/in/stage1-coverage-027d1548c253d2df44b812717478ceffba528d9d.json \
+            --inventory7-json .local/stage2/in/inventory7.json \
             --repo "$GH_REPO" \
             --out-dir .local/stage2/out \
             --commit-sha "$GITHUB_SHA"

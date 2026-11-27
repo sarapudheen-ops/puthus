@@ -915,3 +915,50 @@ Jaccard single-linkage connected components over BIN stem sets; Toyota is includ
 
 - Representative profiles complete: 56/56.
 <!-- INVENTORY6 END -->
+
+## Inventory-7: decoded data-family evidence
+
+`tools/inventory/family_evidence.py`, published as the `Inventory-7 family evidence` check and as `inventory7.md` / `inventory7.json` in `ci-reports-v1`. Read-only: it writes no pack, no converter and no app change.
+
+### Why this stage was added
+
+Stage 1 (`tools/inventory/stage1_coverage.py:207`) and Stage 2 (`tools/thinkdiag/stage2_multibrand.py:95`) called `yzjm.decode_yzjm` with **one** argument. The decoder's signature is `decode_yzjm(data, table)` — the 32-byte format table is supplied by the caller and has no default (`tools/thinkdiag/yzjm.py:41`). Every decode therefore raised `TypeError`, so:
+
+- Stage 1 reported `Parser Output: NOT ESTABLISHED` for **all 73 archives including `TOYOTA.zip`**, while the independent Inventory-3 run on the same corpora decoded 75 Toyota BINs and the Toyota control passed 108/108. The two results contradicted each other, and Stage 1 was the wrong one.
+- Stage 2 reported `Qualifying brands: 0`, because `rank_candidates` required `yzjm_accepted > 0`.
+
+`Qualifying brands: 0` was a **false negative produced by a call bug**, not evidence that no non-Toyota family exists. Both stages are fixed: each archive is now decoded with the table read from *that archive's own* `libDEVICEID.so` at the same virtual address Toyota's reader uses (`tools/thinkdiag/decode_toyota.py:39`), and Stage 1 also passes `native_info` the `(bytes, name)` it actually requires instead of a `Path`, which had made every ELF input count as rejected.
+
+### What Inventory-7 measures
+
+For each family it reports four independent things, and a verdict needs all of the first three:
+
+| evidence | how it is obtained | why it is not a guess |
+| --- | --- | --- |
+| record structure | an existing `tools/thinkdiag` reader is run over the decoded bytes | the readers are the ones the Toyota converter uses; nothing new is inferred |
+| wrapper confidence | the archive's own `libDEVICEID.so` compared byte-for-byte with Toyota's | `established` only when identical, so the table *and the VA it is read from* are the ones the Toyota native reader uses; otherwise `experimental` |
+| native consumer | the archive's own libraries parsed for exported functions, intersected with the consumers this repo already cites | names come from `sweep_toyota.FOCUSED_READERS`, read with `ast`; `_consumers` raises if a name is not already cited for that exact library |
+| field meanings | **not measured** | no brand's own reader has been disassembled, so no decoded field may be called an address, service, PID or timing |
+
+The strongest verdict the tool can emit is `CANDIDATE`, which means structure **and** an own-role-library consumer are present. `CANDIDATE` never means field meanings are known, and Stage 2 refuses to build anything on it.
+
+Deliberately excluded as evidence:
+
+- **A magic string.** Decoded ASTONMARTIN bytes begin `02 09 00 54 43 4f 44 45` — a length-9 NUL-terminated string whose first five characters are ASCII `TCODE`. That is a string prefix, not a DTC table, and `TCODE` is not interpreted anywhere. Decoded AUDI/SEAT/SKODA/VW bytes contain the ASCII run `AUDI`; that is a brand label, not a format.
+- **A shared header.** `1801000000810100` is the first 8 decoded bytes of one file in Toyota and in 15 other archives (Inventory-4). Read as two LE32s it is `(280, 98560)`, the shape of a `sentinel_index` row — but Inventory-4 also shows the generic `typed_table` reader parsed **0 of 75** Toyota samples and **0** of every brand's samples, so a shared header alone established nothing.
+- **A Toyota-shaped filename.** Inventory-5 shows no non-Toyota brand ships `ECU_DATA`, `FUNCDATA`, `SYSLIST` or `SYSTEMENTER`, so the Toyota pipeline cannot be reused; and `toyota_control.eligible`/`reader` are keyed to filenames, so a brand archive shipping a file called `MENU.BIN` would have been called compatible by Stage 2 whenever its bytes merely failed to raise. Stage 1 now labels those counts `toyota_name_keyed_*` and keeps `Family` at `NOT ESTABLISHED`.
+- **SQLite.** PR #48 added `tools/thinkdiag/sqlite_reader.py` without any observation that a brand archive contains a SQLite database, and it is wired into no workflow. Inventory-7 measures the `SQLite format 3\0` magic across every enumerated member of every archive regardless of extension, so the assumption is replaced by a count.
+
+### Stage 2 gate
+
+`tools/thinkdiag/stage2_multibrand.py:established` now requires all four of **wrapper**, **structure**, **consumer** and **meanings**. The first three are Inventory-7's `CANDIDATE`; the fourth is `MEANING_EVIDENCE`, a registry keyed by `(archive, family)` that must contain a disassembly citation for the brand's own reader. It is empty, so Stage 2 rejects every pair and reports each one's missing evidence instead of guessing. A pack built by this path is a research container marked `appPackCompatible: false`; it is never an app pack.
+
+### App integration
+
+Not established, and not attempted. `VehiclePackIndex` pins one source hash — `SOURCE_SHA256 = 26c77a39…` is `TOYOTA.zip` — and one format, `bod3-toyota-vehicle-index` (`app/src/main/java/com/bod3/app/vehiclepack/VehiclePackCatalog.kt:15-43`). A converted vehicle must supply a four-level name-only catalog, per-system counts over exactly `{pids, dtcs, tests, coding, specialFunctions, ecuInfo}`, `CatalogData` with provenance, and `sourceRecords` (`PackBundle.kt`, `VehiclePackCatalog.kt:vehicle`). None of that can be produced for a brand whose field meanings are unknown, so no index, container, hash pin or screen was added and the APK is unchanged.
+
+<!-- INVENTORY7 START -->
+## Documentation summary
+
+Measured by the `Inventory-7 family evidence` check for the current SHA and published in `ci-reports-v1`. The measured numbers are committed here, together with `tools/inventory/verify_family_document.py`, on the commit after the first complete run; this block is not yet verified by CI.
+<!-- INVENTORY7 END -->
