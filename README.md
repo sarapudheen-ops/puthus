@@ -30,12 +30,15 @@ The selected Toyota system screen now lists source-backed setup candidates, rank
 support, and offers a guarded identification/live/DTC probe flow with progress, manual choice and stop.
 Successful runs retain full evidence per manually named vehicle instance; share one bring-up report or
 export/import a verified-setup data pack. Transferred evidence is not verification on another car/phone.
-Recovered write operations additionally recheck the same unique ECU identity and retain all existing
-Expert/confirmation/backup/verification/rollback controls.
+The general recovered-write framework rechecks the same unique ECU identity and retains its
+Expert/confirmation/backup/verification/rollback controls; no recovered Toyota write is enabled.
 
-**Current source limitation:** the Toyota converter still has **0 executable recovered definitions**.
-Its unresolved candidates are inspectable/reportable but cannot be probed by guessing transport fields
-or read definitions. No real ECU was contacted during development. See the
+**Recovered Toyota status:** 110 systems have DTC read enabled: two pinned systems (ECMECT and the
+Innova slice) plus 108 group-qualified DTC-read-only systems. ECMECT has 30 PIDs, 1,414 DTCs and one
+ECU-info entry. These are **natively consistent, not vehicle-tested**; unresolved candidates must not
+be probed by guessing transport fields or definitions. Toyota recovered clear, actuator, coding,
+special-function and CAN paths are not enabled. See [Stage 1d final enabled counts](docs/toyota-progress.md#final-enabled-counts-data),
+[Stage status](docs/toyota-progress.md#stage-status), and the
 [bring-up guide, safety contract and limitations](docs/ecu-bring-up.md).
 
 ## Features (Phase 2): module scan and vehicle profiles
@@ -349,7 +352,8 @@ link, then the new manual catalog selection when no profile/link make is known. 
 supplies Toyota text to a known unrelated manufacturer, and no such lookup activates vehicle configuration.
 Data-pack v2 `dtcGroups` preserves manufacturer scope and source through import/export; v1 remains supported.
 Conflicts, placeholders and unsupported code forms are excluded, and extended codes are not promoted to
-base codes. No Toyota PIDs, ECU addresses, coding or actuator commands have been enabled from this data.
+base codes. Passive descriptions alone do not activate vehicle configuration; recovered Toyota coding and
+actuator commands remain disabled ([Stage status](docs/toyota-progress.md#stage-status)).
 
 **On-demand vehicle packs (conversion in progress):** **Vehicle catalog / Data packs → Choose Toyota
 vehicle pack** opens the manual Make → Model → source Generation/group → Variant picker and per-vehicle
@@ -358,27 +362,21 @@ and distinguishing duplicate labels by source-node ID; nine non-vehicle tasks ar
 bounded, checksum-verified HTTP ranges and cached privately. The previous full offline source database
 is no longer packaged. Downloads never choose configuration, and VIN/profile loading never selects it.
 
-The full-source conversion currently reports **zero executable recovered Toyota definitions**. All real
-systems remain disabled with source IDs and reasons; synthetic KWP/CAN engine tests and a working pack
-loader are not recovered vehicle coverage. The four reviewed Kijang Innova/TGN source branches retain
-their original hierarchy IDs; missing engine/fuel/transmission fields are not inferred and do not
-establish AN40/diesel applicability. No addresses, formulas or write mappings are guessed. Full-archive
-owner verification and sandbox inspection/decoding/execution permission are recorded in
-[`toyota-verified.json`](tools/thinkdiag/verification/toyota-verified.json); that is not a write grant or
-physical-ECU verification. The new independent Python/Kotlin native-fault decoder agrees with supplied
-DTCF execution on 70,144 state/mask, 2,112 assembly, 3,584 source numeric-display and 196,608 exact-key
-byte-merge vectors. P5 core record projection additionally matches on 49,152 vectors (not its auxiliary
-freeze/mask/query workflows). FILE comparisons cover every regional fault/clear block and all 1,308 entries; COMM
-covers 8,775 regional frames and 34,671 template lookups. A separate fast-KWP configuration/packing
-port covers 284 source entries, 568 native API traces and 17,892 source packet vectors; 2,016 short-packet
-vectors also match Kotlin. Real linked FILE → SYSP → COMM instructions additionally match 284
-first-positive-entry, 568 keepalive-on/off and 284 exit traces. Exact source keepalives are not
-universally `3E`; the six function-bound requests and their literal native configuration arguments
-are retained. Adapter APIs/replies are explicit fakes: MIC3313 timing/pin mapping, failed-entry/retry/
-ISO-fallback branches and operational emission are still unresolved. All 27,035 exact TCODE pairs are checked, and
-the selected-function label joins have no missing keys. CALC comparison covers 65,792 vectors for two
-arithmetic forms. These are bounded offline semantic checks—not transport, full-language or
-executable-vehicle proof.
+The recovered Toyota pack contains a limited, source-backed K-Line read slice, not complete vehicle
+coverage. The 110 DTC-read-enabled systems and the two pinned slices are documented in
+[Stage 1d final enabled counts](docs/toyota-progress.md#final-enabled-counts-data). The exact ECMECT
+control has 30 PIDs, 1,414 DTCs and one ECU-info entry ([Stage status](docs/toyota-progress.md#stage-status)).
+The evidence is **natively consistent, not vehicle-tested**; physical adapter and car validation remains
+pending. Recovered CAN and write categories are not enabled. No source gap authorizes guessed fields,
+requests or security algorithms.
+
+### Known gaps
+
+- **Recovered CAN — 245,356 systems:** no CAN-class source projection or identifier source; the setup value needed to fill the `CheckXOR` cell was not found in supplied files ([Stage 3d](docs/toyota-progress.md#stage-3d--who-fills-the-null-cell-and-the-can-path-on-a-zero-return), [Stage 3e](docs/toyota-progress.md#stage-3e--who-calls-the-writer-and-what-its-x0-carries)).
+- **Actuators, coding and special functions — category counts NOT ESTABLISHED:** FUNCDATA slots 4 and 5 are not labelled; among 39,363 proven transport-1 systems, slot 4 is present in 25,746 and slot 5 in 0, neither a category count ([Stage 4a](docs/toyota-progress.md#stage-4a--read-only-function-schema-discovery)).
+- **K-Line DTCs — 24,832 systems:** `ValueError:No unambiguous exact DTC function-detail source rows`; all 137 affected groups have zero default detail rows ([Stage 1f](docs/toyota-progress.md#stage-1f--function-detail-rejection-census)).
+- **Transport 5 — 179 systems unproven**, including the 93 group systems that fail `link_unproven:link_representation_unsupported:transport-5-flags-33`; the 93 are not additional to the 179 ([baseline measurements](docs/toyota-progress.md#baseline-measurements-existing-ci-data), [Stage 1d](docs/toyota-progress.md#stage-1d--compiled-group-dtc-read-only-enablement)).
+- **Recovered clear — no verified shipped-clear path:** `clear_unresolved:read-only-slice-never-exposes-clearing`; clear is not enabled for the 110 DTC-read-enabled systems ([Stage 1d shipped slice](docs/toyota-progress.md#the-shipped-slice-is-dtc-read-only-code-deliberate), [final enabled counts](docs/toyota-progress.md#final-enabled-counts-data)).
 
 See [on-demand delivery, build steps and safeguards](docs/toyota-vehicle-packs.md),
 [exact conversion accounting and limitations](docs/conversion-report.md),
