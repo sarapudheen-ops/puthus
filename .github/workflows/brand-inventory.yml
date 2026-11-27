@@ -226,3 +226,46 @@ jobs:
             -f 'output[title]=Multi-brand Stage 1 coverage' \
             -F "output[summary]=@.local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.md"
 
+  stage2-multibrand:
+    name: Multi-brand Stage 2 extraction
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install ELF reader
+        run: python -m pip install pyelftools==0.32
+      - name: Test Stage 2 converter
+        run: PYTHONPATH=tools/thinkdiag python -m unittest tools/thinkdiag/test_stage2_multibrand.py -v
+      - name: Download Stage 1 coverage matrix
+        run: |
+          mkdir -p .local/stage2/in .local/stage2/out
+          gh release download ci-reports-v1 --pattern "stage1-coverage-027d1548c253d2df44b812717478ceffba528d9d.json" --dir .local/stage2/in --clobber
+      - name: Run Stage 2 multi-brand extraction
+        run: |
+          python tools/thinkdiag/stage2_multibrand.py \
+            --stage1-json .local/stage2/in/stage1-coverage-027d1548c253d2df44b812717478ceffba528d9d.json \
+            --repo "$GH_REPO" \
+            --out-dir .local/stage2/out \
+            --commit-sha "$GITHUB_SHA"
+      - name: Publish Stage 2 reports and packs
+        run: |
+          test -s ".local/stage2/out/stage2-multibrand-${GITHUB_SHA}.md"
+          test -s ".local/stage2/out/stage2-multibrand-${GITHUB_SHA}.json"
+          gh release upload ci-reports-v1 \
+            ".local/stage2/out/stage2-multibrand-${GITHUB_SHA}.md" \
+            ".local/stage2/out/stage2-multibrand-${GITHUB_SHA}.json" \
+            --clobber
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Multi-brand Stage 2 extraction' \
+            -f "head_sha=$GITHUB_SHA" \
+            -f status=completed \
+            -f conclusion=success \
+            -f 'output[title]=Multi-brand Stage 2 extraction' \
+            -F "output[summary]=@.local/stage2/out/stage2-multibrand-${GITHUB_SHA}.md"
+
