@@ -64,7 +64,7 @@ fun ToyotaVehiclePacksScreen(
     var category by rememberSaveable(state.system?.id) { mutableStateOf("") }
     val visibleSystems = PackSystemStatusUi.filter(state.vehicle?.systems ?: emptyList(), systemSearch, linkVerifiedOnly)
     Scaffold(topBar = {
-        TopAppBar(title = { Text(when (state.view) { PackView.PICKER -> "Toyota vehicle packs"; PackView.SYSTEMS -> "Vehicle systems"; PackView.FEATURES -> state.system?.name ?: "System features" }) },
+        TopAppBar(title = { Text(when (state.view) { PackView.PICKER -> "Vehicle packs"; PackView.SYSTEMS -> "Vehicle systems"; PackView.FEATURES -> state.system?.name ?: "System features" }) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("toyotaPackContent"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

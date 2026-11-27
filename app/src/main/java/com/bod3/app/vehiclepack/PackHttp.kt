@@ -7,7 +7,7 @@ import javax.net.ssl.HttpsURLConnection
 class PackHttpSource : PackRangeSource {
     override fun fetch(container: String, total: Long, range: PackRange, checkCancelled: () -> Unit): ByteArray {
         range.validate(total)
-        require(Regex("toyota-[0-9a-f]{64}\\.bin").matches(container))
+        require(Regex("[a-z0-9-]+-[0-9a-f]{64}\\.bin").matches(container))
         var url = URL("$RELEASE_URL/$container")
         repeat(4) { redirect ->
             checkCancelled()
