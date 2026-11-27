@@ -55,6 +55,8 @@ FORMAT = "bod3-family-research"
 FORMAT_VERSION = 1
 MAX_PACK_BYTES = 480 * 1024 * 1024
 MAX_TABLE_ROWS = 120
+# GitHub caps a check-run output summary at 65535 bytes; the full detail stays in the JSON.
+MAX_SUMMARY_BYTES = 60000
 
 # Field-meaning evidence, keyed by (archive, family). A record must name the
 # brand's own library, the function and offset that reads the field, and what the
@@ -222,33 +224,84 @@ def extract_family_pack(archive_path: Path, archive_name: str, family: str, out_
     }
 
 
+def missing_label(row: dict) -> str:
+    """Short, stable label for the first gate requirement this pair failed."""
+    missing = row.get("missing") or []
+    if not missing:
+        return "none"
+    first = str(missing[0])
+    label = first.split(":", 1)[0].strip()
+    if len(label) > 48:
+        label = label[:45] + "..."
+    return label or first[:48]
+
+
+def bound(text: str, limit: int = MAX_SUMMARY_BYTES) -> str:
+    """Never let the report exceed what a GitHub check-run summary accepts."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    note = ("\n\n---\n\n*Report truncated to fit the GitHub check-run summary limit "
+            f"({limit} bytes). The untruncated report and every per-pair row are in the "
+            "`stage2-multibrand-<sha>.json` and `.md` release assets.*\n")
+    keep = limit - len(note.encode("utf-8"))
+    cut = encoded[:keep].decode("utf-8", "ignore")
+    cut = cut[:cut.rfind("\n")] if "\n" in cut else cut
+    return cut + note
+
+
 def render(summary: dict) -> str:
     lines = [
         "# Multi-brand Stage 2 Report",
         "",
         f"- Commit SHA: `{summary['commit_sha']}`",
-        f"- Gate: wrapper + structure + own-role consumer + field meanings "
-        f"(`tools/thinkdiag/stage2_multibrand.py:established`)",
+        "- Gate: wrapper + structure + own-role consumer + field meanings "
+        "(`tools/thinkdiag/stage2_multibrand.py:established`)",
         f"- Inventory-7 Toyota control: {summary['control']}",
         f"- (archive, family) pairs measured: {summary['measured']}",
         f"- Pairs passing the gate: {summary['allowed']}",
         f"- Research packs built: {summary['built']}",
-        f"- App packs built: **0** — the app index pins one Toyota source SHA-256 and the "
-        f"`bod3-toyota-vehicle-index` format; nothing here is app-compatible",
+        "- App packs built: **0** — the app index pins one Toyota source SHA-256 and the "
+        "`bod3-toyota-vehicle-index` format; nothing here is app-compatible",
         "",
         "## Reconciliation",
+        "",
+        "### Pairs the gate actually had something to judge",
         "",
         "| archive | family | Inventory-7 verdict | parsed | wrapper | own-role consumers | gate | first missing requirement |",
         "| --- | --- | --- | ---: | --- | --- | --- | --- |",
     ]
+    detail, groups = [], {}
     for row in summary["evaluations"]:
+        if row["allowed"] or row["verdict"] == "CANDIDATE" or row["parsed"] > 0:
+            detail.append(row)
+        else:
+            groups.setdefault((row["verdict"], missing_label(row)), []).append(row)
+    for row in detail[:MAX_TABLE_ROWS]:
         missing = row["missing"][0] if row["missing"] else "none"
         lines.append(
             f"| `{row['archive']}` | `{row['family']}` | {row['verdict']} | {row['parsed']} | {row['wrapper']} "
             f"| {fe.old.escape(', '.join(row['own_role_consumers']) or 'none')} "
             f"| {'ALLOWED' if row['allowed'] else 'REJECTED'} | {fe.old.escape(missing)} |")
+    if len(detail) > MAX_TABLE_ROWS:
+        lines.append(f"| ... | | | | | | | {len(detail) - MAX_TABLE_ROWS} further pair(s) in the JSON |")
+
+    lines += ["", "### Every other pair, grouped by its first missing requirement", "",
+              "| Inventory-7 verdict | first missing requirement | pairs | archives |",
+              "| --- | --- | ---: | --- |"]
+    for (verdict, label), rows_in in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        names = sorted({row["archive"] for row in rows_in})
+        shown = ", ".join(f"`{fe.old.escape(name)}`" for name in names[:6])
+        if len(names) > 6:
+            shown += f" +{len(names) - 6} more"
+        lines.append(f"| {verdict} | {fe.old.escape(label)} | {len(rows_in)} | {shown} |")
+    lines += ["",
+              f"Accounted for: {len(detail)} pair(s) shown individually + "
+              f"{sum(len(rows) for rows in groups.values())} grouped = {len(summary['evaluations'])} "
+              "= every pair measured. Each individual row is in the JSON report.", ""]
+
     if summary["packs"]:
-        lines += ["", "## Built research packs", "",
+        lines += ["## Built research packs", "",
                   "| archive | family | sampled | accepted | rejected | duplicates | not applicable | bytes | SHA-256 |",
                   "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
         for pack in summary["packs"]:
@@ -260,7 +313,7 @@ def render(summary: dict) -> str:
             reasons = "; ".join(f"{fe.old.escape(k)}: {v}" for k, v in pack["reasons"].items()) or "none"
             lines.append(f"- `{pack['archive']}` · `{pack['family']}` — {reasons}")
     else:
-        lines += ["", "## Built research packs", "",
+        lines += ["## Built research packs", "",
                   "None. No (archive, family) pair satisfied the gate, so no converter was written and no "
                   "pack was built. Inventing one from a filename, a magic string or a shared header is "
                   "explicitly out of scope."]
@@ -278,7 +331,7 @@ def render(summary: dict) -> str:
         lines += ["", "- Missing:", ""]
         lines += [f"  - {item}" for item in row["missing"]]
         lines.append("")
-    return "\n".join(lines) + "\n"
+    return bound("\n".join(lines) + "\n")
 
 
 def main() -> int:

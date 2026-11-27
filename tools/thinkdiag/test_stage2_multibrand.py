@@ -273,6 +273,91 @@ class MainTest(unittest.TestCase):
             self.assertEqual(0, summary["built"])
             self.assertTrue(any("archive unavailable" in item for item in summary["evaluations"][0]["missing"]))
 
+class RenderTest(unittest.TestCase):
+    """The markdown is posted as a GitHub check-run summary, which is capped at 65535 bytes."""
+
+    def big_summary(self, archives: int = 72, families: int = 7) -> dict:
+        evaluations = []
+        for index in range(archives):
+            name = f"BRAND{index:03d}.zip"
+            for family in fe.FAMILY_KEYS[:families]:
+                row = candidate(archive=name, brand=name[:-4], family=family, verdict="NOT ESTABLISHED",
+                                parsed=0, attempted=11, wrapper="experimental",
+                                own_role_consumers=[], own_role_libraries=[])
+                allowed, satisfied, missing = s2.established(row)
+                evaluations.append({**row, "allowed": allowed, "satisfied": satisfied, "missing": missing})
+        return {"commit_sha": "a" * 7, "control": "108/108 parsed (PASS)", "measured": len(evaluations),
+                "allowed": 0, "built": 0, "app_packs_built": 0, "evaluations": evaluations,
+                "not_attempted": 0, "table": evaluations[:s2.MAX_TABLE_ROWS],
+                "table_rows": min(len(evaluations), s2.MAX_TABLE_ROWS), "packs": [],
+                "best_candidates": evaluations[:12]}
+
+    def test_a_full_corpus_report_fits_the_check_run_summary_limit(self):
+        summary = self.big_summary()
+        self.assertEqual(504, summary["measured"])
+        text = s2.render(summary)
+        self.assertLessEqual(len(text.encode("utf-8")), s2.MAX_SUMMARY_BYTES)
+        self.assertLessEqual(len(text.encode("utf-8")), 65535)
+
+    def test_every_measured_pair_is_accounted_for_in_the_markdown(self):
+        import re
+        summary = self.big_summary(archives=30)
+        text = s2.render(summary)
+        match = re.search(r"Accounted for: (\d+) pair\(s\) shown individually \+ (\d+) grouped = (\d+)", text)
+        self.assertIsNotNone(match, text[:400])
+        detail, grouped, total = (int(value) for value in match.groups())
+        self.assertEqual(summary["measured"], total)
+        self.assertEqual(summary["measured"], detail + grouped)
+        self.assertIn("= every pair measured", text)
+        self.assertEqual(summary["measured"], sum(int(row["pairs"]) for row in self.group_rows(text)))
+
+    @staticmethod
+    def group_rows(text: str) -> list[dict]:
+        rows = []
+        section = text.split("### Every other pair, grouped by its first missing requirement", 1)[1]
+        for line in section.splitlines():
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) == 4 and cells[2].isdigit():
+                rows.append({"verdict": cells[0], "label": cells[1], "pairs": cells[2],
+                             "archives": cells[3]})
+        return rows
+
+    def test_rejected_pairs_are_grouped_by_their_first_missing_requirement(self):
+        summary = self.big_summary(archives=2, families=3)
+        text = s2.render(summary)
+        rows = self.group_rows(text)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("wrapper", rows[0]["label"])
+        self.assertEqual("6", rows[0]["pairs"])
+        self.assertEqual("`BRAND000.zip`, `BRAND001.zip`", rows[0]["archives"])
+
+    def test_a_parsed_candidate_is_shown_individually_not_grouped(self):
+        summary = self.big_summary(archives=2, families=2)
+        summary["evaluations"][0].update(verdict="CANDIDATE", parsed=1, wrapper="established",
+                                         own_role_consumers=["GetSystemListData"])
+        text = s2.render(summary)
+        self.assertIn("| `BRAND000.zip` | `system-list-37` | CANDIDATE | 1 | established "
+                      "| GetSystemListData | REJECTED |", text)
+        self.assertIn("Accounted for: 1 pair(s) shown individually + 3 grouped = 4", text)
+
+    def test_bound_keeps_short_text_untouched_and_marks_truncated_text(self):
+        self.assertEqual("short\n", s2.bound("short\n", 1000))
+        long = "x" * 5000
+        cut = s2.bound(long, 800)
+        self.assertLessEqual(len(cut.encode("utf-8")), 800)
+        self.assertIn("Report truncated to fit the GitHub check-run summary limit", cut)
+        self.assertIn("stage2-multibrand-<sha>.json", cut)
+
+    def test_missing_label_shortens_runtime_reasons(self):
+        row = candidate()
+        row["missing"] = ["archive is not a published release asset that this run could reach: X.zip"]
+        label = s2.missing_label(row)
+        self.assertLessEqual(len(label), 48)
+        self.assertTrue(label.endswith("..."))
+        self.assertEqual("meanings", s2.missing_label({**row, "missing": ["meanings: no record"]}))
+        self.assertEqual("none", s2.missing_label(candidate()))
+
+
 
 if __name__ == "__main__":
     unittest.main()
