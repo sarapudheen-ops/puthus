@@ -1,5 +1,7 @@
 package com.bod3.app.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -58,6 +60,8 @@ fun ToyotaVehiclePacksScreen(
     // PackSystemStatusUi and runs over the selected vehicle's already-loaded descriptors only.
     var systemSearch by rememberSaveable(state.vehicle?.variantId) { mutableStateOf("") }
     var linkVerifiedOnly by rememberSaveable(state.vehicle?.variantId) { mutableStateOf(false) }
+    var systemPage by rememberSaveable(state.vehicle?.variantId, systemSearch, linkVerifiedOnly) { mutableStateOf(0) }
+    var category by rememberSaveable(state.system?.id) { mutableStateOf("") }
     val visibleSystems = PackSystemStatusUi.filter(state.vehicle?.systems ?: emptyList(), systemSearch, linkVerifiedOnly)
     Scaffold(topBar = {
         TopAppBar(title = { Text(when (state.view) { PackView.PICKER -> "Toyota vehicle packs"; PackView.SYSTEMS -> "Vehicle systems"; PackView.FEATURES -> state.system?.name ?: "System features" }) },
@@ -127,7 +131,14 @@ fun ToyotaVehiclePacksScreen(
                                 }
                             }
                         }
-                        items(visible, key = { it.id }) { system ->
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = { systemPage-- }, enabled = systemPage > 0) { Text("Previous") }
+                                Text("Page ${systemPage + 1} / ${maxOf(1, (visible.size + PackSystemStatusUi.SYSTEM_PAGE_SIZE - 1) / PackSystemStatusUi.SYSTEM_PAGE_SIZE)}")
+                                TextButton(onClick = { systemPage++ }, enabled = (systemPage + 1) * PackSystemStatusUi.SYSTEM_PAGE_SIZE < visible.size) { Text("Next") }
+                            }
+                        }
+                        items(PackSystemStatusUi.page(visible, systemPage), key = { it.id }) { system ->
                             SectionCard(system.name) {
                                 Text(PackSystemStatusUi.linkBadge(system.linkStatus, system.linkReasons),
                                     style = MaterialTheme.typography.labelMedium,
@@ -161,6 +172,8 @@ fun ToyotaVehiclePacksScreen(
                         val data = if (runtime?.identityKind == com.bod3.app.bringup.EcuIdentityKind.ECU_SERIAL) rawData else rawData.copy(actuators = emptyList(), coding = emptyList())
                         val choice = state.vehicle?.systems?.firstOrNull { it.id == system.id }
                         val actions = PackSystemStatusUi.executableActions(choice)
+                        val categories = choice?.let(PackSystemStatusUi::presentCategories).orEmpty()
+                        val selectedCategory = category.takeIf { it in categories } ?: categories.firstOrNull()
                         item { BringUpSection(bringUp, bringUpController, connected, onStartBringUp, writeBringUpReport, writeVerifiedSetups, onImportSetups) }
                         item {
                             SectionCard(system.name) {
@@ -190,7 +203,23 @@ fun ToyotaVehiclePacksScreen(
                                 Text("Source records: " + system.sourceRecords.joinToString(), style = MaterialTheme.typography.labelSmall)
                             }
                         }
-                        item {
+                        if (categories.isNotEmpty()) item {
+                            Column {
+                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    categories.forEach { key ->
+                                        FilterChip(selected = selectedCategory == key, onClick = { category = key }, label = { Text(when (key) {
+                                            "pids" -> "Live data"; "dtcs" -> "Fault codes"; "ecuInfo" -> "ECU information"
+                                            "actuators" -> "Active tests"; "coding" -> "Coding"; else -> "Special functions"
+                                        }) })
+                                    }
+                                }
+                                Text("$selectedCategory: ${choice?.categoryStatus?.get(selectedCategory) ?: "unknown"}", style = MaterialTheme.typography.bodySmall)
+                                if (choice?.categoryStatus?.get(selectedCategory) != "executable") {
+                                    system.reasons.forEach { Text(reason(it), style = MaterialTheme.typography.bodySmall) }
+                                }
+                            }
+                        }
+                        if (selectedCategory == "pids") item {
                             SectionCard("Live data") {
                                 Button(onClick = onLive, enabled = PackSystemAction.LIVE in actions && connected && verified && data.pids.isNotEmpty()) { Text("Select values, graph and record") }
                                 when {
@@ -200,7 +229,7 @@ fun ToyotaVehiclePacksScreen(
                                 }
                             }
                         }
-                        item {
+                        if (selectedCategory == "dtcs") item {
                             SectionCard("Fault codes") {
                                 val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadDtcs) == true
                                 OutlinedButton(onClick = onDiagnostics, enabled = PackSystemAction.FAULTS in actions && connected && available) { Text("Read fault codes") }
@@ -212,7 +241,7 @@ fun ToyotaVehiclePacksScreen(
                                 Text("Clearing requires a documented group and a separate confirmation. Freeze frames remain disabled without an exact record mapping.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        item {
+                        if (selectedCategory == "actuators") item {
                             SectionCard("Active tests") {
                                 Button(onClick = onTests, enabled = PackSystemAction.TESTS in actions && verified && data.actuators.isNotEmpty()) { Text("View this system's tests") }
                                 if (system.enabled && !verified) Text("Run the read-only ECU bring-up above on this connection to check available tests. Read-only restrictions still apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -220,7 +249,7 @@ fun ToyotaVehiclePacksScreen(
                                 Text("Execution still requires Expert mode, one-time confirmation and passing safety checks. Output-off cleanup and audit remain mandatory.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        item {
+                        if (selectedCategory == "coding") item {
                             SectionCard("Customize / Coding") {
                                 Button(onClick = onCoding, enabled = PackSystemAction.CODING in actions && verified && data.coding.isNotEmpty()) { Text("View this system's customizations") }
                                 if (system.enabled && !verified) Text("Run the read-only ECU bring-up above on this connection to check available customizations. Read-only restrictions still apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -228,7 +257,7 @@ fun ToyotaVehiclePacksScreen(
                                 Text("Read → backup → diff → one-time confirmation → write → read-back. Rollback and audit use the existing guarded coding engine.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        item {
+                        if (selectedCategory == "ecuInfo" || selectedCategory == "specialFunctions") item {
                             SectionCard("ECU information & special functions") {
                                 val available = verified && data.ecus.singleOrNull()?.let(EcuWorkbench::canReadIdentification) == true
                                 OutlinedButton(onClick = onDiagnostics, enabled = PackSystemAction.ECU_INFO in actions && connected && available) { Text("ECU information") }

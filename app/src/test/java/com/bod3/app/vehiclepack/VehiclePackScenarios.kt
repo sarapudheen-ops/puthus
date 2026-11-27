@@ -195,6 +195,35 @@ object VehiclePackScenarios {
         check(cache.listFiles()!!.sumOf { it.length() } <= budget && requests == 5)
     }
 
+    fun largeSystemFilteringAndPaging() {
+        val range = PackRange(11, 1, 1, "0".repeat(64))
+        val systems = (0 until 50_000).map { i ->
+            PackSystemChoice("id-$i", if (i % 7 == 0) "Engine $i" else "Other $i", false,
+                emptyList(), emptyMap(), range, linkStatus = if (i % 3 == 0) "proven" else "unknown",
+                linkReasons = emptyList(), categoryStatus = emptyMap())
+        }
+        val matches = PackSystemStatusUi.filter(systems, "engine", true)
+        val expected = systems.filter { it.name.contains("engine", ignoreCase = true) && it.linkStatus == "proven" }
+        check(matches == expected)
+        val pages = (0 until (matches.size + PackSystemStatusUi.SYSTEM_PAGE_SIZE - 1) / PackSystemStatusUi.SYSTEM_PAGE_SIZE)
+            .map { PackSystemStatusUi.page(matches, it) }
+        check(pages.all { it.size <= PackSystemStatusUi.SYSTEM_PAGE_SIZE })
+        check(pages.flatten() == expected)
+    }
+
+    fun cacheRetainsObjectInUseWhileEvictingOldest() = temporary { cache ->
+        val raw = "{\"id\":1}".toByteArray()
+        val data = packed(raw)
+        val range = PackRange(11, data.size, raw.size, sha256(data))
+        val current = File(cache, range.sha256 + ".gz").also { it.writeBytes(data) }
+        val oldest = File(cache, "a".repeat(64) + ".gz")
+        RandomAccessFile(oldest, "rw").use { it.setLength(PackRange.MAX_PACKED_BYTES.toLong()) }
+        oldest.setLastModified(1); current.setLastModified(2)
+        val store = PackObjectStore(cache, PackRangeSource { _, _, _, _ -> error("Unexpected network") }, PackRange.MAX_PACKED_BYTES.toLong())
+        check(store.load("toyota-${"0".repeat(64)}.bin", 11L + data.size, range)["id"] == 1.0)
+        check(current.isFile && !oldest.exists())
+    }
+
     fun rangeHttpContract() {
         val range = PackRange(100, 20, 30, "0".repeat(64))
         PackHttpSource.checkResponse(206, "bytes 100-119/1000", 20, null, 1000, range)

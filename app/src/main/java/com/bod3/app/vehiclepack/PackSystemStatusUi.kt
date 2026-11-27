@@ -35,6 +35,20 @@ object PackSystemStatusUi {
         }
     }
 
+    const val SYSTEM_PAGE_SIZE = 100
+
+    /** Slice only after filtering the full selected-vehicle list. */
+    fun page(systems: List<PackSystemChoice>, page: Int): List<PackSystemChoice> {
+        val start = (page.coerceAtLeast(0).toLong() * SYSTEM_PAGE_SIZE).coerceAtMost(systems.size.toLong()).toInt()
+        return systems.subList(start, (start + SYSTEM_PAGE_SIZE).coerceAtMost(systems.size))
+    }
+
+    /** Only categories with a source count or an executable definition are presented as tabs. */
+    fun presentCategories(choice: PackSystemChoice): List<String> = CATEGORY_ORDER.filter { category ->
+        val count = choice.counts[if (category == "actuators") "tests" else category]
+        choice.categoryStatus[category] == "executable" || (count?.converted ?: 0) > 0 || (count?.unresolved ?: 0) > 0
+    }
+
     /** Executable actions this pinned descriptor may ever offer. Link status is checked first: an
      *  unproven link yields an empty set even when a category claims executable, so the detail view
      *  can never enable an executable action for it. */
