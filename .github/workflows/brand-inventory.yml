@@ -185,3 +185,44 @@ jobs:
         run: |
           cat .local/inventory6/clusters.log
           exit 1
+
+  stage1-coverage:
+    name: Multi-brand Stage 1 coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install ELF reader
+        run: python -m pip install pyelftools==0.32
+      - name: Test Stage 1 coverage
+        run: python -m unittest discover -s tools/inventory -p 'test_stage1_coverage.py' -v
+      - name: Run exhaustive Stage 1 coverage
+        run: |
+          mkdir -p .local/stage1-coverage
+          python tools/inventory/stage1_coverage.py \
+            --repo "$GH_REPO" \
+            --commit-sha "$GITHUB_SHA" \
+            --output-json ".local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.json" \
+            --output-md ".local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.md"
+      - name: Publish Stage 1 coverage reports
+        run: |
+          test -s ".local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.md"
+          test -s ".local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.json"
+          gh release upload ci-reports-v1 \
+            ".local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.md" \
+            ".local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.json" \
+            --clobber
+          gh api --method POST "repos/$GH_REPO/check-runs" \
+            -f name='Multi-brand Stage 1 coverage' \
+            -f "head_sha=$GITHUB_SHA" \
+            -f status=completed \
+            -f conclusion=success \
+            -f 'output[title]=Multi-brand Stage 1 coverage' \
+            -F "output[summary]=@.local/stage1-coverage/stage1-coverage-${GITHUB_SHA}.md"
+
