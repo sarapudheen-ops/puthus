@@ -205,10 +205,10 @@ fun ToyotaVehiclePacksScreen(
                         }
                         if (categories.isNotEmpty()) item {
                             Column {
-                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(Modifier.testTag("categoryTabs").horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     categories.forEach { key ->
-                                        FilterChip(selected = selectedCategory == key, onClick = { category = key }, label = { Text(when (key) {
-                                            "pids" -> "Live data"; "dtcs" -> "Fault codes"; "ecuInfo" -> "ECU information"
+                                        FilterChip(selected = selectedCategory == key, onClick = { category = key }, modifier = Modifier.testTag("category-$key"), label = { Text(when (key) {
+                                            "pids" -> "Live data"; "dtcs" -> "Fault codes"; "ecuInfo" -> "ECU info"
                                             "actuators" -> "Active tests"; "coding" -> "Coding"; else -> "Special functions"
                                         }) })
                                     }

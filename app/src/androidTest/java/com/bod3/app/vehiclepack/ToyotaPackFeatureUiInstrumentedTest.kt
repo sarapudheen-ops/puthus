@@ -5,10 +5,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -70,7 +73,12 @@ class ToyotaPackFeatureUiInstrumentedTest {
                 }
             }
             fun scroll(text: String) = rule.onNodeWithTag("toyotaPackContent").performScrollToNode(hasText(text))
-            fun gate(button: String, prompt: String, notConverted: String) {
+            fun selectTab(tab: String) {
+                rule.onNodeWithTag("toyotaPackContent").performScrollToNode(hasTestTag("categoryTabs"))
+                rule.onNodeWithTag("category-$tab").performScrollTo().performClick()
+            }
+            fun gate(tab: String, button: String, prompt: String, notConverted: String) {
+                selectTab(tab)
                 scroll(prompt)
                 rule.onNodeWithText(prompt).assertExists()
                 rule.onNodeWithText(notConverted, substring = true).assertDoesNotExist()
@@ -79,22 +87,22 @@ class ToyotaPackFeatureUiInstrumentedTest {
             scroll("Start is disabled: enter the required vehicle instance above.")
             rule.onNodeWithText("Unique vehicle instance (garage label or VIN) · required").assertExists()
             rule.onNodeWithText("Try ranked read-only candidates").assertIsNotEnabled()
-            gate("Select values, graph and record", "Run the read-only ECU bring-up above on this connection to unlock live data.", "No executable PID request")
-            gate("Read fault codes", "Run the read-only ECU bring-up above on this connection to unlock fault codes.", "have not been converted")
-            gate("View this system's tests", "Run the read-only ECU bring-up above on this connection to check available tests. Read-only restrictions still apply.", "Start/stop/status and safety mappings remain unresolved")
-            gate("View this system's customizations", "Run the read-only ECU bring-up above on this connection to check available customizations. Read-only restrictions still apply.", "Read/write identifiers and value maps remain unresolved")
-            gate("ECU information", "Run the read-only ECU bring-up above on this connection to unlock ECU information.", "have not been converted")
+            gate("pids", "Select values, graph and record", "Run the read-only ECU bring-up above on this connection to unlock live data.", "No executable PID request")
+            gate("dtcs", "Read fault codes", "Run the read-only ECU bring-up above on this connection to unlock fault codes.", "have not been converted")
+            gate("actuators", "View this system's tests", "Run the read-only ECU bring-up above on this connection to check available tests. Read-only restrictions still apply.", "Start/stop/status and safety mappings remain unresolved")
+            gate("coding", "View this system's customizations", "Run the read-only ECU bring-up above on this connection to check available customizations. Read-only restrictions still apply.", "Read/write identifiers and value maps remain unresolved")
+            gate("ecuInfo", "ECU information", "Run the read-only ECU bring-up above on this connection to unlock ECU information.", "have not been converted")
 
             // Only UI state is simulated; no proof is persisted and no ECU request is made.
             val attempt = BringUpAttempt(candidate.id, candidate.fingerprint, 1, 2, AttemptOutcome.WORKING, "Simulated UI state")
             val report = BringUpReport(BringUpScope(listOf("a", "b", "c", "d"), system.id, "UI fixture"),
                 1, 2, BringUpOutcome.WORKING, listOf(candidate), listOf(attempt), emptyList(), true)
             rule.runOnIdle { bringUp.value = BringUpState(vehicleInstance = "UI fixture", candidates = listOf(candidate), report = report, verifiedHere = true) }
-            for (button in listOf("Select values, graph and record", "Read fault codes", "ECU information")) {
-                scroll(button); rule.onNodeWithText(button).assertIsEnabled()
+            for ((tab, button) in listOf("pids" to "Select values, graph and record", "dtcs" to "Read fault codes", "ecuInfo" to "ECU information")) {
+                selectTab(tab); scroll(button); rule.onNodeWithText(button).assertIsEnabled()
             }
-            for (button in listOf("View this system's tests", "View this system's customizations")) {
-                scroll(button); rule.onNodeWithText(button).assertIsNotEnabled()
+            for ((tab, button) in listOf("actuators" to "View this system's tests", "coding" to "View this system's customizations")) {
+                selectTab(tab); scroll(button); rule.onNodeWithText(button).assertIsNotEnabled()
             }
             Log.i("ToyotaPackUiEvidence", "2007 UI: unverified bring-up prompts shown; unconverted claims absent; simulated verified read buttons enabled; read-only write buttons disabled")
         } finally {
