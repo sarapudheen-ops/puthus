@@ -27,10 +27,14 @@ if str(THINKDIAG) not in sys.path:
 import brand_inventory as bi  # noqa: E402
 import toyota_control as tc  # noqa: E402
 from analyze_toyota import native_info  # noqa: E402
+from decode_toyota import elf_bytes  # noqa: E402
 from inspect_pack import signatures  # noqa: E402
 from yzjm import decode_yzjm  # noqa: E402
 
 YZJM_HEAD = b"\x05\x00YZJM\0"
+# tools/thinkdiag/decode_toyota.py:39 reads the format table from this VA.
+TABLE_VA = 0xF88C
+TABLE_SIZE = 32
 ELF_HEAD = b"\x7fELF"
 ZIP_HEAD = b"PK\x03\x04"
 EXPECTED_OTHER_BRANDS = 72
@@ -77,6 +81,29 @@ def magic_description(head: bytes) -> str:
     return "unknown/binary"
 
 
+def own_format_table(path: Path) -> tuple[bytes | None, str]:
+    """Read the 32-byte YZJM format table from this archive's own libDEVICEID.so.
+
+    ``decode_yzjm`` requires the caller to supply that table; it has no default.
+    Each archive is decoded with the table shipped inside *that* archive, never
+    with Toyota's, so a successful decode is attributable to the brand's own
+    native library rather than to a borrowed key.
+    """
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            candidates = [i for i in zf.infolist() if not i.is_dir()
+                          and PurePosixPath(i.filename).name == "libDEVICEID.so"]
+            if len(candidates) != 1:
+                return None, f"not applicable: {len(candidates)} libDEVICEID.so candidate(s)"
+            data = zf.read(candidates[0])
+    except (zipfile.BadZipFile, zlib.error, RuntimeError, OSError) as exc:
+        return None, f"not applicable: libDEVICEID.so unreadable ({type(exc).__name__})"
+    try:
+        return elf_bytes(data, TABLE_VA, TABLE_SIZE), "own libDEVICEID.so"
+    except Exception as exc:  # pyelftools raises several unrelated types here.
+        return None, f"not applicable: format table unavailable ({type(exc).__name__})"
+
+
 def safe_member_path(name: str) -> str:
     norm = name.replace("\\", "/").lstrip("/")
     parts = [p for p in norm.split("/") if p not in ("", ".")]
@@ -104,6 +131,7 @@ def _walk_zip_stream(
     skipped: list[dict],
     run_parsers: bool,
     parser_stats: dict,
+    table: bytes | None,
 ) -> None:
     if depth > MAX_NESTING_DEPTH:
         skipped.append({"path": prefix, "reason": f"max nesting depth {MAX_NESTING_DEPTH} exceeded"})
@@ -168,6 +196,7 @@ def _walk_zip_stream(
                             skipped,
                             run_parsers,
                             parser_stats,
+                            table,
                         )
                 except (zipfile.BadZipFile, zlib.error, RuntimeError, OSError, MemoryError) as exc:
                     skipped.append({"path": full_path, "reason": f"nested zip error: {type(exc).__name__}: {exc}"})
@@ -189,34 +218,42 @@ def _walk_zip_stream(
             continue
 
         if head.startswith(ELF_HEAD) or ext == ".so":
+            # native_info takes (bytes, name); it was previously handed a Path,
+            # so every ELF input was counted as rejected.
             parser_stats["elf_inputs"] += 1
             try:
-                with tempfile.NamedTemporaryFile(suffix=".so") as tmp:
-                    tmp.write(raw)
-                    tmp.flush()
-                    native_info(Path(tmp.name))
+                native_info(raw, rel_path)
                 parser_stats["elf_accepted"] += 1
-            except Exception:
+            except Exception as exc:
                 parser_stats["elf_rejected"] += 1
+                parser_stats[f"elf_error:{type(exc).__name__}"] += 1
             continue
 
         decoded = raw
         if head.startswith(YZJM_HEAD):
             parser_stats["yzjm_inputs"] += 1
+            if table is None:
+                parser_stats["yzjm_skipped_no_table"] += 1
+                continue
             try:
-                decoded = decode_yzjm(raw)
+                decoded = decode_yzjm(raw, table).payload
                 parser_stats["yzjm_accepted"] += 1
-            except Exception:
+            except Exception as exc:
                 parser_stats["yzjm_rejected"] += 1
+                parser_stats[f"yzjm_error:{type(exc).__name__}"] += 1
                 continue
 
+        # tc.eligible/tc.reader are keyed to Toyota FILENAMES. A hit means the
+        # bytes happened to satisfy a Toyota container reader for a Toyota-shaped
+        # name; it is structural acceptance only and never brand compatibility.
         if tc.eligible(full_path):
-            parser_stats["toyota_struct_inputs"] += 1
+            parser_stats["toyota_name_keyed_inputs"] += 1
             try:
                 tc.reader(full_path, decoded)
-                parser_stats["toyota_struct_accepted"] += 1
-            except Exception:
-                parser_stats["toyota_struct_rejected"] += 1
+                parser_stats["toyota_name_keyed_accepted"] += 1
+            except Exception as exc:
+                parser_stats["toyota_name_keyed_rejected"] += 1
+                parser_stats[f"toyota_name_keyed_error:{type(exc).__name__}"] += 1
 
 
 def scan_archive(path: Path, archive_name: str, expected_bytes: int | None, run_parsers: bool) -> dict:
@@ -226,10 +263,12 @@ def scan_archive(path: Path, archive_name: str, expected_bytes: int | None, run_
     parser_stats = Counter()
     status = "complete"
     error = None
+    table, table_provenance = own_format_table(path)
+    parser_stats["format_table"] = 1 if table is not None else 0
 
     try:
         with zipfile.ZipFile(path, "r") as zf:
-            _walk_zip_stream(zf, archive_name, "", 0, members, skipped, run_parsers, parser_stats)
+            _walk_zip_stream(zf, archive_name, "", 0, members, skipped, run_parsers, parser_stats, table)
     except (zipfile.BadZipFile, OSError, EOFError) as exc:
         status = "unreadable"
         error = f"{type(exc).__name__}: {exc}"
@@ -248,6 +287,7 @@ def scan_archive(path: Path, archive_name: str, expected_bytes: int | None, run_
     is_toyota = archive_name == "TOYOTA.zip"
     return {
         "archive": archive_name,
+        "format_table_provenance": table_provenance,
         "expected_bytes": expected_bytes,
         "actual_bytes": actual_bytes,
         "size_matches": (expected_bytes is None or expected_bytes == actual_bytes),
@@ -261,8 +301,10 @@ def scan_archive(path: Path, archive_name: str, expected_bytes: int | None, run_
         "parser_stats": dict(parser_stats),
         "statuses": {
             "source_enumerated": "DATA" if status == "complete" else "NOT ESTABLISHED",
-            "parser_output_produced": "DATA" if (parser_stats.get("yzjm_accepted", 0) > 0 or parser_stats.get("elf_accepted", 0) > 0 or parser_stats.get("toyota_struct_accepted", 0) > 0) else "NOT ESTABLISHED",
-            "rows_structurally_validated": "DATA" if (is_toyota and parser_stats.get("toyota_struct_accepted", 0) > 0) else "NOT ESTABLISHED",
+            "parser_output_produced": "DATA" if (parser_stats.get("yzjm_accepted", 0) > 0 or parser_stats.get("elf_accepted", 0) > 0 or parser_stats.get("toyota_name_keyed_accepted", 0) > 0) else "NOT ESTABLISHED",
+            "rows_structurally_validated": "DATA" if (is_toyota and parser_stats.get("toyota_name_keyed_accepted", 0) > 0) else "NOT ESTABLISHED",
+            # A Toyota-shaped filename plus a structural parse is not compatibility.
+            "brand_family_established": "NOT ESTABLISHED",
             "app_pack_compatible": "CODE" if is_toyota else "NOT ESTABLISHED",
             "app_consumes": "CODE" if is_toyota else "NOT ESTABLISHED",
             "vehicle_tested": "NOT ESTABLISHED",
@@ -316,15 +358,26 @@ def render_markdown(report: dict) -> str:
         "",
         "## Per-Brand Coverage Matrix",
         "",
-        "| Archive | Status | Bytes | SHA-256 (prefix) | Members | Duplicates | Skipped | Enumerated | Parser Output | Validated | App Pack | App Consumes | Vehicle Tested |",
-        "| --- | --- | ---: | --- | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- |",
+        "Format table: read from each archive's own `libDEVICEID.so`; `decode_yzjm` has no default table. "
+        "YZJM decoded counts members whose payload the decoder returned; YZJM has no integrity check, so a "
+        "count is not proof of a correct key. `Name-keyed parse` counts decoded members whose *Toyota-shaped "
+        "filename* has a converter reader and whose bytes that reader accepted. That is structural acceptance "
+        "of a borrowed name, never brand compatibility, and `Family established` stays NOT ESTABLISHED for "
+        "every non-Toyota archive until Inventory-7 records record structure *and* an own-role native consumer.",
+        "",
+        "| Archive | Status | Bytes | SHA-256 (prefix) | Members | Duplicates | Skipped | Format table | YZJM in / decoded | Name-keyed in / parsed | Enumerated | Parser Output | Validated | Family | App Pack | App Consumes | Vehicle Tested |",
+        "| --- | --- | ---: | --- | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for b in report["brands"]:
         st = b["statuses"]
+        ps = b.get("parser_stats", {})
         lines.append(
             f"| `{b['archive']}` | {b['status']} | {b['actual_bytes']} | `{b['sha256'][:12]}` | "
             f"{b['member_count']} | {b['duplicate_member_hashes']} | {b['skipped_count']} | "
+            f"{ps.get('format_table', 0)} | {ps.get('yzjm_inputs', 0)} / {ps.get('yzjm_accepted', 0)} | "
+            f"{ps.get('toyota_name_keyed_inputs', 0)} / {ps.get('toyota_name_keyed_accepted', 0)} | "
             f"{st['source_enumerated']} | {st['parser_output_produced']} | {st['rows_structurally_validated']} | "
+            f"{st['brand_family_established']} | "
             f"{st['app_pack_compatible']} | {st['app_consumes']} | {st['vehicle_tested']} |"
         )
     return "\n".join(lines) + "\n"

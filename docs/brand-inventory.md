@@ -915,3 +915,79 @@ Jaccard single-linkage connected components over BIN stem sets; Toyota is includ
 
 - Representative profiles complete: 56/56.
 <!-- INVENTORY6 END -->
+
+## Inventory-7: decoded data-family evidence
+
+`tools/inventory/family_evidence.py`, published as the `Inventory-7 family evidence` check and as `inventory7.md` / `inventory7.json` in `ci-reports-v1`. Read-only: it writes no pack, no converter and no app change.
+
+### Why this stage was added
+
+Stage 1 (`tools/inventory/stage1_coverage.py:207`) and Stage 2 (`tools/thinkdiag/stage2_multibrand.py:95`) called `yzjm.decode_yzjm` with **one** argument. The decoder's signature is `decode_yzjm(data, table)` — the 32-byte format table is supplied by the caller and has no default (`tools/thinkdiag/yzjm.py:41`). Every decode therefore raised `TypeError`, so:
+
+- Stage 1 reported `Parser Output: NOT ESTABLISHED` for **all 73 archives including `TOYOTA.zip`**, while the independent Inventory-3 run on the same corpora decoded 75 Toyota BINs and the Toyota control passed 108/108. The two results contradicted each other, and Stage 1 was the wrong one.
+- Stage 2 reported `Qualifying brands: 0`, because `rank_candidates` required `yzjm_accepted > 0`.
+
+`Qualifying brands: 0` was a **false negative produced by a call bug**, not evidence that no non-Toyota family exists. Both stages are fixed: each archive is now decoded with the table read from *that archive's own* `libDEVICEID.so` at the same virtual address Toyota's reader uses (`tools/thinkdiag/decode_toyota.py:39`), and Stage 1 also passes `native_info` the `(bytes, name)` it actually requires instead of a `Path`, which had made every ELF input count as rejected.
+
+### What Inventory-7 measures
+
+For each family it reports four independent things, and a verdict needs all of the first three:
+
+| evidence | how it is obtained | why it is not a guess |
+| --- | --- | --- |
+| record structure | an existing `tools/thinkdiag` reader is run over the decoded bytes | the readers are the ones the Toyota converter uses; nothing new is inferred |
+| wrapper confidence | the archive's own `libDEVICEID.so` compared byte-for-byte with Toyota's | `established` only when identical, so the table *and the VA it is read from* are the ones the Toyota native reader uses; otherwise `experimental` |
+| native consumer | the archive's own libraries parsed for exported functions, intersected with the consumers this repo already cites | names come from `sweep_toyota.FOCUSED_READERS`, read with `ast`; `_consumers` raises if a name is not already cited for that exact library |
+| field meanings | **not measured** | no brand's own reader has been disassembled, so no decoded field may be called an address, service, PID or timing |
+
+The strongest verdict the tool can emit is `CANDIDATE`, which means structure **and** an own-role-library consumer are present. `CANDIDATE` never means field meanings are known, and Stage 2 refuses to build anything on it.
+
+Deliberately excluded as evidence:
+
+- **A magic string.** Decoded ASTONMARTIN bytes begin `02 09 00 54 43 4f 44 45` — a length-9 NUL-terminated string whose first five characters are ASCII `TCODE`. That is a string prefix, not a DTC table, and `TCODE` is not interpreted anywhere. Decoded AUDI/SEAT/SKODA/VW bytes contain the ASCII run `AUDI`; that is a brand label, not a format.
+- **A shared header.** `1801000000810100` is the first 8 decoded bytes of one file in Toyota and in 15 other archives (Inventory-4). Read as two LE32s it is `(280, 98560)`, the shape of a `sentinel_index` row — but Inventory-4 also shows the generic `typed_table` reader parsed **0 of 75** Toyota samples and **0** of every brand's samples, so a shared header alone established nothing.
+- **A Toyota-shaped filename.** Inventory-5 shows no non-Toyota brand ships `ECU_DATA`, `FUNCDATA`, `SYSLIST` or `SYSTEMENTER`, so the Toyota pipeline cannot be reused; and `toyota_control.eligible`/`reader` are keyed to filenames, so a brand archive shipping a file called `MENU.BIN` would have been called compatible by Stage 2 whenever its bytes merely failed to raise. Stage 1 now labels those counts `toyota_name_keyed_*` and keeps `Family` at `NOT ESTABLISHED`.
+- **SQLite.** PR #48 added `tools/thinkdiag/sqlite_reader.py` without any observation that a brand archive contains a SQLite database, and it is wired into no workflow. Inventory-7 measures the `SQLite format 3\0` magic across every enumerated member of every archive regardless of extension, so the assumption is replaced by a count.
+
+### Stage 2 gate
+
+`tools/thinkdiag/stage2_multibrand.py:established` now requires all four of **wrapper**, **structure**, **consumer** and **meanings**. The first three are Inventory-7's `CANDIDATE`; the fourth is `MEANING_EVIDENCE`, a registry keyed by `(archive, family)` that must contain a disassembly citation for the brand's own reader. It is empty, so Stage 2 rejects every pair and reports each one's missing evidence instead of guessing. A pack built by this path is a research container marked `appPackCompatible: false`; it is never an app pack.
+
+### App integration
+
+Not established, and not attempted. `VehiclePackIndex` pins one source hash — `SOURCE_SHA256 = 26c77a39…` is `TOYOTA.zip` — and one format, `bod3-toyota-vehicle-index` (`app/src/main/java/com/bod3/app/vehiclepack/VehiclePackCatalog.kt:15-43`). A converted vehicle must supply a four-level name-only catalog, per-system counts over exactly `{pids, dtcs, tests, coding, specialFunctions, ecuInfo}`, `CatalogData` with provenance, and `sourceRecords` (`PackBundle.kt`, `VehiclePackCatalog.kt:vehicle`). None of that can be produced for a brand whose field meanings are unknown, so no index, container, hash pin or screen was added and the APK is unchanged.
+
+### Measured result
+
+From the first complete `Inventory-7 family evidence` run and the corrected `Multi-brand Stage 1 coverage` run on the same corpora. The summary block below is checked against the current SHA's report by `tools/inventory/verify_family_document.py`, wired into the `Inventory-7 family evidence` job.
+
+**Stage 1, corrected.** All 73 archives yielded a 32-byte format table from their own `libDEVICEID.so` (`Format table: 1` on every row), and every enumerated YZJM member decoded — `YZJM in / decoded` is equal in all 73 rows. `TOYOTA.zip` moved from `NOT ESTABLISHED` to `Parser Output: DATA`, `Validated: DATA`, `App Pack: CODE`, `App Consumes: CODE`: 1410/1410 decoded and 1315/1315 name-keyed parses. Of the other 72 archives, 67 had exactly **one** member whose filename a Toyota converter reader accepts and **0** of those parsed; the remaining 5 had none. A Toyota-shaped filename therefore buys nothing: the borrowed readers reject non-Toyota bytes.
+
+**Inventory-7.** 504 (archive, family) pairs exist — 72 non-Toyota archives × 7 families — and the report lists the 469 where a sampled decoded member was actually run through a reader (462 of them non-Toyota); the JSON keeps all of them. 34 of the 73 archives have a byte-identical `libDEVICEID.so`, so their wrapper is `established`; the other 39 decode experimentally. 1584 decoded non-Toyota members were sampled. Only 30 non-Toyota pairs parsed anything at all — 28 `keyed-index-8` and 2 `system-list-37` — and `keyed-index-8` is the most permissive family here (`sentinel_index` asks only for a leading LE32 key and whole 8-byte rows), so a parse there is weak structure evidence by itself.
+
+Exactly two non-Toyota pairs have an own-role consumer, both in `DAIHATSU.zip`, whose own `libDAIHATSU_FILE.so` exports `GetSystemListData` and `GetVehicleInfoData` — the functions this repo already cites for `system_lists` (`tools/thinkdiag/toyota_structure.py:242-247`). One of them parsed, giving the single `CANDIDATE` of the run:
+
+| archive | family | parsed / sampled | member | own-role consumers | still missing |
+| --- | --- | ---: | --- | --- | --- |
+| `DAIHATSU.zip` | `keyed-index-8` | 1 / 2 | `DAIHATSU_SYS_LIST.BIN` | `GetSystemListData`, `GetVehicleInfoData` | field meanings |
+
+A same-role library is not enough on its own: `MAZDA.zip` ships `libMAZDA_FILE.so` and parsed `system-list-37` (1/10) and `keyed-index-8` (2/10), but that library exports none of the cited consumers, so its verdict stays `NOT ESTABLISHED`. The brands with the largest native-export overlap in Inventory-2 — MAZDA (8 discriminating exports) and OPEL (6) — export `GetDsValue`, `SetCan15765`, `ResultCalcFromScript` and similar rather than the system-list readers, and OPEL parsed no family at all. `AUDI`, `VW`, `HYUNDAI`, `KIA` and `NISSAN` parsed none either.
+
+**SQLite: 0.** Across all 73 archives and every enumerated member of any extension, no stored bytes begin with `SQLite format 3\0`, in the stored or the decoded sample. PR #48's `tools/thinkdiag/sqlite_reader.py` therefore has no corpus to read, which is why it stays unwired instead of being presented as an integration path.
+
+**Duplication, not format.** The most-shared decoded payload is `OBD2_SYS_DATA.BIN`: one blob (`8f1507fe…`) is byte-identical in 15 archives including `TOYOTA.zip`, and four further blobs cover 8, 8, 5 and 5 archives. Shared bytes across brands is duplication evidence and says nothing about record layout — it is reported in its own section and never feeds a verdict.
+
+**Stage 2.** All 504 non-Toyota pairs were judged against wrapper + structure + consumer + meanings; **0 passed**, so 0 research packs and 0 app packs were built. 254 pairs fail first at `wrapper` and 220 at `structure`; of the 30 that parsed anything, 19 fail first at `wrapper`, 10 at `consumer`, and one — `DAIHATSU.zip · keyed-index-8` — fails on `meanings` alone. That pair is reported as the best candidate with its single missing requirement named, and no converter, record layout or field meaning was invented for it. The report shows those 30 pairs individually and the other 474 grouped by their first missing requirement, with a closing line proving detail + grouped = 504, so the markdown stays inside the 65535-byte Checks API limit without dropping a pair.
+
+<!-- INVENTORY7 START -->
+## Documentation summary
+
+- Archives probed: 73; not reached: 0.
+- Toyota control: PASS (108/108 parsed; 276 classifier agreement(s), 0 disagreement(s)).
+- Archives with an established wrapper: 34 of 73.
+- Decoded YZJM members in sampled non-Toyota archives: 1584.
+- SQLite-magic members observed in brand archives: 0 (plus 0 decoded sample(s)); measured, not assumed.
+- Candidate (archive, family) pairs: 1.
+- Families with established field meanings outside Toyota: 0.
+- Converters, packs or app changes produced by this tool: 0.
+<!-- INVENTORY7 END -->
