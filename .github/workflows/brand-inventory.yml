@@ -212,6 +212,11 @@ jobs:
           mkdir -p .local/inventory7
           set -o pipefail
           python tools/inventory/family_evidence.py --output .local/inventory7/report --max-seconds 1900 2>&1 | tee .local/inventory7/families.log
+      - name: Verify documented summary
+        id: docverify
+        if: always() && steps.families.outcome == 'success' && hashFiles('.local/inventory7/report/inventory7.md') != ''
+        continue-on-error: true
+        run: python tools/inventory/verify_family_document.py .local/inventory7/report
       - name: Publish Inventory-7 reports
         if: always() && steps.families.outcome != 'skipped' && hashFiles('.local/inventory7/report/inventory7.md') != ''
         run: |
@@ -222,23 +227,28 @@ jobs:
         if: always() && steps.families.outcome != 'skipped' && hashFiles('.local/inventory7/report/parts.json') != ''
         env:
           OUTCOME: ${{ steps.families.outcome }}
+          DOCVERIFY: ${{ steps.docverify.outcome }}
         run: |
           python - <<'PY'
           import json, os, subprocess
           from pathlib import Path
           report = Path('.local/inventory7/report')
           state = json.loads((report / 'inventory7.json').read_text())
-          conclusion = 'success' if os.environ['OUTCOME'] == 'success' and state['control']['passed'] and not state['pending'] and not state.get('failed') else 'failure'
+          conclusion = 'success' if os.environ['OUTCOME'] == 'success' and os.environ['DOCVERIFY'] == 'success' and state['control']['passed'] and not state['pending'] and not state.get('failed') else 'failure'
           for part in json.loads((report / 'parts.json').read_text()):
               subprocess.run(['gh', 'api', '--method', 'POST', f"repos/{os.environ['GH_REPO']}/check-runs",
                               '-f', f"name={part['name']}", '-f', f"head_sha={os.environ['GITHUB_SHA']}",
                               '-f', 'status=completed', '-f', f'conclusion={conclusion}',
                               '-f', f"output[title]={part['name']}", '-F', f"output[summary]=@{part['file']}"], check=True)
           PY
-      - name: Fail if the family probe failed
-        if: always() && steps.families.outcome == 'failure'
+      - name: Fail if the family probe or its documented summary failed
+        if: always() && (steps.families.outcome == 'failure' || steps.docverify.outcome == 'failure')
+        env:
+          FAMILIES: ${{ steps.families.outcome }}
+          DOCVERIFY: ${{ steps.docverify.outcome }}
         run: |
-          cat .local/inventory7/families.log
+          if [ "$FAMILIES" = failure ]; then cat .local/inventory7/families.log; fi
+          if [ "$DOCVERIFY" = failure ]; then echo "The committed Inventory-7 documentation summary does not match this SHA's report."; fi
           exit 1
 
   stage1-coverage:

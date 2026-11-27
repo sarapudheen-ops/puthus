@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -288,27 +290,32 @@ class ControlTest(unittest.TestCase):
         self.assertIn("no sampled Toyota member reached", result["reason"])
 
 
+def synthetic_state() -> dict:
+    """A one-archive Inventory-7 state produced by the real probe and renderer."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = build_archive(Path(tmp) / "SYNTH.zip", "SYNTH",
+                             {"SYS_DATA.BIN": yzjm(system_list_payload())},
+                             {"libDEVICEID.so": b"elf", "libSYNTH_FILE.so": b"elf"})
+        with patch.object(fe, "elf_bytes", return_value=TABLE), \
+                patch.object(fe, "native_info",
+                             return_value={"functions": [{"name": "GetSystemListData", "defined": True}]}):
+            entry = fe.probe(path, "SYNTH", "SYNTH.zip", REFERENCE, {"binsInspected": 0})
+    state = {"format": fe.FORMAT, "formatVersion": fe.FORMAT_VERSION, "generatedUtc": fe.utc_now(),
+             "headSha": "abc123", "label": fe.LABEL, "brands": [entry], "pending": [],
+             "failed": False, "budget": {}, "summary": {},
+             "control": fe.control_check(
+                 REFERENCE,
+                 {"yzjmDecoded": 1, "nameKeyedCrossCheck": [
+                     {"member": "SYSLIST_EU.BIN", "nameKeyedReader": "system_lists",
+                      "families": ["keyed-index-8", "system-list-37"]}]},
+                 {"passed": True, "parsed": 68, "sample": 68, "errors": {}})}
+    fe.summarise(state)
+    return state
+
+
 class ReportTest(unittest.TestCase):
     def _state(self) -> dict:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = build_archive(Path(tmp) / "SYNTH.zip", "SYNTH",
-                                 {"SYS_DATA.BIN": yzjm(system_list_payload())},
-                                 {"libDEVICEID.so": b"elf", "libSYNTH_FILE.so": b"elf"})
-            with patch.object(fe, "elf_bytes", return_value=TABLE), \
-                    patch.object(fe, "native_info",
-                                 return_value={"functions": [{"name": "GetSystemListData", "defined": True}]}):
-                entry = fe.probe(path, "SYNTH", "SYNTH.zip", REFERENCE, {"binsInspected": 0})
-        state = {"format": fe.FORMAT, "formatVersion": fe.FORMAT_VERSION, "generatedUtc": fe.utc_now(),
-                 "headSha": "abc123", "label": fe.LABEL, "brands": [entry], "pending": [],
-                 "failed": False, "budget": {}, "summary": {},
-                 "control": fe.control_check(
-                     REFERENCE,
-                     {"yzjmDecoded": 1, "nameKeyedCrossCheck": [
-                         {"member": "SYSLIST_EU.BIN", "nameKeyedReader": "system_lists",
-                          "families": ["keyed-index-8", "system-list-37"]}]},
-                     {"passed": True, "parsed": 68, "sample": 68, "errors": {}})}
-        fe.summarise(state)
-        return state
+        return synthetic_state()
 
     def test_markdown_and_emit_are_serialisable_and_bounded(self):
         state = self._state()
@@ -343,6 +350,106 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(2, state["summary"]["establishedWrappers"])
         self.assertEqual(2, state["summary"]["candidates"])
         self.assertIn("TOYOTA.zip is the reference", fe.markdown(state))
+
+class VerifyFamilyDocumentTest(unittest.TestCase):
+    """`verify_family_document.py` is wired into the Inventory-7 CI job."""
+
+    SCRIPT = Path(fe.__file__).resolve().parent / "verify_family_document.py"
+    REPO = Path(fe.__file__).resolve().parents[2]
+
+    def _layout(self, root: Path, state: dict, block: str | None = None) -> Path:
+        report = root / "report"
+        report.mkdir()
+        text = fe.markdown(state)
+        (report / "inventory7.md").write_text(text)
+        (report / "inventory7.json").write_text(json.dumps(state, default=str))
+        if block is None:
+            block = text[text.index("## Documentation summary"):].strip()
+        docs = root / "docs"
+        docs.mkdir(exist_ok=True)
+        (docs / "brand-inventory.md").write_text(
+            f"<!-- INVENTORY7 START -->\n{block}\n<!-- INVENTORY7 END -->\n")
+        return report
+
+    def _run(self, root: Path, report: Path):
+        return subprocess.run([sys.executable, str(self.SCRIPT), str(report)], cwd=root,
+                              capture_output=True, text=True)
+
+    def test_a_document_matching_the_report_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = self._layout(root, synthetic_state())
+            result = self._run(root, report)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("matches this SHA\u2019s report", result.stdout)
+
+    def test_a_stale_number_in_the_document_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = synthetic_state()
+            text = fe.markdown(state)
+            summary = text[text.index("## Documentation summary"):].strip()
+            stale = summary.replace("Archives probed: 1", "Archives probed: 2", 1)
+            self.assertNotEqual(summary, stale)
+            result = self._run(root, self._layout(root, state, stale))
+            self.assertEqual(1, result.returncode)
+            self.assertIn("does not match this SHA", result.stderr)
+
+    def test_a_failed_control_is_rejected_before_the_document_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = synthetic_state()
+            state["control"]["passed"] = False
+            report = self._layout(root, state)
+            (root / "docs" / "brand-inventory.md").unlink()
+            result = self._run(root, report)
+            self.assertEqual(1, result.returncode)
+            self.assertIn("STOP: the Inventory-7 Toyota control failed", result.stderr)
+
+    def test_a_classifier_disagreement_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = synthetic_state()
+            state["control"]["disagreementCount"] = 2
+            result = self._run(root, self._layout(root, state))
+            self.assertEqual(1, result.returncode)
+            self.assertIn("name-agnostic classifier disagreed", result.stderr)
+
+    def test_an_unreached_archive_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = synthetic_state()
+            state["pending"] = ["OTHER.zip"]
+            result = self._run(root, self._layout(root, state))
+            self.assertEqual(1, result.returncode)
+            self.assertIn("did not reach every archive: OTHER.zip", result.stderr)
+
+    def test_a_summary_that_does_not_account_for_every_archive_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = synthetic_state()
+            state["summary"]["archives"] = 99
+            result = self._run(root, self._layout(root, state))
+            self.assertEqual(1, result.returncode)
+            self.assertIn("does not account for every archive", result.stderr)
+
+    def test_the_committed_document_block_is_well_formed(self):
+        doc = (self.REPO / "docs" / "brand-inventory.md").read_text()
+        self.assertEqual(1, doc.count("<!-- INVENTORY7 START -->"))
+        self.assertEqual(1, doc.count("<!-- INVENTORY7 END -->"))
+        block = doc.split("<!-- INVENTORY7 START -->", 1)[1].split("<!-- INVENTORY7 END -->", 1)[0].strip()
+        lines = block.splitlines()
+        self.assertEqual("## Documentation summary", lines[0])
+        bullets = [line for line in lines[1:] if line.strip()]
+        self.assertEqual(8, len(bullets), block)
+        for bullet in bullets:
+            self.assertTrue(bullet.startswith("- "), bullet)
+            self.assertRegex(bullet, r": .*\d")
+        self.assertTrue(any("SQLite-magic members" in bullet for bullet in bullets))
+        self.assertTrue(any("Candidate (archive, family) pairs" in bullet for bullet in bullets))
+        self.assertTrue(any("Families with established field meanings outside Toyota: 0." in bullet
+                            for bullet in bullets))
+
 
 
 if __name__ == "__main__":
