@@ -34,6 +34,7 @@ on:
       - 'docs/toyota-progress.md'
 
 permissions:
+  actions: read
   contents: write
   checks: write
   pull-requests: write
@@ -343,6 +344,7 @@ jobs:
             --systems .local/thinkdiag/vehicle-packs/systems.jsonl.gz \
             --stage1c .local/thinkdiag/report/stage-1c-oracle.json \
             --packs .local/thinkdiag/vehicle-packs \
+            --baseline .local/thinkdiag/main-baseline-packs \
             --output "$DIR" > "$DIR/stage1f.log" 2>&1
           STATUS=$?
           if [ ! -s "$DIR/stage-1f-probe.md" ] || [ ! -s "$DIR/stage-1f-probe.json" ]; then
