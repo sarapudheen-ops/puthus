@@ -35,6 +35,17 @@ object PackSystemStatusUi {
         }
     }
 
+    const val SYSTEM_PAGE_SIZE = 100
+
+    /** Slice only after filtering the full selected-vehicle list. */
+    fun page(systems: List<PackSystemChoice>, page: Int): List<PackSystemChoice> {
+        val start = (page.coerceAtLeast(0).toLong() * SYSTEM_PAGE_SIZE).coerceAtMost(systems.size.toLong()).toInt()
+        return systems.subList(start, (start + SYSTEM_PAGE_SIZE).coerceAtMost(systems.size))
+    }
+
+    /** A status entry denotes a category represented by the selected descriptor. */
+    fun presentCategories(choice: PackSystemChoice): List<String> = CATEGORY_ORDER.filter { it in choice.categoryStatus }
+
     /** Executable actions this pinned descriptor may ever offer. Link status is checked first: an
      *  unproven link yields an empty set even when a category claims executable, so the detail view
      *  can never enable an executable action for it. */

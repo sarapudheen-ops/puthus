@@ -4,6 +4,8 @@ import java.io.File
 import org.junit.Test
 
 class VehiclePackTest {
+    @Test fun largeSystemFilteringAndPaging() = VehiclePackScenarios.largeSystemFilteringAndPaging()
+    @Test fun cacheRetainsObjectInUseWhileEvictingOldest() = VehiclePackScenarios.cacheRetainsObjectInUseWhileEvictingOldest()
     @Test fun boundedGzipAndChecksum() = VehiclePackScenarios.boundedGzip()
     @Test fun exactHttpRangeAndRedirectContract() = VehiclePackScenarios.rangeHttpContract()
     @Test fun contentCacheLruStaysBoundedAcrossTouchInstallAndRestart() = VehiclePackScenarios.cacheLruStaysBoundedAcrossDownloadsAndReopening()

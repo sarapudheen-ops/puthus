@@ -1,5 +1,7 @@
 name: Inspect Toyota release data
 
+# Stage 2b: recheck the unchanged release-data pipeline for the pack-browser UI head.
+
 # Stage 3b head note: no step, input or permission changes here; the sweep step now
 # also records stop contexts, a labelled stand-in re-run and a per-class window decode
 # in its own report. Nothing is enabled and no validator or pack input changes.
