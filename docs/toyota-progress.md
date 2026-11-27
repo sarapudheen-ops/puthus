@@ -634,3 +634,14 @@ CODE: ECMECT PIDs originate from `compile_mandatory_source_reads` calling `revie
 - Names, commands, parameters and security/seed-key markers for actuators, coding and special functions remain NOT ESTABLISHED; no security algorithm is inferred.
 - ECMECT slots 1/2 frame bindings were compared to the bounded COMM native lookup, not a full operation; slot 3 stored live command records lack an established request-builder replay, and slot 4 is unparsed. The CI probe lists exact bytes and outcomes without treating them as requested-category evidence.
 - Full per-slot histograms, ECMECT results, errors and source SHA: `Stage 4a schema probe` check and `stage-4a-probe.md`/`.json` in `ci-reports-v1`. Category blockers cannot be ranked by systems unlocked until category-to-slot assignment is established.
+
+## Stage 1f — function-detail rejection census
+
+- CI remeasured the Stage 1c reject `ValueError:No unambiguous exact DTC function-detail source rows` on the same group partition: 137 groups, 24,832 systems.
+- Candidate default detail rows per system: zero rows 137 groups / 24,832 systems; exactly one and several rows both 0 groups / 0 systems. The report lists all groups and the JSON lists each system identity.
+- The rejection is `toyota_runtime_compile.py:54-63`: no rows or duplicate detail IDs, not merely several distinct rows. Source rows use the native default prefix and exact region/function/category (`toyota_dtc_workflow.py:209-236`).
+- FDATA `EcuFuncListDetailsTable` (`libTOYOTA_FDATA.so@0001570c`, oracle `toyota_native_workflow.py:142-195`) loads a supported-detail list; DTCF `ReadDtcModeP3P4` (`libTOYOTA_DTCF.so@00012fc4`, oracle `toyota_native_workflow.py:62-135`) tests membership rather than an established single-row tie-break.
+- There were no several-row groups to replay; agree/disagree/not-replayable each 0 systems. ECU-dependent support is not guessed, and no selection rule or unlock count is invented for absent rows.
+- Newly enabled systems: 0; newly enabled DTCs: 0. Existing group pins, the ECMECT and Innova paths and write guards remain unchanged; clear stays unresolved. Measured container: 424,385,502 bytes, below 480 MiB.
+- Remaining compiler rejects by systems: absent/ambiguous detail rows 24,832; no P3/P4 fault block 8,112; no single-frame primary read 4,386; not exact KWP04/44 clear 1,369; caller mode 7/9 547; non-dispatch-14 94.
+- Complete same-SHA evidence is in the `Stage 1f detail-row probe` check and `stage-1f-probe.md`/`.json` release reports; release assets are mutable.
