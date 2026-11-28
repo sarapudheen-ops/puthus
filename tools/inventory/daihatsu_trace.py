@@ -577,6 +577,73 @@ def raw_index_scan(payload: bytes) -> dict:
             "truncated": not terminated and pos + 8 > len(payload)}
 
 
+def reconcile_blocks(payload: bytes, offsets: list[int], stride: int) -> dict:
+    """Reconcile LE16-count blocks of a fixed record stride against the index.
+
+    For each block offset (sorted), read the LE16 count and check whether
+    ``offset + 2 + count*stride`` lands exactly on the next block offset (or,
+    for the last block, within the payload). This is the reconciliation that
+    matches a reader's actual record stride; a stride that tiles the index
+    exactly is strong layout evidence, while overlap/gap/truncation is reported
+    per block rather than hidden.
+    """
+    ordered = sorted(set(offsets))
+    rows = []
+    accepted = rejected = 0
+    for index, offset in enumerate(ordered):
+        item: dict = {"offset": offset}
+        if offset + 2 > len(payload):
+            item["status"] = "rejected: no room for LE16 count"
+            rejected += 1
+            rows.append(item)
+            continue
+        count = int.from_bytes(payload[offset:offset + 2], "little")
+        end = offset + 2 + count * stride
+        item["count"] = count
+        item["impliedEnd"] = end
+        next_offset = ordered[index + 1] if index + 1 < len(ordered) else None
+        item["nextBlockOffset"] = next_offset
+        if end > len(payload):
+            item["status"] = "rejected: block runs past end of payload"
+            rejected += 1
+        elif next_offset is not None and end != next_offset:
+            item["status"] = ("rejected: block end does not meet next block "
+                              f"({'overlap' if end > next_offset else 'gap'})")
+            rejected += 1
+        else:
+            item["status"] = "accepted: tiles exactly"
+            accepted += 1
+        rows.append(item)
+    return {"stride": stride, "blocks": len(ordered), "accepted": accepted,
+            "rejected": rejected, "rows": rows[:2048], "capped": len(ordered) > 2048}
+
+
+def records_18(payload: bytes, offset: int, count: int) -> list[dict]:
+    """The code-established 18-byte record fields, named by offset only.
+
+    GetSystemListData reads, per record: LE16@0, LE32@2, u8@6, u8@7, u8@8,
+    u8@9, LE32@10, LE32@14 (see the trace). This extracts those typed values
+    verbatim; it asserts no meaning for any of them.
+    """
+    out = []
+    for index in range(count):
+        base = offset + 2 + index * 18
+        if base + 18 > len(payload):
+            out.append({"index": index, "offset": base, "status": "truncated"})
+            break
+        record = payload[base:base + 18]
+        out.append({
+            "index": index, "offset": base,
+            "le16_0": int.from_bytes(record[0:2], "little"),
+            "le32_2": int.from_bytes(record[2:6], "little"),
+            "u8_6": record[6], "u8_7": record[7], "u8_8": record[8], "u8_9": record[9],
+            "le32_10": int.from_bytes(record[10:14], "little"),
+            "le32_14": int.from_bytes(record[14:18], "little"),
+            "hex": record.hex(" "),
+        })
+    return out
+
+
 def reconcile_system_list(payload: bytes) -> dict:
     """Run the existing readers and reconcile every index row against the bytes."""
     out: dict = {"payloadBytes": len(payload), "payloadSha256": sha256(payload),
@@ -635,6 +702,18 @@ def reconcile_system_list(payload: bytes) -> dict:
                 if offset + 2 <= len(payload)
                 and offset + 2 + int.from_bytes(payload[offset:offset + 2], "little") * 37 <= len(payload)),
         }
+        # Code-aligned block tiling: GetSystemListData advances the file offset
+        # by 0x12 (18) per record, so 18 is the reader's actual stride. The
+        # 37-byte tiling is shown only to demonstrate it does NOT fit.
+        out["blocks18"] = reconcile_blocks(payload, offsets, 18)
+        out["blocks37"] = reconcile_blocks(payload, offsets, 37)
+        if rows:
+            first_offset = rows[0][1]
+            if first_offset + 2 <= len(payload):
+                count = int.from_bytes(payload[first_offset:first_offset + 2], "little")
+                out["firstBlockRecords18"] = records_18(payload, first_offset, min(count, 32))
+                out["firstBlockOffset"] = first_offset
+                out["firstBlockCount"] = count
     return out
 
 
@@ -924,6 +1003,32 @@ def markdown(state: dict) -> str:
                         + (" Per-row detail capped at 2048 rows." if analysis.get("perRowCapped") else "")]
             if analysis.get("duplicateOffsets"):
                 out += [f"- Duplicate offsets: {', '.join(hex(o) for o in analysis['duplicateOffsets'])}."]
+            for key, label in (("blocks18", "18-byte (code-established stride 0x12)"),
+                               ("blocks37", "37-byte (Toyota shape, for contrast)")):
+                blocks = analysis.get(key)
+                if blocks:
+                    out += [f"- Block tiling, {label}: {blocks['accepted']} accepted (tiles exactly), "
+                            f"{blocks['rejected']} rejected, of {blocks['blocks']} distinct block(s)."]
+                    shown = 0
+                    for row in blocks["rows"]:
+                        if row.get("status", "").startswith("rejected") and shown < 8:
+                            out += [f"  - offset {row['offset']:#x}: {row['status']} "
+                                    f"(count={row.get('count')}, implied end {row.get('impliedEnd', 0):#x}, "
+                                    f"next block {row.get('nextBlockOffset')})"]
+                            shown += 1
+            if analysis.get("firstBlockRecords18"):
+                out += [f"- First block @ {analysis['firstBlockOffset']:#x}, LE16 count="
+                        f"{analysis['firstBlockCount']}; its 18-byte records (fields named by offset, "
+                        f"no meaning asserted):"]
+                for record in analysis["firstBlockRecords18"]:
+                    if record.get("status") == "truncated":
+                        out += [f"  - record {record['index']} @ {record['offset']:#x}: truncated"]
+                        continue
+                    out += [f"  - record {record['index']} @ {record['offset']:#x}: "
+                            f"le16_0={record['le16_0']:#06x}, le32_2={record['le32_2']:#010x}, "
+                            f"u8_6={record['u8_6']:#04x}, u8_7={record['u8_7']:#04x}, "
+                            f"u8_8={record['u8_8']:#04x}, u8_9={record['u8_9']:#04x}, "
+                            f"le32_10={record['le32_10']:#010x}, le32_14={record['le32_14']:#010x}"]
             for item in analysis.get("perRow", [])[:64]:
                 line = f"  - key {item['key']:#010x} → offset {item['offset']:#x}"
                 if "le16AtOffset" in item:

@@ -305,6 +305,38 @@ class IndexReconciliationTest(unittest.TestCase):
         self.assertIn("rejected", row["status"])
         self.assertEqual(result["reconciliation"]["rowsWithValid37ByteBlocks"], 0)
 
+    def test_18_byte_blocks_tile_and_37_does_not(self):
+        # Two blocks of 18-byte records: block0 @0x20 count2 -> end 0x46; block1 @0x46 count1.
+        rec = bytes(range(18))
+        block0 = struct.pack("<H", 2) + rec + rec
+        block1 = struct.pack("<H", 1) + rec
+        data = self.payload([(0x100, 0x20), (0x101, 0x46)], {0x20: block0, 0x46: block1})
+        result = dt.reconcile_system_list(data)
+        b18 = result["blocks18"]
+        self.assertEqual(b18["accepted"], 2)
+        self.assertEqual(b18["rejected"], 0)
+        b37 = result["blocks37"]
+        self.assertEqual(b37["accepted"], 0)
+        self.assertEqual(b37["rejected"], 2)
+        records = result["firstBlockRecords18"]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["le16_0"], int.from_bytes(rec[0:2], "little"))
+        self.assertEqual(records[0]["le32_2"], int.from_bytes(rec[2:6], "little"))
+        self.assertEqual(records[0]["u8_9"], rec[9])
+        self.assertEqual(records[0]["le32_14"], int.from_bytes(rec[14:18], "little"))
+
+    def test_reconcile_blocks_gap_and_truncation(self):
+        rec = bytes(18)
+        # block0 @0x20 count1 -> end 0x34; next block @0x40 leaves a gap.
+        data = self.payload([(0x100, 0x20), (0x101, 0x40)],
+                            {0x20: struct.pack("<H", 1) + rec, 0x40: struct.pack("<H", 1) + rec})
+        result = dt.reconcile_blocks(data, [0x20, 0x40], 18)
+        self.assertEqual(result["rows"][0]["status"], "rejected: block end does not meet next block (gap)")
+        self.assertEqual(result["rows"][1]["status"], "accepted: tiles exactly")
+        truncated = struct.pack("<H", 5) + bytes(18)  # claims 5 records, only 1 present
+        result2 = dt.reconcile_blocks(truncated, [0], 18)
+        self.assertIn("past end", result2["rows"][0]["status"])
+
 
 def rol32(value: int, bits: int) -> int:
     return ((value << bits) | (value >> (32 - bits))) & MASK32
