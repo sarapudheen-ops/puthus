@@ -991,3 +991,39 @@ A same-role library is not enough on its own: `MAZDA.zip` ships `libMAZDA_FILE.s
 - Families with established field meanings outside Toyota: 0.
 - Converters, packs or app changes produced by this tool: 0.
 <!-- INVENTORY7 END -->
+
+## Inventory-8: consumer code identity, filename link and reader text
+
+`tools/inventory/consumer_link.py`, published as the `Inventory-8 consumer link` check and as `inventory8.md` / `inventory8.json` in `ci-reports-v1`. Read-only: it writes no pack, no converter and no app change, and it runs on `pyelftools` alone because it imports `family_evidence`, which reads `sweep_toyota.FOCUSED_READERS` with `ast`.
+
+### Why this stage exists
+
+Inventory-7 produced exactly one `CANDIDATE` — `DAIHATSU.zip · keyed-index-8 · DAIHATSU_SYS_LIST.BIN` — and named one missing requirement: *field meanings*. It also stated what would count: a disassembly of the brand's own reader tying a decoded field to a diagnostic address, service, PID or timing. This stage measures as much of that as static evidence allows, and says precisely where static evidence stops. It targets every (archive, family) pair Inventory-7 recorded `parsed > 0` for, bounded to 32 pairs, plus `TOYOTA.zip` as the reference.
+
+### What it measures
+
+| measurement | how | why it is not a guess |
+| --- | --- | --- |
+| consumer code identity | the brand's own exported consumer body, read at its own symbol address and size, compared byte-for-byte with Toyota's same-named function body | identity is the standard Inventory-7 already accepts for `libDEVICEID.so`; a shared export *name* is not evidence, identical bytes are |
+| filename link | every ASCII literal in this archive's own libraries, matched case-insensitively against the decoded member's basename and Inventory-4 stem | this is the only static link between a consumer and a data file; the literal is recorded verbatim and truncated, never interpreted |
+| reader text | a census of the value kinds the established reader returns for that family | a reader that returns only integers cannot make an opaque identifier mean something, which bounds what any further static work could establish |
+
+Five controls gate the run, because a harness that cannot succeed reports failure for everything and that looks like a finding — the mistake the `decode_yzjm` arity bug made:
+
+- identity positive (a Toyota consumer body compared with itself is identical) and identity negative (two different Toyota consumers are not);
+- link positive (Toyota's own libraries contain a literal naming a member Toyota's own reader accepts) and link negative (Toyota's libraries do not name another brand's member);
+- reader-text positive (the value-kind census is reported for a Toyota member).
+
+A failed control makes the published conclusion `failure`, so an empty brand result is never mistaken for a finding.
+
+### What it can never conclude
+
+`meaningsEstablished` is `False` for every row by construction. Identical consumer code plus a filename link establishes the record **layout** and the **link** between a library and a data file; it does not establish which real vehicle system, service or PID an opaque identifier denotes. Verdicts are therefore `CODE-IDENTICAL AND LINKED`, `CODE-IDENTICAL, NO FILENAME LINK`, `FILENAME LINK, CODE DIFFERS` and `NOT ESTABLISHED`, and each row lists what is still missing: no vendor documentation, no runtime observation on a vehicle or ECU, and no disassembly in this repo of that brand's own reader.
+
+Stage 2 consumes `inventory8.json` and adds identical consumer code and filename links to the **satisfied** column, and replaces the generic `MEANING_EVIDENCE is empty` line with the measured blockers. It never adds them to `meanings`: only a record in `MEANING_EVIDENCE` can satisfy that requirement, and it stays empty. A missing Inventory-8 report is not an error — the gate rejects every pair either way.
+
+<!-- INVENTORY8 START -->
+## Documentation summary
+
+Measured by the `Inventory-8 consumer link` check for the current SHA and published in `ci-reports-v1`. The measured numbers are committed here, together with `tools/inventory/verify_consumer_link_document.py`, on the commit after the first complete run.
+<!-- INVENTORY8 END -->

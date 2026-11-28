@@ -53,6 +53,9 @@ from yzjm import decode_yzjm  # noqa: E402
 
 FORMAT = "bod3-family-research"
 FORMAT_VERSION = 1
+# tools/inventory/consumer_link.py publishes this format. Read as data, not
+# imported, so Stage 2 keeps running when that stage published nothing.
+INVENTORY8_FORMAT = "bod3-consumer-link"
 MAX_PACK_BYTES = 480 * 1024 * 1024
 MAX_TABLE_ROWS = 120
 # GitHub caps a check-run output summary at 65535 bytes; the full detail stays in the JSON.
@@ -72,6 +75,25 @@ def utc_now() -> str:
 
 def meaning_evidence(archive: str, family: str) -> dict | None:
     return MEANING_EVIDENCE.get((archive, family))
+
+
+def load_inventory8(path: Path | None) -> tuple[dict, dict]:
+    """Inventory-8 measurements keyed by (archive, family), plus its summary.
+
+    Inventory-8 is measurement only. A missing or empty report is not an error:
+    the gate must reject every pair either way, and it does.
+    """
+    if path is None or not path.is_file():
+        return {}, {"available": False}
+    state = json.loads(path.read_text())
+    if state.get("format") != INVENTORY8_FORMAT:
+        raise SystemExit(f"STOP: {path} is not an Inventory-8 report (format {state.get('format')!r})")
+    rows = {(row["archive"], row["family"]): row for row in state.get("targets", [])}
+    summary = dict(state.get("summary") or {})
+    summary["available"] = True
+    summary["controlPassed"] = bool(state.get("control", {}).get("passed"))
+    summary["meaningsEstablished"] = sum(1 for row in rows.values() if row.get("meaningsEstablished"))
+    return rows, summary
 
 
 def load_inventory7(path: Path) -> dict:
@@ -111,8 +133,17 @@ def candidates(state: dict) -> list[dict]:
                                          row["archive"], row["family"]))
 
 
-def established(candidate: dict) -> tuple[bool, list[str], list[str]]:
-    """Return (allowed, satisfied, missing) against the four gate requirements."""
+def established(candidate: dict, links: dict | None = None) -> tuple[bool, list[str], list[str]]:
+    """Return (allowed, satisfied, missing) against the four gate requirements.
+
+    ``links`` carries Inventory-8's measurements for this (archive, family) pair.
+    They can add satisfied evidence -- a consumer body byte-identical to Toyota's,
+    a literal in this archive's own libraries naming the decoded member -- and
+    they make the missing evidence specific. They can never satisfy ``meanings``
+    on their own: only a record in MEANING_EVIDENCE can, because identical code
+    plus a filename link establishes the layout and the link, not which real
+    vehicle system an opaque identifier denotes.
+    """
     satisfied, missing = [], []
     if candidate["wrapper"] == "established":
         satisfied.append("wrapper: own libDEVICEID.so is byte-identical to Toyota's")
@@ -131,12 +162,28 @@ def established(candidate: dict) -> tuple[bool, list[str], list[str]]:
     else:
         missing.append("consumer: none of this archive's own role libraries export a cited consumer "
                        f"of family '{candidate['family']}'")
+    link = (links or {}).get((candidate["archive"], candidate["family"]))
+    if link:
+        identical = list(link.get("identicalConsumers") or [])
+        if identical:
+            satisfied.append(f"consumer code: {', '.join(identical)} in this archive's own library is "
+                             "byte-identical to Toyota's same-named function (Inventory-8)")
+        found = list(link.get("filenameLinks") or [])
+        if found:
+            literals = "; ".join(f"'{row.get('literal')}' in {row.get('library')}" for row in found[:3])
+            satisfied.append(f"filename link: {literals} (Inventory-8)")
     record = meaning_evidence(candidate["archive"], candidate["family"])
     if record:
         satisfied.append(f"meanings: {record.get('citation', 'recorded')}")
     else:
-        missing.append("meanings: no field-meaning record ties this brand's decoded fields to a "
-                       "disassembly of this brand's own reader; MEANING_EVIDENCE is empty")
+        blockers = [str(item) for item in (link or {}).get("meaningBlockers") or []]
+        if blockers:
+            missing.append(f"meanings: Inventory-8 measured '{link.get('verdict')}' — {blockers[0]}")
+            missing.extend(f"meanings: {item}" for item in blockers[1:])
+        else:
+            missing.append("meanings: no field-meaning record ties this brand's decoded fields to a "
+                           "disassembly of this brand's own reader; MEANING_EVIDENCE is empty"
+                           + ("" if link else "; Inventory-8 did not measure this pair"))
     return (not missing), satisfied, missing
 
 
@@ -300,8 +347,35 @@ def render(summary: dict) -> str:
               f"{sum(len(rows) for rows in groups.values())} grouped = {len(summary['evaluations'])} "
               "= every pair measured. Each individual row is in the JSON report.", ""]
 
+    inventory8 = summary.get("inventory8") or {}
+    lines += ["", "## Inventory-8 consumer-link measurements", ""]
+    if not inventory8.get("available"):
+        lines.append("Not available for this run: Inventory-8 published no report, so no consumer body "
+                     "was compared and no filename link was searched. The gate is unchanged and still "
+                     "rejects every pair.")
+    else:
+        rows = summary.get("inventory8_rows") or []
+        lines += [f"Controls: {'PASS' if inventory8.get('controlPassed') else 'FAIL'}. "
+                  f"Pairs measured: {inventory8.get('targets', 0)}. Consumer bodies compared: "
+                  f"{inventory8.get('functionsCompared', 0)}; byte-identical to Toyota's: "
+                  f"{inventory8.get('identicalConsumers', 0)}. Pairs with a filename link: "
+                  f"{inventory8.get('linkTargets', 0)}. Pairs whose established reader returns any text "
+                  f"value: {inventory8.get('textTargets', 0)}. Pairs with field meanings established: "
+                  f"**{inventory8.get('meaningsEstablished', 0)}**.", ""]
+        if rows:
+            lines += ["| archive | family | Inventory-8 verdict | consumers compared | identical | links | reader text values | meanings |",
+                      "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |"]
+            for row in rows:
+                lines.append(f"| `{row['archive']}` | `{row['family']}` | {row['verdict']} "
+                             f"| {row['comparedConsumers']} | {len(row['identicalConsumers'])} "
+                             f"| {row['filenameLinks']} | {row['readerTextValues']} "
+                             f"| {'established' if row['meaningsEstablished'] else 'NOT established'} |")
+        lines += ["", "Identical consumer code and a filename link are added to the satisfied column "
+                  "above; neither satisfies `meanings`. Only a record in `MEANING_EVIDENCE` can, and it "
+                  "is still empty."]
+
     if summary["packs"]:
-        lines += ["## Built research packs", "",
+        lines += ["", "## Built research packs", "",
                   "| archive | family | sampled | accepted | rejected | duplicates | not applicable | bytes | SHA-256 |",
                   "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
         for pack in summary["packs"]:
@@ -313,7 +387,7 @@ def render(summary: dict) -> str:
             reasons = "; ".join(f"{fe.old.escape(k)}: {v}" for k, v in pack["reasons"].items()) or "none"
             lines.append(f"- `{pack['archive']}` · `{pack['family']}` — {reasons}")
     else:
-        lines += ["## Built research packs", "",
+        lines += ["", "## Built research packs", "",
                   "None. No (archive, family) pair satisfied the gate, so no converter was written and no "
                   "pack was built. Inventing one from a filename, a magic string or a shared header is "
                   "explicitly out of scope."]
@@ -338,6 +412,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inventory7-json", type=Path, required=True,
                         help="Inventory-7 report produced for this run")
+    parser.add_argument("--inventory8-json", type=Path,
+                        help="Inventory-8 consumer-link measurements; optional, measurement only")
     parser.add_argument("--repo", default=os.environ.get("GH_REPO", ""))
     parser.add_argument("--local-dir", type=Path)
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -346,6 +422,7 @@ def main() -> int:
     args = parser.parse_args()
 
     state = load_inventory7(args.inventory7_json)
+    links, link_summary = load_inventory8(args.inventory8_json)
     rows = candidates(state)
     evaluations, packs = [], []
     assets: dict[str, dict] = {}
@@ -355,7 +432,7 @@ def main() -> int:
         assets = {asset["name"]: asset for asset in fe.old.release_assets(args.repo)}
     with tempfile.TemporaryDirectory() as work:
         for row in rows:
-            allowed, satisfied, missing = established(row)
+            allowed, satisfied, missing = established(row, links)
             entry = {**row, "allowed": allowed, "satisfied": satisfied, "missing": missing}
             evaluations.append(entry)
             if not allowed or len(packs) >= args.max_packs:
@@ -392,6 +469,16 @@ def main() -> int:
         "control": state["control"]["toyotaControl"] + (" (PASS)" if state["control"]["passed"] else " (FAIL)"),
         "gate": ["wrapper", "structure", "consumer", "meanings"],
         "meaning_evidence_records": len(MEANING_EVIDENCE),
+        "inventory8": link_summary,
+        "inventory8_rows": [
+            {"archive": row["archive"], "family": row["family"], "verdict": row.get("verdict"),
+             "comparedConsumers": row.get("comparedConsumers", 0),
+             "identicalConsumers": list(row.get("identicalConsumers") or []),
+             "filenameLinks": len(row.get("filenameLinks") or []),
+             "readerTextValues": row.get("readerTextValues", 0),
+             "meaningsEstablished": bool(row.get("meaningsEstablished"))}
+            for row in evaluations
+            if (row["archive"], row["family"]) in links][:MAX_TABLE_ROWS],
         "measured": len(evaluations),
         "allowed": len(allowed_rows),
         "built": len(packs),

@@ -251,6 +251,67 @@ jobs:
           if [ "$DOCVERIFY" = failure ]; then echo "The committed Inventory-7 documentation summary does not match this SHA's report."; fi
           exit 1
 
+  consumer-link:
+    name: Inventory-8 consumer link
+    needs: family-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # consumer_link.py imports family_evidence, which reads FOCUSED_READERS with
+      # ast, so the capstone/unicorn chain is never imported here either.
+      - name: Install ELF reader
+        run: python -m pip install pyelftools==0.32
+      - name: Test consumer link
+        run: python -m unittest discover -s tools/inventory -p 'test_consumer_link.py' -v
+      - name: Download Inventory-7 family evidence
+        run: |
+          mkdir -p .local/inventory8/in
+          gh release download ci-reports-v1 --pattern inventory7.json --dir .local/inventory8/in --clobber
+      - name: Run gated consumer link measurement
+        id: links
+        timeout-minutes: 30
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tools/inventory/consumer_link.py \
+            --inventory7-json .local/inventory8/in/inventory7.json \
+            --output .local/inventory8/report --max-seconds 1500 2>&1 | tee .local/inventory8/links.log
+      - name: Publish Inventory-8 reports
+        if: always() && steps.links.outcome != 'skipped' && hashFiles('.local/inventory8/report/inventory8.md') != ''
+        run: |
+          test -s .local/inventory8/report/inventory8.md
+          test -s .local/inventory8/report/inventory8.json
+          gh release upload ci-reports-v1 .local/inventory8/report/inventory8.md .local/inventory8/report/inventory8.json --clobber
+      - name: Publish check runs
+        if: always() && steps.links.outcome != 'skipped' && hashFiles('.local/inventory8/report/parts.json') != ''
+        env:
+          OUTCOME: ${{ steps.links.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          report = Path('.local/inventory8/report')
+          state = json.loads((report / 'inventory8.json').read_text())
+          conclusion = 'success' if os.environ['OUTCOME'] == 'success' and state['control']['passed'] and not state['pending'] and not state.get('failed') else 'failure'
+          for part in json.loads((report / 'parts.json').read_text()):
+              subprocess.run(['gh', 'api', '--method', 'POST', f"repos/{os.environ['GH_REPO']}/check-runs",
+                              '-f', f"name={part['name']}", '-f', f"head_sha={os.environ['GITHUB_SHA']}",
+                              '-f', 'status=completed', '-f', f'conclusion={conclusion}',
+                              '-f', f"output[title]={part['name']}", '-F', f"output[summary]=@{part['file']}"], check=True)
+          PY
+      - name: Fail if the consumer link measurement failed
+        if: always() && steps.links.outcome == 'failure'
+        run: |
+          cat .local/inventory8/links.log
+          exit 1
+
   stage1-coverage:
     name: Multi-brand Stage 1 coverage
     runs-on: ubuntu-latest
@@ -293,7 +354,7 @@ jobs:
 
   stage2-multibrand:
     name: Multi-brand Stage 2 extraction
-    needs: family-evidence
+    needs: [family-evidence, consumer-link]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -308,14 +369,19 @@ jobs:
         run: python -m pip install pyelftools==0.32
       - name: Test the Stage 2 evidence gate
         run: PYTHONPATH=tools/thinkdiag python -m unittest discover -s tools/thinkdiag -p 'test_stage2_multibrand.py' -v
-      - name: Download Inventory-7 family evidence
+      - name: Download Inventory-7 and Inventory-8 evidence
         run: |
           mkdir -p .local/stage2/in .local/stage2/out
           gh release download ci-reports-v1 --pattern inventory7.json --dir .local/stage2/in --clobber
+          # Inventory-8 is measurement only: Stage 2 must still run, and still
+          # reject every pair, when it published nothing.
+          gh release download ci-reports-v1 --pattern inventory8.json --dir .local/stage2/in --clobber || \
+            echo 'inventory8.json is not published; Stage 2 continues without it'
       - name: Run Stage 2 multi-brand extraction behind the evidence gate
         run: |
           python tools/thinkdiag/stage2_multibrand.py \
             --inventory7-json .local/stage2/in/inventory7.json \
+            --inventory8-json .local/stage2/in/inventory8.json \
             --repo "$GH_REPO" \
             --out-dir .local/stage2/out \
             --commit-sha "$GITHUB_SHA"
