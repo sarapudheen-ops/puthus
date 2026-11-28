@@ -610,6 +610,9 @@ def reconcile_blocks(payload: bytes, offsets: list[int], stride: int) -> dict:
             item["status"] = ("rejected: block end does not meet next block "
                               f"({'overlap' if end > next_offset else 'gap'})")
             rejected += 1
+            if end < next_offset:
+                item["gapBytes"] = next_offset - end
+                item["gapHeadHex"] = payload[end:min(end + 32, next_offset)].hex(" ")
         else:
             item["status"] = "accepted: tiles exactly"
             accepted += 1
@@ -1012,9 +1015,12 @@ def markdown(state: dict) -> str:
                     shown = 0
                     for row in blocks["rows"]:
                         if row.get("status", "").startswith("rejected") and shown < 8:
-                            out += [f"  - offset {row['offset']:#x}: {row['status']} "
+                            line = (f"  - offset {row['offset']:#x}: {row['status']} "
                                     f"(count={row.get('count')}, implied end {row.get('impliedEnd', 0):#x}, "
-                                    f"next block {row.get('nextBlockOffset')})"]
+                                    f"next block {row.get('nextBlockOffset')})")
+                            if row.get("gapBytes"):
+                                line += f"; gap {row['gapBytes']} bytes, head: `{row.get('gapHeadHex')}`"
+                            out += [line]
                             shown += 1
             if analysis.get("firstBlockRecords18"):
                 out += [f"- First block @ {analysis['firstBlockOffset']:#x}, LE16 count="
