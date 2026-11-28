@@ -1,0 +1,84 @@
+name: DAIHATSU system-list trace
+
+# DAIHATSU-1: one archive, one objective. Traces the linked system-list reader
+# Inventory-8 named (libDAIHATSU_FILE.so, literal DAIHATSU_SYS_LIST.BIN at VA
+# 0x15a07). Read-only research: no converter, pack or app change, no field
+# meaning asserted by the tool, no operation enabled. Corpus access is CI-only.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['arena/**']
+    paths:
+      - 'tools/inventory/daihatsu_trace.py'
+      - 'tools/inventory/test_daihatsu_trace.py'
+      - '.github/workflows/daihatsu-trace.yml'
+
+permissions:
+  contents: write
+  checks: write
+
+jobs:
+  trace:
+    name: DAIHATSU-1 system-list trace
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install ELF reader and disassembler
+        run: python -m pip install pyelftools==0.32 capstone==5.0.6
+      - name: Test the trace tool (synthetic, no corpus)
+        run: python -m unittest discover -s tools/inventory -p 'test_daihatsu_trace.py' -v
+      - name: Download the Inventory-8 report from CI
+        run: |
+          mkdir -p .local/daihatsu/in
+          gh release download ci-reports-v1 --pattern inventory8.json --dir .local/daihatsu/in --clobber
+      - name: Download the exact DAIHATSU archive
+        run: |
+          mkdir -p .local/daihatsu/work
+          gh release download assets-v1 --pattern DAIHATSU.zip --dir .local/daihatsu/work --clobber
+      - name: Trace the linked system-list reader
+        id: trace
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tools/inventory/daihatsu_trace.py \
+            --archive .local/daihatsu/work/DAIHATSU.zip \
+            --inventory8-json .local/daihatsu/in/inventory8.json \
+            --output .local/daihatsu/report 2>&1 | tee .local/daihatsu/trace.log
+      - name: Publish trace reports
+        if: always() && hashFiles('.local/daihatsu/report/daihatsu-trace.md') != ''
+        run: |
+          test -s .local/daihatsu/report/daihatsu-trace.md
+          test -s .local/daihatsu/report/daihatsu-trace.json
+          gh release upload ci-reports-v1 \
+            .local/daihatsu/report/daihatsu-trace.md \
+            .local/daihatsu/report/daihatsu-trace.json --clobber
+      - name: Publish check runs
+        if: always() && hashFiles('.local/daihatsu/report/parts.json') != ''
+        env:
+          OUTCOME: ${{ steps.trace.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          report = Path('.local/daihatsu/report')
+          conclusion = 'success' if os.environ['OUTCOME'] == 'success' else 'failure'
+          for part in json.loads((report / 'parts.json').read_text()):
+              subprocess.run(['gh', 'api', '--method', 'POST', f"repos/{os.environ['GH_REPO']}/check-runs",
+                              '-f', f"name={part['name']}", '-f', f"head_sha={os.environ['GITHUB_SHA']}",
+                              '-f', 'status=completed', '-f', f'conclusion={conclusion}',
+                              '-f', f"output[title]={part['name']}", '-F', f"output[summary]=@{part['file']}"],
+                             check=True)
+          PY
+      - name: Fail if the trace failed
+        if: always() && steps.trace.outcome == 'failure'
+        run: |
+          cat .local/daihatsu/trace.log
+          exit 1
