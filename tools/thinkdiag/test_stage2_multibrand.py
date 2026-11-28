@@ -77,6 +77,34 @@ def verdict(family: str = "system-list-37", parsed: int = 3, attempted: int = 10
             "ownRoleLibraries": list(libraries), "citation": "cite", "missingEvidence": ["meanings missing"]}
 
 
+def inventory8_state(*rows: dict, control_passed: bool = True) -> dict:
+    """An Inventory-8 report as tools/inventory/consumer_link.py publishes it."""
+    return {"format": s2.INVENTORY8_FORMAT, "formatVersion": 1, "headSha": "abc123",
+            "control": {"passed": control_passed, "checks": []},
+            "summary": {"targets": len(rows), "archives": len({r["archive"] for r in rows}),
+                        "functionsCompared": sum(r.get("comparedConsumers", 0) for r in rows),
+                        "identicalConsumers": sum(len(r.get("identicalConsumers") or []) for r in rows),
+                        "linkTargets": sum(1 for r in rows if r.get("filenameLinks")),
+                        "links": sum(len(r.get("filenameLinks") or []) for r in rows),
+                        "textTargets": sum(1 for r in rows if r.get("readerTextValues", 0) > 0),
+                        "meaningsEstablished": sum(1 for r in rows if r.get("meaningsEstablished")),
+                        "packs": 0, "appChanges": 0},
+            "targets": list(rows), "pending": [], "failed": False}
+
+
+def link_row(**over) -> dict:
+    row = {"archive": "SYNTH.zip", "family": "system-list-37", "verdict": "CODE-IDENTICAL AND LINKED",
+           "comparedConsumers": 1, "identicalConsumers": ["GetSystemListData"],
+           "filenameLinks": [{"library": "libSYNTH_FILE.so", "literal": "SYNTH_SYS_LIST.BIN",
+                              "needle": "SYNTH_SYS_LIST.BIN", "why": "member basename"}],
+           "readerTextValues": 0, "meaningsEstablished": False,
+           "meaningBlockers": ["the established reader for this family returns no text value at all, "
+                               "so every field it yields is an opaque identifier",
+                               "no vendor documentation, runtime observation on a vehicle or ECU"]}
+    row.update(over)
+    return row
+
+
 class GateTest(unittest.TestCase):
     def test_field_meanings_are_required_even_for_a_full_candidate(self):
         allowed, satisfied, missing = s2.established(candidate())
@@ -207,18 +235,25 @@ class ExtractTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    def _run(self, root: Path, state: dict, archives: dict[str, dict[str, bytes]] | None = None) -> dict:
+    def _run(self, root: Path, state: dict, archives: dict[str, dict[str, bytes]] | None = None,
+             inventory8: dict | None = None) -> dict:
         source = root / "zips"
         source.mkdir(exist_ok=True)
         for name, members in (archives or {}).items():
             build_archive(source / name, members)
         report = root / "inventory7.json"
         report.write_text(json.dumps(state))
+        extra = []
+        if inventory8 is not None:
+            links = root / "inventory8.json"
+            links.write_text(json.dumps(inventory8))
+            extra = ["--inventory8-json", str(links)]
         out = root / "out"
         argv = sys.argv
         try:
             sys.argv = ["stage2_multibrand.py", "--inventory7-json", str(report),
-                        "--local-dir", str(source), "--out-dir", str(out), "--commit-sha", "deadbeef"]
+                        "--local-dir", str(source), "--out-dir", str(out),
+                        "--commit-sha", "deadbeef"] + extra
             self.assertEqual(0, s2.main())
         finally:
             sys.argv = argv
@@ -262,6 +297,33 @@ class MainTest(unittest.TestCase):
             self.assertIn("## Built research packs", text)
             self.assertIn(pack["packSha256"], text)
 
+    def test_inventory8_measurements_never_produce_a_pack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = inventory7_state({"brand": "SYNTH", "archive": "SYNTH.zip", "sha256": "s" * 64,
+                                      "verdicts": [verdict()]})
+            summary = self._run(root, state, {"SYNTH.zip": {"A.BIN": yzjm(system_list_payload())}},
+                                inventory8=inventory8_state(link_row()))
+            self.assertTrue(summary["inventory8"]["available"])
+            self.assertEqual(1, summary["measured"])
+            self.assertEqual(0, summary["allowed"])
+            self.assertEqual(0, summary["built"])
+            self.assertEqual(0, summary["app_packs_built"])
+            self.assertEqual([], summary["packs"])
+            row = summary["inventory8_rows"][0]
+            self.assertEqual(1, len(summary["inventory8_rows"]))
+            # The measurements come from Inventory-8, not from Stage 2's own row.
+            self.assertEqual("CODE-IDENTICAL AND LINKED", row["verdict"])
+            self.assertEqual(1, row["comparedConsumers"])
+            self.assertEqual(["GetSystemListData"], row["identicalConsumers"])
+            self.assertEqual(1, row["filenameLinks"])
+            self.assertFalse(row["meaningsEstablished"])
+            text = (root / "out" / "stage2-multibrand-deadbeef.md").read_text()
+            self.assertIn("## Inventory-8 consumer-link measurements", text)
+            self.assertIn("CODE-IDENTICAL AND LINKED", text)
+            self.assertIn("None. No (archive, family) pair satisfied the gate", text)
+
+
     def test_a_missing_archive_is_reported_not_fatal(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -272,6 +334,95 @@ class MainTest(unittest.TestCase):
                 summary = self._run(root, state)
             self.assertEqual(0, summary["built"])
             self.assertTrue(any("archive unavailable" in item for item in summary["evaluations"][0]["missing"]))
+
+class Inventory8LinkTest(unittest.TestCase):
+    """Inventory-8 is measurement only: it can add evidence, never open the gate."""
+
+    def write(self, root: Path, state: dict) -> Path:
+        path = root / "inventory8.json"
+        path.write_text(json.dumps(state))
+        return path
+
+    def test_no_report_is_not_an_error(self):
+        rows, summary = s2.load_inventory8(None)
+        self.assertEqual({}, rows)
+        self.assertFalse(summary["available"])
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, summary = s2.load_inventory8(Path(tmp) / "absent.json")
+        self.assertEqual(({}, False), (rows, summary["available"]))
+
+    def test_a_report_of_the_wrong_format_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write(Path(tmp), {"format": "bod3-family-evidence", "targets": []})
+            with self.assertRaises(SystemExit) as caught:
+                s2.load_inventory8(path)
+        self.assertIn("not an Inventory-8 report", str(caught.exception))
+
+    def test_rows_are_keyed_by_archive_and_family(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, summary = s2.load_inventory8(
+                self.write(Path(tmp), inventory8_state(link_row(), link_row(family="keyed-index-8"))))
+        self.assertTrue(summary["available"])
+        self.assertTrue(summary["controlPassed"])
+        self.assertEqual({("SYNTH.zip", "system-list-37"), ("SYNTH.zip", "keyed-index-8")}, set(rows))
+        self.assertEqual(0, summary["meaningsEstablished"])
+
+    def test_identical_code_and_a_link_are_satisfied_but_do_not_open_the_gate(self):
+        allowed, satisfied, missing = s2.established(candidate(), {("SYNTH.zip", "system-list-37"): link_row()})
+        self.assertFalse(allowed)
+        self.assertTrue(any(item.startswith("consumer code:") for item in satisfied), satisfied)
+        self.assertTrue(any(item.startswith("filename link:") for item in satisfied), satisfied)
+        self.assertEqual(5, len(satisfied))
+        self.assertTrue(missing[0].startswith("meanings: Inventory-8 measured 'CODE-IDENTICAL AND LINKED'"),
+                        missing[0])
+        self.assertIn("opaque identifier", " ".join(missing))
+
+    def test_a_failed_control_never_becomes_satisfied_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, summary = s2.load_inventory8(
+                self.write(Path(tmp), inventory8_state(link_row(), control_passed=False)))
+        self.assertFalse(summary["controlPassed"])
+        allowed, satisfied, _ = s2.established(candidate(), rows)
+        self.assertFalse(allowed)
+        self.assertTrue(any(item.startswith("consumer code:") for item in satisfied))
+
+    def test_a_row_without_blockers_falls_back_to_the_registry_reason(self):
+        row = link_row(meaningBlockers=[], identicalConsumers=[], filenameLinks=[],
+                       verdict="NOT ESTABLISHED")
+        allowed, satisfied, missing = s2.established(candidate(), {("SYNTH.zip", "system-list-37"): row})
+        self.assertFalse(allowed)
+        self.assertEqual([], satisfied[3:])
+        self.assertIn("MEANING_EVIDENCE is empty", missing[0])
+
+    def test_an_unmeasured_pair_says_so(self):
+        _, _, missing = s2.established(candidate(), {("OTHER.zip", "system-list-37"): link_row()})
+        self.assertIn("Inventory-8 did not measure this pair", missing[0])
+
+    def test_the_report_shows_the_measurements_and_still_builds_nothing(self):
+        summary = {"commit_sha": "a" * 7, "control": "108/108 parsed (PASS)", "measured": 1, "allowed": 0,
+                   "built": 0, "app_packs_built": 0, "packs": [], "best_candidates": [],
+                   "inventory8": {"available": True, "controlPassed": True, "targets": 1,
+                                  "functionsCompared": 1, "identicalConsumers": 1, "linkTargets": 1,
+                                  "textTargets": 0, "meaningsEstablished": 0},
+                   "inventory8_rows": [{"archive": "SYNTH.zip", "family": "system-list-37",
+                                        "verdict": "CODE-IDENTICAL AND LINKED", "comparedConsumers": 1,
+                                        "identicalConsumers": ["GetSystemListData"], "filenameLinks": 1,
+                                        "readerTextValues": 0, "meaningsEstablished": False}],
+                   "evaluations": []}
+        text = s2.render(summary)
+        self.assertIn("## Inventory-8 consumer-link measurements", text)
+        self.assertIn("| `SYNTH.zip` | `system-list-37` | CODE-IDENTICAL AND LINKED | 1 | 1 | 1 | 0 "
+                      "| NOT established |", text)
+        self.assertIn("neither satisfies `meanings`", text)
+        self.assertLessEqual(len(text.encode("utf-8")), s2.MAX_SUMMARY_BYTES)
+
+    def test_the_report_says_when_inventory8_published_nothing(self):
+        text = s2.render({"commit_sha": "a" * 7, "control": "PASS", "measured": 0, "allowed": 0,
+                          "built": 0, "app_packs_built": 0, "packs": [], "best_candidates": [],
+                          "inventory8": {"available": False}, "inventory8_rows": [], "evaluations": []})
+        self.assertIn("Not available for this run", text)
+        self.assertIn("still rejects every pair", text)
+
 
 class RenderTest(unittest.TestCase):
     """The markdown is posted as a GitHub check-run summary, which is capped at 65535 bytes."""

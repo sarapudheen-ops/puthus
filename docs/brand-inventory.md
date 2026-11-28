@@ -991,3 +991,69 @@ A same-role library is not enough on its own: `MAZDA.zip` ships `libMAZDA_FILE.s
 - Families with established field meanings outside Toyota: 0.
 - Converters, packs or app changes produced by this tool: 0.
 <!-- INVENTORY7 END -->
+
+## Inventory-8: consumer code identity, filename link and reader text
+
+`tools/inventory/consumer_link.py`, published as the `Inventory-8 consumer link` check and as `inventory8.md` / `inventory8.json` in `ci-reports-v1`. Read-only: it writes no pack, no converter and no app change, and it runs on `pyelftools` alone because it imports `family_evidence`, which reads `sweep_toyota.FOCUSED_READERS` with `ast`.
+
+### Why this stage exists
+
+Inventory-7 produced exactly one `CANDIDATE` — `DAIHATSU.zip · keyed-index-8 · DAIHATSU_SYS_LIST.BIN` — and named one missing requirement: *field meanings*. It also stated what would count: a disassembly of the brand's own reader tying a decoded field to a diagnostic address, service, PID or timing. This stage measures as much of that as static evidence allows, and says precisely where static evidence stops. It targets every (archive, family) pair Inventory-7 recorded `parsed > 0` for, bounded to 32 pairs, plus `TOYOTA.zip` as the reference.
+
+### What it measures
+
+| measurement | how | why it is not a guess |
+| --- | --- | --- |
+| consumer code identity | the brand's own exported consumer body, read at its own symbol address and size, compared byte-for-byte with Toyota's same-named function body | identity is the standard Inventory-7 already accepts for `libDEVICEID.so`; a shared export *name* is not evidence, identical bytes are |
+| filename link | every ASCII literal in this archive's own libraries whose **own basename is exactly** the decoded member's basename, compared case-insensitively | this is the only static link between a consumer and a data file; the literal is recorded verbatim and truncated, never interpreted |
+| reader text | a census of the value kinds the established reader returns for that family | a reader that returns only integers cannot make an opaque identifier mean something, which bounds what any further static work could establish |
+
+Five controls gate the run, because a harness that cannot succeed reports failure for everything and that looks like a finding — the mistake the `decode_yzjm` arity bug made:
+
+- identity positive (a Toyota consumer body compared with itself is identical) and identity negative (two different Toyota consumers are not);
+- link positive (some Toyota library names some member Toyota's own readers accepted) and link negative (no Toyota library names another brand's member);
+- reader-text positive (the value-kind census is reported for a Toyota member).
+
+The link control searches **every** member Toyota's own readers accepted, across every Toyota library Inventory-7 parsed, not just the best pair's sample: Toyota's `section-directory` samples are numbered `Ecu_Data_0001.BIN` files that a library builds from a format string such as `Ecu_Data_%04X.BIN` and would never contain verbatim, so a control taken from that pair alone fails even when the measurement works. The report prints the search space — how many member names across how many libraries — so a `FAIL` is diagnosable rather than opaque.
+
+A failed control makes the published conclusion `failure` and labels every brand result in that run an **observation, not evidence**. Stage 2 still runs in that case (`if: "!cancelled() && needs.family-evidence.result == 'success'"`), because the gate rejects every pair with or without Inventory-8 and it must be seen rejecting them.
+
+### A rule that was tried and rejected on evidence
+
+Substring matching was implemented first: a literal counted if it merely contained the member's stem. The first CI run showed why that is unusable. The stem `SYSSCAN` matched C++ identifiers inside `libDIAG.so` — `GetSysScanFileName`, `_Z10MptSysScanj`, `iMptMapSysScanInfo`, `MptSysScanWithHistory`, `isSysScanMode`, `SysScanFailed` — and reported **eight links for a single archive**, repeated across most of the corpus, while the Toyota positive control found none. Those are symbol names, not filenames. The rule is now exact-basename equality and a needle with no extension is ignored, because without an extension a filename cannot be told from an identifier. Under that rule the same run's genuine link survives: `libDAIHATSU_FILE.so` at VA `0x15a07` contains the literal `DAIHATSU_SYS_LIST.BIN`, the exact basename of the member that parsed.
+
+### What it can never conclude
+
+`meaningsEstablished` is `False` for every row by construction. Identical consumer code plus a filename link establishes the record **layout** and the **link** between a library and a data file; it does not establish which real vehicle system, service or PID an opaque identifier denotes. Verdicts are therefore `CODE-IDENTICAL AND LINKED`, `CODE-IDENTICAL, NO FILENAME LINK`, `FILENAME LINK, CODE DIFFERS` and `NOT ESTABLISHED`, and each row lists what is still missing: no vendor documentation, no runtime observation on a vehicle or ECU, and no disassembly in this repo of that brand's own reader.
+
+Stage 2 consumes `inventory8.json` and adds identical consumer code and filename links to the **satisfied** column, and replaces the generic `MEANING_EVIDENCE is empty` line with the measured blockers. It never adds them to `meanings`: only a record in `MEANING_EVIDENCE` can satisfy that requirement, and it stays empty. A missing or unvalidated Inventory-8 report is not an error — the gate rejects every pair either way.
+
+### Measured result
+
+From the first complete `Inventory-8 consumer link` run, with all five controls passing. The summary block below is checked against the current SHA's report by `tools/inventory/verify_consumer_link_document.py`, wired into the `Inventory-8 consumer link` job.
+
+The controls validated the measurements before any brand result was read. The link positive control searched 23 member names Toyota's own readers accepted across 19 Toyota libraries and found real literals — `libDIAG.so` contains `./MENU.BIN`, `libTOYOTA_FILE.so` contains `Toyota_bin_0D.BIN` and `Toyota_bin_0E.BIN` — so an empty result for a brand means something. The identity negative control confirmed two different Toyota consumers are not identical (`GetSystemListData` vs `GetEcuTblData`, first difference at byte 0, size delta +968), so an identity would have been discriminating.
+
+30 pairs across 28 archives were measured, none unreached. Both static routes to field meanings are closed:
+
+1. **Consumer code identity: 0 of 4.** Only DAIHATSU has an own-role consumer at all, so only two brand comparisons were possible (plus two in the Toyota control row). `libDAIHATSU_FILE.so`'s `GetSystemListData` is 2028 bytes against Toyota's 1332 (first difference at byte 0, delta +696) and `GetVehicleInfoData` is 448 against 704 (delta −256). The code that reads DAIHATSU's bytes is **not** the code whose behaviour this repo has established for Toyota, so nothing transfers by identity.
+2. **Reader text: 0 of 30.** No family's established reader returns a single text value for any brand — the value-kind census is `['int']` throughout, including for Toyota's own `Ecu_Data_0001.BIN`. Every field these readers yield is an opaque identifier, so no amount of further static reading of this corpus can say which real system, service or PID an identifier denotes.
+
+What was gained is a genuine consumer-to-data link: **5 pairs** have a literal in the archive's own libraries naming the decoded member — `DAIHATSU.zip`, `CHRYSLER.zip`, `FIAT.zip`, `SSANGYONG.zip` and `VOLVO.zip`. For DAIHATSU it is `libDAIHATSU_FILE.so` at VA `0x15a07` holding `DAIHATSU_SYS_LIST.BIN`, the exact member that parsed. That is why its verdict is `FILENAME LINK, CODE DIFFERS` rather than `NOT ESTABLISHED`: the library that exports the cited consumer does name the file, but the code differs and the values stay opaque.
+
+Stage 2 records the link as **satisfied** evidence and replaces the generic `MEANING_EVIDENCE is empty` line with the three measured blockers, so the best candidate now carries its exact missing evidence: consumer code differs from Toyota's, the reader returns only opaque identifiers, and no vendor documentation, runtime observation on a vehicle or ECU, or disassembly of that brand's own reader exists in this repo. It still rejects all 504 pairs and still builds 0 research packs and 0 app packs.
+
+The remaining routes to field meanings are outside this repository — vendor documentation, or observing the brand's own reader on a vehicle or ECU. Neither is available here, so the objective's answer is unchanged: no family has enough evidence, and no converter was invented.
+
+<!-- INVENTORY8 START -->
+## Documentation summary
+
+- Pairs measured: 30 across 28 archive(s); not reached: 0.
+- Controls: PASS (5/5).
+- Consumer function bodies compared: 4; byte-identical to Toyota's: 0.
+- Pairs with a filename link: 5 (5 literal(s)).
+- Pairs whose established reader returns any text value: 0.
+- Pairs with field meanings established: 0.
+- Verdicts: 0 code-identical and linked, 0 code-identical without a link, 5 linked with differing code, 25 not established.
+- Converters, packs or app changes produced by this tool: 0.
+<!-- INVENTORY8 END -->
