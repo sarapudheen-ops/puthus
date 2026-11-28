@@ -470,15 +470,17 @@ def main() -> int:
         "gate": ["wrapper", "structure", "consumer", "meanings"],
         "meaning_evidence_records": len(MEANING_EVIDENCE),
         "inventory8": link_summary,
+        # Inventory-8's own rows, not Stage 2's: the measurements live there. A
+        # Stage 2 evaluation has no comparedConsumers or filenameLinks field, so
+        # reading them off it silently reported zeroes for every pair.
         "inventory8_rows": [
-            {"archive": row["archive"], "family": row["family"], "verdict": row.get("verdict"),
+            {"archive": key[0], "family": key[1], "verdict": row.get("verdict"),
              "comparedConsumers": row.get("comparedConsumers", 0),
              "identicalConsumers": list(row.get("identicalConsumers") or []),
              "filenameLinks": len(row.get("filenameLinks") or []),
              "readerTextValues": row.get("readerTextValues", 0),
              "meaningsEstablished": bool(row.get("meaningsEstablished"))}
-            for row in evaluations
-            if (row["archive"], row["family"]) in links][:MAX_TABLE_ROWS],
+            for key, row in sorted(links.items())][:MAX_TABLE_ROWS],
         "measured": len(evaluations),
         "allowed": len(allowed_rows),
         "built": len(packs),

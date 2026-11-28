@@ -1028,8 +1028,32 @@ Substring matching was implemented first: a literal counted if it merely contain
 
 Stage 2 consumes `inventory8.json` and adds identical consumer code and filename links to the **satisfied** column, and replaces the generic `MEANING_EVIDENCE is empty` line with the measured blockers. It never adds them to `meanings`: only a record in `MEANING_EVIDENCE` can satisfy that requirement, and it stays empty. A missing or unvalidated Inventory-8 report is not an error — the gate rejects every pair either way.
 
+### Measured result
+
+From the first complete `Inventory-8 consumer link` run, with all five controls passing. The summary block below is checked against the current SHA's report by `tools/inventory/verify_consumer_link_document.py`, wired into the `Inventory-8 consumer link` job.
+
+The controls validated the measurements before any brand result was read. The link positive control searched 23 member names Toyota's own readers accepted across 19 Toyota libraries and found real literals — `libDIAG.so` contains `./MENU.BIN`, `libTOYOTA_FILE.so` contains `Toyota_bin_0D.BIN` and `Toyota_bin_0E.BIN` — so an empty result for a brand means something. The identity negative control confirmed two different Toyota consumers are not identical (`GetSystemListData` vs `GetEcuTblData`, first difference at byte 0, size delta +968), so an identity would have been discriminating.
+
+30 pairs across 28 archives were measured, none unreached. Both static routes to field meanings are closed:
+
+1. **Consumer code identity: 0 of 4.** Only DAIHATSU has an own-role consumer at all, so only two brand comparisons were possible (plus two in the Toyota control row). `libDAIHATSU_FILE.so`'s `GetSystemListData` is 2028 bytes against Toyota's 1332 (first difference at byte 0, delta +696) and `GetVehicleInfoData` is 448 against 704 (delta −256). The code that reads DAIHATSU's bytes is **not** the code whose behaviour this repo has established for Toyota, so nothing transfers by identity.
+2. **Reader text: 0 of 30.** No family's established reader returns a single text value for any brand — the value-kind census is `['int']` throughout, including for Toyota's own `Ecu_Data_0001.BIN`. Every field these readers yield is an opaque identifier, so no amount of further static reading of this corpus can say which real system, service or PID an identifier denotes.
+
+What was gained is a genuine consumer-to-data link: **5 pairs** have a literal in the archive's own libraries naming the decoded member — `DAIHATSU.zip`, `CHRYSLER.zip`, `FIAT.zip`, `SSANGYONG.zip` and `VOLVO.zip`. For DAIHATSU it is `libDAIHATSU_FILE.so` at VA `0x15a07` holding `DAIHATSU_SYS_LIST.BIN`, the exact member that parsed. That is why its verdict is `FILENAME LINK, CODE DIFFERS` rather than `NOT ESTABLISHED`: the library that exports the cited consumer does name the file, but the code differs and the values stay opaque.
+
+Stage 2 records the link as **satisfied** evidence and replaces the generic `MEANING_EVIDENCE is empty` line with the three measured blockers, so the best candidate now carries its exact missing evidence: consumer code differs from Toyota's, the reader returns only opaque identifiers, and no vendor documentation, runtime observation on a vehicle or ECU, or disassembly of that brand's own reader exists in this repo. It still rejects all 504 pairs and still builds 0 research packs and 0 app packs.
+
+The remaining routes to field meanings are outside this repository — vendor documentation, or observing the brand's own reader on a vehicle or ECU. Neither is available here, so the objective's answer is unchanged: no family has enough evidence, and no converter was invented.
+
 <!-- INVENTORY8 START -->
 ## Documentation summary
 
-Measured by the `Inventory-8 consumer link` check for the current SHA and published in `ci-reports-v1`. The measured numbers are committed here, together with `tools/inventory/verify_consumer_link_document.py`, on the commit after the first complete run.
+- Pairs measured: 30 across 28 archive(s); not reached: 0.
+- Controls: PASS (5/5).
+- Consumer function bodies compared: 4; byte-identical to Toyota's: 0.
+- Pairs with a filename link: 5 (5 literal(s)).
+- Pairs whose established reader returns any text value: 0.
+- Pairs with field meanings established: 0.
+- Verdicts: 0 code-identical and linked, 0 code-identical without a link, 5 linked with differing code, 25 not established.
+- Converters, packs or app changes produced by this tool: 0.
 <!-- INVENTORY8 END -->

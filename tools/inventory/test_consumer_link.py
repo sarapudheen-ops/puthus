@@ -511,34 +511,39 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(set(cl.targets(inventory7_state(brand_entry("ONE")))[0]), set(row))
 
 
+def report_state(control_passed: bool = True, pending=(), meanings: int = 0) -> dict:
+    """A one-target Inventory-8 state shaped exactly like `main` publishes."""
+    state = {
+        "format": cl.FORMAT, "formatVersion": cl.FORMAT_VERSION, "generatedUtc": cl.utc_now(),
+        "headSha": "abc123", "label": cl.LABEL, "inventory7": "inventory7.json",
+        "budget": {"functionsCompared": 1, "payloadsMeasured": 1},
+        "targets": [{**target(), "membersExamined": ["SYNTH_SYS_LIST.BIN"], "libraryStatus": "present",
+                     "consumerIdentity": [{"consumer": "GetSystemListData", "library": "libSYNTH_FILE.so",
+                                           "toyotaLibrary": FILE_LIBRARY,
+                                           "brand": {"status": "present", "bytes": 8},
+                                           "toyota": {"status": "present", "bytes": 8},
+                                           "identical": False, "firstDifference": 0, "sizeDelta": 0}],
+                     "identicalConsumers": [], "comparedConsumers": 1, "filenameLinks": [],
+                     "readerText": [{"member": "SYNTH_SYS_LIST.BIN", "status": "parsed", "textValues": 0,
+                                     "valueKinds": ["int"], "valueCounts": {"int": 5}, "topKeys": []}],
+                     "readerTextValues": 0, "verdict": "NOT ESTABLISHED", "meaningsEstablished": False,
+                     "meaningBlockers": ["no vendor documentation"]}],
+        "toyota": None, "pending": list(pending), "failed": False,
+        "control": {"passed": control_passed,
+                    "checks": [{"name": "identity positive", "passed": control_passed, "detail": "ok"}]},
+        "referenceErrors": {}, "controlLinks": {"libraries": [FILE_LIBRARY],
+                                                "membersSearched": ["SYNTH_SYS_LIST.BIN"],
+                                                "positive": [], "negative": []}}
+    cl.summarise(state)
+    # summarise derives this from the rows; a test that needs the impossible case
+    # sets it directly to prove the verifier refuses it.
+    state["summary"]["meaningsEstablished"] = meanings
+    return state
+
+
 class ReportTest(unittest.TestCase):
     def _state(self, control_passed=True, pending=()) -> dict:
-        state = {"format": cl.FORMAT, "formatVersion": cl.FORMAT_VERSION, "generatedUtc": cl.utc_now(),
-                 "headSha": "abc123", "label": cl.LABEL, "inventory7": "inventory7.json",
-                 "budget": {"functionsCompared": 1, "payloadsMeasured": 1},
-                 "targets": [{**target(), "membersExamined": ["SYNTH_SYS_LIST.BIN"],
-                              "libraryStatus": "present",
-                              "consumerIdentity": [{"consumer": "GetSystemListData",
-                                                    "library": "libSYNTH_FILE.so",
-                                                    "toyotaLibrary": FILE_LIBRARY,
-                                                    "brand": {"status": "present", "bytes": 8},
-                                                    "toyota": {"status": "present", "bytes": 8},
-                                                    "identical": False, "firstDifference": 0,
-                                                    "sizeDelta": 0}],
-                              "identicalConsumers": [], "comparedConsumers": 1, "filenameLinks": [],
-                              "readerText": [{"member": "SYNTH_SYS_LIST.BIN", "status": "parsed",
-                                              "textValues": 0, "valueKinds": ["int"],
-                                              "valueCounts": {"int": 5}, "topKeys": []}],
-                              "readerTextValues": 0, "verdict": "NOT ESTABLISHED",
-                              "meaningsEstablished": False,
-                              "meaningBlockers": ["no vendor documentation"]}],
-                 "toyota": None, "pending": list(pending), "failed": False,
-                 "control": {"passed": control_passed,
-                             "checks": [{"name": "identity positive", "passed": control_passed,
-                                         "detail": "ok"}]},
-                 "referenceErrors": {}}
-        cl.summarise(state)
-        return state
+        return report_state(control_passed, pending)
 
     def test_markdown_states_the_measurements_and_never_a_meaning(self):
         text = cl.markdown(self._state())
@@ -573,6 +578,93 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(0, summary["meaningsEstablished"])
         self.assertEqual(1, summary["verdicts"]["NOT ESTABLISHED"])
         self.assertEqual(0, summary["packs"] + summary["appChanges"])
+
+
+class VerifyConsumerLinkDocumentTest(unittest.TestCase):
+    """`verify_consumer_link_document.py` is wired into the Inventory-8 CI job.
+
+    The committed summary must be this SHA's summary, and the verifier must refuse
+    to compare at all when the run is unvalidated — a control failure, an
+    unreached pair, or the impossible claim that this tool established a field
+    meaning.
+    """
+
+    SCRIPT = Path(cl.__file__).resolve().parent / "verify_consumer_link_document.py"
+
+    def _layout(self, root: Path, state: dict, block: str | None = None) -> Path:
+        report = root / "report"
+        report.mkdir()
+        text = cl.markdown(state)
+        (report / "inventory8.md").write_text(text)
+        (report / "inventory8.json").write_text(json.dumps(state, default=str))
+        if block is None:
+            block = text[text.index("## Documentation summary"):].strip()
+        docs = root / "docs"
+        docs.mkdir(exist_ok=True)
+        (docs / "brand-inventory.md").write_text(
+            f"<!-- INVENTORY8 START -->\n{block}\n<!-- INVENTORY8 END -->\n")
+        return report
+
+    def _run(self, root: Path, report: Path):
+        return subprocess.run([sys.executable, str(self.SCRIPT), str(report)], cwd=root,
+                              capture_output=True, text=True)
+
+    def test_a_document_matching_the_report_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self._run(root, self._layout(root, report_state()))
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn("matches this SHA\u2019s report", result.stdout)
+
+    def test_a_stale_number_in_the_document_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = report_state()
+            summary = cl.markdown(state)
+            summary = summary[summary.index("## Documentation summary"):].strip()
+            stale = summary.replace("Pairs measured: 1 across", "Pairs measured: 30 across", 1)
+            self.assertNotEqual(summary, stale)
+            result = self._run(root, self._layout(root, state, stale))
+            self.assertEqual(1, result.returncode)
+            self.assertIn("does not match this SHA", result.stderr)
+
+    def test_a_failed_control_is_rejected_before_the_document_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = self._layout(root, report_state(control_passed=False))
+            (root / "docs" / "brand-inventory.md").unlink()  # never reached
+            result = self._run(root, report)
+            self.assertEqual(1, result.returncode)
+            self.assertIn("STOP: the Inventory-8 controls failed", result.stderr)
+            self.assertIn("identity positive", result.stderr)
+
+    def test_an_unreached_pair_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = self._layout(root, report_state(pending=["SYNTH.zip / keyed-index-8"]))
+            result = self._run(root, report)
+            self.assertEqual(1, result.returncode)
+            self.assertIn("did not reach every pair", result.stderr)
+
+    def test_a_claim_of_established_meanings_is_rejected(self):
+        # This tool may never report a field meaning; if it ever did, the document
+        # and the gate would both need review before anything was published.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = self._layout(root, report_state(meanings=1))
+            result = self._run(root, report)
+            self.assertEqual(1, result.returncode)
+            self.assertIn("reported established field meanings", result.stderr)
+
+    def test_a_summary_that_does_not_account_for_every_pair_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = report_state()
+            state["summary"]["targets"] = 2
+            report = self._layout(root, state)
+            result = self._run(root, report)
+            self.assertEqual(1, result.returncode)
+            self.assertIn("does not account for every pair", result.stderr)
 
 
 class MainTest(unittest.TestCase):

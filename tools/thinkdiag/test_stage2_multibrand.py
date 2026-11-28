@@ -310,7 +310,14 @@ class MainTest(unittest.TestCase):
             self.assertEqual(0, summary["built"])
             self.assertEqual(0, summary["app_packs_built"])
             self.assertEqual([], summary["packs"])
+            row = summary["inventory8_rows"][0]
             self.assertEqual(1, len(summary["inventory8_rows"]))
+            # The measurements come from Inventory-8, not from Stage 2's own row.
+            self.assertEqual("CODE-IDENTICAL AND LINKED", row["verdict"])
+            self.assertEqual(1, row["comparedConsumers"])
+            self.assertEqual(["GetSystemListData"], row["identicalConsumers"])
+            self.assertEqual(1, row["filenameLinks"])
+            self.assertFalse(row["meaningsEstablished"])
             text = (root / "out" / "stage2-multibrand-deadbeef.md").read_text()
             self.assertIn("## Inventory-8 consumer-link measurements", text)
             self.assertIn("CODE-IDENTICAL AND LINKED", text)
