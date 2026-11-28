@@ -1005,22 +1005,28 @@ Inventory-7 produced exactly one `CANDIDATE` — `DAIHATSU.zip · keyed-index-8 
 | measurement | how | why it is not a guess |
 | --- | --- | --- |
 | consumer code identity | the brand's own exported consumer body, read at its own symbol address and size, compared byte-for-byte with Toyota's same-named function body | identity is the standard Inventory-7 already accepts for `libDEVICEID.so`; a shared export *name* is not evidence, identical bytes are |
-| filename link | every ASCII literal in this archive's own libraries, matched case-insensitively against the decoded member's basename and Inventory-4 stem | this is the only static link between a consumer and a data file; the literal is recorded verbatim and truncated, never interpreted |
+| filename link | every ASCII literal in this archive's own libraries whose **own basename is exactly** the decoded member's basename, compared case-insensitively | this is the only static link between a consumer and a data file; the literal is recorded verbatim and truncated, never interpreted |
 | reader text | a census of the value kinds the established reader returns for that family | a reader that returns only integers cannot make an opaque identifier mean something, which bounds what any further static work could establish |
 
 Five controls gate the run, because a harness that cannot succeed reports failure for everything and that looks like a finding — the mistake the `decode_yzjm` arity bug made:
 
 - identity positive (a Toyota consumer body compared with itself is identical) and identity negative (two different Toyota consumers are not);
-- link positive (Toyota's own libraries contain a literal naming a member Toyota's own reader accepts) and link negative (Toyota's libraries do not name another brand's member);
+- link positive (some Toyota library names some member Toyota's own readers accepted) and link negative (no Toyota library names another brand's member);
 - reader-text positive (the value-kind census is reported for a Toyota member).
 
-A failed control makes the published conclusion `failure`, so an empty brand result is never mistaken for a finding.
+The link control searches **every** member Toyota's own readers accepted, across every Toyota library Inventory-7 parsed, not just the best pair's sample: Toyota's `section-directory` samples are numbered `Ecu_Data_0001.BIN` files that a library builds from a format string such as `Ecu_Data_%04X.BIN` and would never contain verbatim, so a control taken from that pair alone fails even when the measurement works. The report prints the search space — how many member names across how many libraries — so a `FAIL` is diagnosable rather than opaque.
+
+A failed control makes the published conclusion `failure` and labels every brand result in that run an **observation, not evidence**. Stage 2 still runs in that case (`if: "!cancelled() && needs.family-evidence.result == 'success'"`), because the gate rejects every pair with or without Inventory-8 and it must be seen rejecting them.
+
+### A rule that was tried and rejected on evidence
+
+Substring matching was implemented first: a literal counted if it merely contained the member's stem. The first CI run showed why that is unusable. The stem `SYSSCAN` matched C++ identifiers inside `libDIAG.so` — `GetSysScanFileName`, `_Z10MptSysScanj`, `iMptMapSysScanInfo`, `MptSysScanWithHistory`, `isSysScanMode`, `SysScanFailed` — and reported **eight links for a single archive**, repeated across most of the corpus, while the Toyota positive control found none. Those are symbol names, not filenames. The rule is now exact-basename equality and a needle with no extension is ignored, because without an extension a filename cannot be told from an identifier. Under that rule the same run's genuine link survives: `libDAIHATSU_FILE.so` at VA `0x15a07` contains the literal `DAIHATSU_SYS_LIST.BIN`, the exact basename of the member that parsed.
 
 ### What it can never conclude
 
 `meaningsEstablished` is `False` for every row by construction. Identical consumer code plus a filename link establishes the record **layout** and the **link** between a library and a data file; it does not establish which real vehicle system, service or PID an opaque identifier denotes. Verdicts are therefore `CODE-IDENTICAL AND LINKED`, `CODE-IDENTICAL, NO FILENAME LINK`, `FILENAME LINK, CODE DIFFERS` and `NOT ESTABLISHED`, and each row lists what is still missing: no vendor documentation, no runtime observation on a vehicle or ECU, and no disassembly in this repo of that brand's own reader.
 
-Stage 2 consumes `inventory8.json` and adds identical consumer code and filename links to the **satisfied** column, and replaces the generic `MEANING_EVIDENCE is empty` line with the measured blockers. It never adds them to `meanings`: only a record in `MEANING_EVIDENCE` can satisfy that requirement, and it stays empty. A missing Inventory-8 report is not an error — the gate rejects every pair either way.
+Stage 2 consumes `inventory8.json` and adds identical consumer code and filename links to the **satisfied** column, and replaces the generic `MEANING_EVIDENCE is empty` line with the measured blockers. It never adds them to `meanings`: only a record in `MEANING_EVIDENCE` can satisfy that requirement, and it stays empty. A missing or unvalidated Inventory-8 report is not an error — the gate rejects every pair either way.
 
 <!-- INVENTORY8 START -->
 ## Documentation summary

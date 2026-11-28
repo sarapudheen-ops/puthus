@@ -70,6 +70,7 @@ MAX_TARGETS = 32
 MAX_SAMPLES = 4
 MAX_LINKS = 8
 MAX_LITERALS = 40
+MAX_CONTROL_MEMBERS = 48
 LINK_MIN_LENGTH = 4
 LIBRARY_MAX_BYTES = 24 * 1024 * 1024
 ASCII_RUN = re.compile(rb"[\x20-\x7e]{%d,180}" % LINK_MIN_LENGTH)
@@ -158,14 +159,27 @@ def compare_functions(brand: bytes | None, brand_info: dict,
 # --------------------------------------------------------------- measurements
 
 def filename_links(path: Path, libraries: list[str], needles: dict[str, str]) -> list[dict]:
-    """ASCII literals inside this archive's own libraries that name a member.
+    """ASCII literals inside this archive's own libraries that *name* a member.
 
-    ``needles`` maps the literal being searched for to why it was chosen. Matching
-    is case-insensitive on the member stem, which is the same normalisation
-    Inventory-4 uses, so a library naming ``sys_list`` counts as naming
-    ``SYS_LIST.BIN``. The literal is recorded verbatim and truncated; it is never
-    interpreted.
+    A literal counts only when its own basename is exactly a needle, compared
+    case-insensitively, so a path literal such as
+    ``DIAGNOSTIC/VEHICLES/DAIHATSU/V10.22/DAIHATSU_SYS_LIST.BIN`` still matches
+    ``DAIHATSU_SYS_LIST.BIN``. Substring matching was tried first and rejected on
+    evidence: the stem ``SYSSCAN`` matched C++ identifiers inside ``libDIAG.so``
+    -- ``GetSysScanFileName``, ``_Z10MptSysScanj``, ``isSysScanMode``,
+    ``SysScanFailed`` -- which are symbol names, not filenames, and would have
+    counted eight spurious links for a single archive. An identifier is not a
+    link, and the extension is required because that is what makes a literal a
+    filename rather than a name fragment. A needle with no extension is ignored
+    for the same reason.
+
+    ``needles`` maps each accepted filename to why it was chosen. Literals are
+    recorded verbatim and truncated; they are never interpreted.
     """
+    # A needle without an extension is ignored on purpose: with no extension
+    # there is no way to tell a filename from an identifier, and an identifier is
+    # not a link.
+    wanted = {needle.upper(): (needle, why) for needle, why in needles.items() if "." in needle}
     found: list[dict] = []
     for library in libraries:
         data, info = read_library(path, library)
@@ -173,14 +187,14 @@ def filename_links(path: Path, libraries: list[str], needles: dict[str, str]) ->
             continue
         for run in ASCII_RUN.findall(data)[:4000]:
             text = run.decode("ascii")
-            upper = text.upper()
-            for needle, why in needles.items():
-                if needle.upper() not in upper:
-                    continue
-                offset = data.find(run)
-                found.append({"library": library, "needle": needle, "why": why, "literal": text[:MAX_LITERALS],
-                              "offset": offset, "va": va_of(data, offset) if offset >= 0 else None})
-                break
+            base = PurePosixPath(text.replace("\\", "/")).name
+            match = wanted.get(base.upper())
+            if match is None:
+                continue
+            needle, why = match
+            offset = data.find(run)
+            found.append({"library": library, "needle": needle, "why": why, "literal": text[:MAX_LITERALS],
+                          "offset": offset, "va": va_of(data, offset) if offset >= 0 else None})
             if len(found) >= MAX_LINKS:
                 return found
     return found
@@ -258,16 +272,7 @@ def measure(path: Path, target: dict, toyota_functions: dict[str, dict[str, byte
                                **compare_functions(body, body_info, toyota_body, toyota_info)})
             budget["functionsCompared"] += 1
 
-    needles: dict[str, str] = {}
-    for name in member_names:
-        base = PurePosixPath(fe.canonical(name)).name
-        needles[base] = "member basename"
-        stem = re.sub(r"(?i)\.bin$", "", base)
-        if stem and stem.upper() != base.upper():
-            needles[stem] = "member name without extension"
-        canonical_stem = fe.stem(name)
-        if canonical_stem and canonical_stem not in needles:
-            needles[canonical_stem] = "Inventory-4 stem normalisation"
+    needles = {PurePosixPath(fe.canonical(name)).name: "member basename" for name in member_names}
     libraries = sorted(set(target["ownRoleLibraries"]) | set(target["librariesParsed"]))
     links = filename_links(path, libraries, needles)
 
@@ -469,6 +474,27 @@ def toyota_target(state: dict) -> dict | None:
             "samples": entry["families"][best["family"]]["samples"]}
 
 
+def toyota_control_members(state: dict) -> dict[str, str]:
+    """Every member name Toyota's own readers accepted, for the link control.
+
+    The control must not depend on one family's sample. Toyota's
+    ``section-directory`` samples are numbered ``Ecu_Data_0001.BIN`` files that a
+    library builds from a format string and would never contain verbatim, so a
+    control taken from the best pair alone fails even when the measurement works.
+    """
+    entry = next((item for item in state["brands"] if item["brand"] == "TOYOTA"), None)
+    if entry is None:
+        return {}
+    needles: dict[str, str] = {}
+    for row in entry["verdicts"]:
+        if row["parsed"] <= 0:
+            continue
+        for sample in entry["families"][row["family"]]["samples"]:
+            base = PurePosixPath(fe.canonical(sample["member"])).name
+            needles.setdefault(base, f"member accepted by Toyota's own {row['family']} reader")
+    return dict(sorted(needles.items())[:MAX_CONTROL_MEMBERS])
+
+
 def summarise(state: dict) -> None:
     rows = state["targets"]
     state["summary"] = {
@@ -501,6 +527,24 @@ def markdown(state: dict) -> str:
     for row in control_state["checks"]:
         out.append(f"| {old.escape(row['name'])} | {'PASS' if row['passed'] else 'FAIL'} "
                    f"| {old.escape(str(row['detail']))} |")
+    links_control = state.get("controlLinks") or {}
+    if links_control:
+        out += ["", f"Link control search space: {len(links_control.get('membersSearched', []))} member "
+                    f"name(s) Toyota's own readers accepted, across "
+                    f"{len(links_control.get('libraries', []))} Toyota librar"
+                    f"{'y' if len(links_control.get('libraries', [])) == 1 else 'ies'} "
+                    f"({', '.join(f'`{old.escape(name)}`' for name in links_control.get('libraries', [])[:8])}"
+                    f"{', ...' if len(links_control.get('libraries', [])) > 8 else ''}).", ""]
+        if links_control.get("membersSearched"):
+            out += ["Members searched: " + ", ".join(
+                f"`{old.escape(name)}`" for name in links_control["membersSearched"][:24]) +
+                (f" and {len(links_control['membersSearched']) - 24} more."
+                 if len(links_control["membersSearched"]) > 24 else "."), ""]
+        if not control_state["passed"]:
+            out += ["A failed control means the measurement is **unvalidated**: its brand results are "
+                    "reported below as observations, not as evidence, and the published conclusion is "
+                    "`failure` so nothing downstream may treat them as established.", ""]
+
     out += ["", "## Measurements", "",
             "`identity` compares the brand's own exported consumer body, at its own symbol address and size, "
             "with Toyota's same-named function body. `link` counts ASCII literals in this archive's own "
@@ -674,14 +718,19 @@ def main() -> int:
             finally:
                 if downloaded and path is not None:
                     Path(path).unlink(missing_ok=True)
-        # Negative control: Toyota's libraries must not name another brand's member.
+        # Link controls. Positive: some Toyota library names some member Toyota's
+        # own readers accepted. Negative: no Toyota library names a brand member.
+        toyota_entry = next((item for item in source["brands"] if item["brand"] == "TOYOTA"), None)
+        toyota_libraries = sorted(set(toyota_entry["librariesParsed"])) if toyota_entry else []
+        members = toyota_control_members(source)
+        positive = filename_links(toyota_path, toyota_libraries, members)
         needle = next((PurePosixPath(fe.canonical(row["samples"][0]["member"])).name
                        for row in wanted if row["samples"]), None)
-        negative = (filename_links(toyota_path, sorted(set(
-            reference_target["ownRoleLibraries"]) | set(reference_target["librariesParsed"]))
-            if reference_target else [], {needle: "another brand's member"}) if needle else [])
-        state["control"] = control_check(toyota_functions, state["toyota"],
-                                         (state["toyota"] or {}).get("filenameLinks", []), negative)
+        negative = (filename_links(toyota_path, toyota_libraries, {needle: "another brand's member"})
+                    if needle else [])
+        state["controlLinks"] = {"libraries": toyota_libraries, "membersSearched": sorted(members),
+                                 "positive": positive, "negative": negative}
+        state["control"] = control_check(toyota_functions, state["toyota"], positive, negative)
         summarise(state)
         args.output.mkdir(parents=True, exist_ok=True)
         result = emit(state, args.output)

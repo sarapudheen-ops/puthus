@@ -355,6 +355,10 @@ jobs:
   stage2-multibrand:
     name: Multi-brand Stage 2 extraction
     needs: [family-evidence, consumer-link]
+    # Inventory-8 is measurement only. A failed control there means its results are
+    # unvalidated, not that Stage 2 may not run: the gate rejects every pair with
+    # or without those measurements, and it must be seen rejecting them.
+    if: "!cancelled() && needs.family-evidence.result == 'success'"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

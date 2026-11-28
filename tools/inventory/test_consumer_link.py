@@ -249,12 +249,15 @@ class FilenameLinkTest(unittest.TestCase):
         self.assertEqual("member basename", links[0]["why"])
         self.assertEqual(0x2000, links[0]["va"])
 
-    def test_matching_is_case_insensitive_on_the_stem(self):
+    def test_matching_is_case_insensitive_on_the_filename(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = build_archive(Path(tmp) / "SYNTH.zip", {}, {"libSYNTH_FILE.so": library_with("synth_sys_list")})
-            links = cl.filename_links(path, ["libSYNTH_FILE.so"], {"SYNTH_SYS_LIST": "Inventory-4 stem"})
+            path = build_archive(Path(tmp) / "SYNTH.zip", {},
+                                 {"libSYNTH_FILE.so": library_with("synth_sys_list.bin")})
+            links = cl.filename_links(path, ["libSYNTH_FILE.so"],
+                                      {"SYNTH_SYS_LIST.BIN": "member basename"})
         self.assertEqual(1, len(links))
-        self.assertEqual("synth_sys_list", links[0]["literal"])
+        self.assertEqual("synth_sys_list.bin", links[0]["literal"])
+        self.assertEqual("SYNTH_SYS_LIST.BIN", links[0]["needle"])
 
     def test_another_brands_member_is_not_a_link(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -270,6 +273,55 @@ class FilenameLinkTest(unittest.TestCase):
             links = cl.filename_links(path, [f"lib{i}.so" for i in range(count)],
                                       {"SYNTH_SYS_LIST.BIN": "member basename"})
         self.assertEqual(cl.MAX_LINKS, len(links))
+
+
+    def test_an_identifier_containing_the_stem_is_not_a_link(self):
+        # Observed in CI: the stem needle SYSSCAN matched C++ identifiers inside
+        # libDIAG.so -- GetSysScanFileName, _Z10MptSysScanj, isSysScanMode,
+        # SysScanFailed -- and reported eight links for one archive. Those are
+        # symbol names, not filenames.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = build_archive(Path(tmp) / "SYNTH.zip", {}, {"libDIAG.so": library_with(
+                "GetSysScanFileName", "_Z10MptSysScanj", "isSysScanMode", "SysScanFailed",
+                "SysScan", "iMptMapSysScanInfo")})
+            self.assertEqual([], cl.filename_links(path, ["libDIAG.so"], {"SYSSCAN.BIN": "member basename"}))
+            # An extension-less needle is ignored: it cannot be told from an identifier.
+            self.assertEqual([], cl.filename_links(path, ["libDIAG.so"], {"SYSSCAN": "stem"}))
+            self.assertEqual([], cl.filename_links(path, ["libDIAG.so"], {}))
+
+    def test_the_exact_filename_is_a_link_next_to_those_identifiers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = build_archive(Path(tmp) / "SYNTH.zip", {}, {"libDIAG.so": library_with(
+                "GetSysScanFileName", "SYSSCAN.BIN", "SysScanFailed")})
+            links = cl.filename_links(path, ["libDIAG.so"], {"SYSSCAN.BIN": "member basename"})
+        self.assertEqual(1, len(links))
+        self.assertEqual("SYSSCAN.BIN", links[0]["literal"])
+
+    def test_a_path_literal_still_matches_on_its_basename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = build_archive(Path(tmp) / "SYNTH.zip", {}, {"libSYNTH_FILE.so": library_with(
+                "SYNTH/V10.22/SYNTH_SYS_LIST.BIN")})
+            links = cl.filename_links(path, ["libSYNTH_FILE.so"],
+                                      {"SYNTH_SYS_LIST.BIN": "member basename"})
+        self.assertEqual(1, len(links))
+        self.assertEqual("SYNTH/V10.22/SYNTH_SYS_LIST.BIN", links[0]["literal"])
+
+    def test_a_long_path_literal_is_matched_then_truncated_in_the_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = build_archive(Path(tmp) / "SYNTH.zip", {}, {"libSYNTH_FILE.so": library_with(
+                "DIAGNOSTIC/VEHICLES/SYNTH/V10.22/SYNTH_SYS_LIST.BIN")})
+            links = cl.filename_links(path, ["libSYNTH_FILE.so"],
+                                      {"SYNTH_SYS_LIST.BIN": "member basename"})
+        self.assertEqual(1, len(links))
+        self.assertEqual(cl.MAX_LITERALS, len(links[0]["literal"]))
+        self.assertTrue(links[0]["literal"].startswith("DIAGNOSTIC/"))
+
+    def test_a_numbered_member_a_library_builds_from_a_format_is_not_expected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = build_archive(Path(tmp) / "SYNTH.zip", {},
+                                 {"libSYNTH_FILE.so": library_with("Ecu_Data_%04X.BIN")})
+            self.assertEqual([], cl.filename_links(path, ["libSYNTH_FILE.so"],
+                                                   {"Ecu_Data_0001.BIN": "member basename"}))
 
 
 class StructureTextTest(unittest.TestCase):
@@ -293,6 +345,33 @@ class StructureTextTest(unittest.TestCase):
 
     def test_an_unknown_family_is_data(self):
         self.assertEqual("unknown family", cl.structure_text("not-a-family", b"")["status"])
+
+
+class ControlMemberTest(unittest.TestCase):
+    """The link control must not depend on one family's sample."""
+
+    def test_every_parsed_toyota_member_is_searched_not_just_the_best_pair(self):
+        state = inventory7_state(brand_entry("TOYOTA", [
+            verdict_row("TOYOTA", family="section-directory", parsed=268),
+            verdict_row("TOYOTA", family="menu-nodes", parsed=1),
+            verdict_row("TOYOTA", family="entry-index", parsed=0),
+        ]))
+        state["brands"][0]["families"]["section-directory"]["samples"] = [
+            {"member": "DIAGNOSTIC/VEHICLES/TOYOTA/V10.62/BIN.ZIP!/EU/Ecu_Data_0001.BIN"}]
+        state["brands"][0]["families"]["menu-nodes"]["samples"] = [{"member": "MENU.BIN"}]
+        state["brands"][0]["families"]["entry-index"]["samples"] = [{"member": "SYSTEMENTER.BIN"}]
+        needles = cl.toyota_control_members(state)
+        self.assertEqual({"Ecu_Data_0001.BIN", "MENU.BIN"}, set(needles))
+        self.assertIn("menu-nodes reader", needles["MENU.BIN"])
+
+    def test_no_toyota_entry_means_no_control_needles(self):
+        self.assertEqual({}, cl.toyota_control_members(inventory7_state(brand_entry("SYNTH"))))
+
+    def test_the_control_member_list_is_bounded(self):
+        entry = brand_entry("TOYOTA", [verdict_row("TOYOTA", parsed=1)])
+        entry["families"]["keyed-index-8"]["samples"] = [
+            {"member": f"MEMBER_{i:04d}.BIN"} for i in range(cl.MAX_CONTROL_MEMBERS + 20)]
+        self.assertEqual(cl.MAX_CONTROL_MEMBERS, len(cl.toyota_control_members(inventory7_state(entry))))
 
 
 class MeasureTest(unittest.TestCase):
@@ -543,6 +622,44 @@ class MainTest(unittest.TestCase):
             self.assertEqual(1, row["comparedConsumers"])
             self.assertFalse(row["meaningsEstablished"])
             self.assertTrue((root / "out" / "inventory8.md").is_file())
+
+    def test_the_control_search_space_is_recorded_and_a_failed_control_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = inventory7_state(brand_entry("TOYOTA", [verdict_row("TOYOTA", parsed=9)]),
+                                     brand_entry("SYNTH"))
+            # No library in the synthetic Toyota archive names the member the
+            # control searches for, so the positive link control must fail.
+            source = self._archives(root, {})
+            build_archive(source / "TOYOTA.zip", {"TOYOTA_SYS_LIST.BIN": yzjm(system_list_payload())},
+                          {FILE_LIBRARY: library_with("Ecu_Data_%04X.BIN"),
+                           "libTOYOTA_SCAN.so": library_with("GetSysListNo")})
+            report = root / "inventory7.json"
+            report.write_text(json.dumps(state))
+            out = root / "out"
+            digest = hashlib.sha256((source / "TOYOTA.zip").read_bytes()).hexdigest()
+            argv = sys.argv
+            try:
+                sys.argv = ["consumer_link.py", "--inventory7-json", str(report), "--local-dir", str(source),
+                            "--output", str(out), "--max-seconds", "60"]
+                with patch.object(cl, "native_info", fake_native_info(TOYOTA_SYMBOLS)), \
+                        patch.object(cl, "elf_bytes", fake_elf_bytes), \
+                        patch.object(fe, "elf_bytes", return_value=TABLE), \
+                        patch.object(cl.fe, "TOYOTA_SHA256", digest):
+                    code = cl.main()
+            finally:
+                sys.argv = argv
+            result = json.loads((out / "inventory8.json").read_text())
+            self.assertEqual(1, code)
+            self.assertFalse(result["control"]["passed"])
+            self.assertEqual("failure", (out / "conclusion.txt").read_text().strip())
+            self.assertIn("libTOYOTA_FILE.so", result["controlLinks"]["libraries"])
+            self.assertIn("TOYOTA_SYS_LIST.BIN", result["controlLinks"]["membersSearched"])
+            self.assertEqual([], result["controlLinks"]["positive"])
+            text = (out / "inventory8.md").read_text()
+            self.assertIn("Link control search space:", text)
+            self.assertIn("unvalidated", text)
+
 
     def test_an_identical_and_linked_consumer_still_establishes_no_field_meaning(self):
         symbols = {"libSYNTH_FILE.so": [{"name": "GetSystemListData", "address": "0x11574", "size": 8,
