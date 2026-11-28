@@ -26,6 +26,17 @@ if str(HERE.parent / "thinkdiag") not in sys.path:
 import daihatsu_trace as dt  # noqa: E402
 from yzjm import decode_yzjm, word_keys, MASK32  # noqa: E402
 
+# The disassembler needs capstone. The shared Brand-inventory test job installs
+# only pyelftools, so capstone-dependent tests skip there; the dedicated
+# daihatsu-trace workflow installs capstone and runs them in full.
+try:
+    import capstone  # noqa: F401
+    HAVE_CAPSTONE = True
+except ImportError:
+    HAVE_CAPSTONE = False
+
+needs_capstone = unittest.skipUnless(HAVE_CAPSTONE, "capstone not installed")
+
 
 # ------------------------------------------------------------- AArch64 words
 
@@ -203,6 +214,7 @@ class ElfTraceTest(unittest.TestCase):
         self.assertEqual(self.elf.c_string(0x15A07), "DAIHATSU_SYS_LIST.BIN")
         self.assertIsNone(self.elf.c_string(0x16A07))
 
+    @needs_capstone
     def test_xrefs_positive_and_negative(self):
         sites = dt.find_literal_xrefs(self.elf, 0x15A07)
         kinds = {site["va"]: site["kind"] for site in sites}
@@ -215,6 +227,7 @@ class ElfTraceTest(unittest.TestCase):
             self.assertEqual(site["function"], "GetSystemListData")
             self.assertEqual(site["functionStart"], 0x10000)
 
+    @needs_capstone
     def test_disassembly_annotations(self):
         rows = dt.disassemble(self.elf, 0x10000, 12)
         text = dt.render_disassembly(rows)
@@ -223,6 +236,7 @@ class ElfTraceTest(unittest.TestCase):
         self.assertEqual(rows[0]["mnemonic"], "adrp")
         self.assertEqual(rows[2]["mnemonic"], "bl")
 
+    @needs_capstone
     def test_trace_follows_internal_callee(self):
         budget = {"functions": 0, "instructions": 0, "callers": 0}
         seeds = [{"start": 0x10000, "name": "GetSystemListData", "size": 48,
@@ -361,6 +375,7 @@ def encode_yzjm(payload: bytes, make: str, version: str, seed: int, table: bytes
 class BuildStateIntegrationTest(unittest.TestCase):
     """The full pipeline on a hand-built archive: no corpus, real decode path."""
 
+    @needs_capstone
     def test_full_pipeline(self):
         table = bytes(range(32))
         # libDEVICEID.so carries the 32-byte format table at VA 0xF88C.
